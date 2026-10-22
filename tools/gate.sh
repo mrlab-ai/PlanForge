@@ -36,7 +36,7 @@
 # tier exercises NONE of it and its wobble is pure machine noise. Pass a spec
 # that reaches your change:
 #   scripts/gate.sh timing "astar(lmcutnumeric())"
-#   scripts/gate.sh timing "astar(domain_abstraction())"
+#   scripts/gate.sh timing "astar(domain())"
 # A heuristic change measured under `blind()` is not evidence of anything.
 #
 # Plan costs and expansion counts are semantics and cannot be changed by an

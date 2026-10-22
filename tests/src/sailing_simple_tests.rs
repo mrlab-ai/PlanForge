@@ -224,7 +224,17 @@ fn assert_exact_single_abstraction_search<H>(
         "unrestricted {backend} CEGAR must finish with a concrete plan"
     );
     let state_registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(task, state_registry, Some(Box::new(heuristic)), None, None);
+    let mut search = AStarSearch::new(
+        task,
+        state_registry,
+        planforge_search::search::SearchParams {
+            heuristic: Box::new(heuristic),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
     let result = search
         .search()
         .expect("single-abstraction A* search failed");
@@ -305,7 +315,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
 fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfig {
     DomainAbstractionCollectionConfig {
         max_collection_size: 10_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 2,
         progress_states: true,
@@ -313,7 +323,7 @@ fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfi
             cegar: CegarOptions {
                 random_seed: Some(seed),
                 max_states: 1_000,
-                max_time: None,
+                max_time: None.into(),
                 split_selection: SplitSelection::MinGrowth,
                 combine_labels: false,
                 flaw_kind: FlawKind::Progression,
@@ -348,8 +358,8 @@ fn scp_initial_h_for_collection(
     abstractions: Vec<DomainAbstraction>,
 ) -> f64 {
     let config = ScpConfig {
-        max_time: Some(Duration::from_secs(100)),
-        table_construction_max_time: Some(Duration::from_secs(100)),
+        max_time: Some(Duration::from_secs(100)).into(),
+        table_construction_max_time: Some(Duration::from_secs(100)).into(),
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
@@ -357,7 +367,7 @@ fn scp_initial_h_for_collection(
         None,
         components(abstractions, Vec::new()),
         config,
-        task,
+        std::sync::Arc::new(task),
         Default::default(),
     )
     .expect("scp heuristic should construct");
@@ -391,8 +401,8 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         .generate(&task)
         .expect("scp domain abstractions should build");
     let config = ScpConfig {
-        max_time: Some(Duration::from_secs(100)),
-        table_construction_max_time: Some(Duration::from_secs(100)),
+        max_time: Some(Duration::from_secs(100)).into(),
+        table_construction_max_time: Some(Duration::from_secs(100)).into(),
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
@@ -400,12 +410,22 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         None,
         components(abstractions, Vec::new()),
         config,
-        &task,
+        std::sync::Arc::new(&task),
         Default::default(),
     )
     .expect("scp heuristic should construct");
     let state_registry = StateRegistry::for_task(Arc::new(&task));
-    let mut search = AStarSearch::new(&task, state_registry, Some(Box::new(heuristic)), None, None);
+    let mut search = AStarSearch::new(
+        &task,
+        state_registry,
+        planforge_search::search::SearchParams {
+            heuristic: Box::new(heuristic),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
     let result = search.search().expect("scp A* search failed");
     result.solution_cost
 }

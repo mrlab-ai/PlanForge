@@ -7,7 +7,6 @@ The crates.io release consists of these packages:
 - `planforge-translate`
 - `planforge-cplex`
 - `planforge-search`
-- `planforge-searcher`
 - `planforge`
 
 Publish them in this order, waiting until each version is available from the
@@ -18,12 +17,10 @@ crates.io index before continuing:
 3. `planforge-translate`
 4. `planforge-cplex`
 5. `planforge-search`
-6. `planforge-searcher`
-7. `planforge`
+6. `planforge`
 
 The primary pipeline order is `planforge-config-derive` → `planforge-sas` →
-`planforge-translate` → `planforge-search` → `planforge-searcher` →
-`planforge`. `planforge-cplex` precedes `planforge-search`, which optionally
+`planforge-translate` → `planforge-search` → `planforge`. `planforge-cplex` precedes `planforge-search`, which optionally
 depends on it.
 
 `planforge-cplex` is safe to package and document without a local CPLEX
@@ -51,7 +48,7 @@ passed both archive creation and packaged-source compilation:
 | `planforge-sas` | pass | pass |
 | `planforge-cplex` | pass | pass |
 
-The other five commands stop during registry resolution because this is the
+The other four commands stop during registry resolution because this is the
 first release and their required PlanForge `0.1.0` packages are not in the
 crates.io index yet:
 
@@ -59,11 +56,10 @@ crates.io index yet:
 | --- | --- |
 | `planforge-translate` | `planforge-sas` |
 | `planforge-search` | `planforge-config-derive` |
-| `planforge-searcher` | `planforge-sas` |
 | `planforge` | `planforge-sas` |
 
 This is why publishing and index propagation must follow the order above. As a
-separate packaged-source check, all five archives compiled successfully when
+separate packaged-source check, all four archives compiled successfully when
 the preceding crates.io dependencies were patched to the same `0.1.0`
 workspace sources. Those patches model an indexed dependency; they do not
 replace the plain `cargo package` release check after each preceding upload.

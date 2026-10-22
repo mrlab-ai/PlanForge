@@ -6,7 +6,6 @@ use std::fmt;
 
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
-use serde::{Deserialize, Serialize};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -28,19 +27,27 @@ pub const DEFAULT_BOUND_ITERATIONS: usize = 0;
 pub const DEFAULT_PRECISION: f64 = 0.000001;
 pub const DEFAULT_EPSILON: f64 = 0.0;
 
-#[derive(
-    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct LmCutNumericConfig {
+    #[option(positional)]
     pub ceiling_less_than_one: bool,
+    #[option(positional)]
     pub ignore_numeric: bool,
+    #[option(positional)]
     pub random_pcf: bool,
+    #[option(positional)]
     pub irmax: bool,
+    #[option(positional)]
     pub disable_ma: bool,
+    #[option(positional)]
     pub use_second_order_simple: bool,
+    #[option(positional)]
     pub use_constant_assignment: bool,
+    #[option(positional)]
     pub bound_iterations: usize,
+    #[option(positional)]
     pub precision: f64,
+    #[option(positional)]
     pub epsilon: f64,
 }
 
@@ -89,20 +96,32 @@ pub struct LandmarkCutNumericHeuristic<'task> {
     state_value_cache: RefCell<StateValueCache>,
 }
 
+impl LmCutNumericConfig {
+    fn validate(&self) -> Result<(), crate::config::ConfigError> {
+        for (name, value) in [("precision", self.precision), ("epsilon", self.epsilon)] {
+            if value.is_nan() || value < 0.0 {
+                return Err(crate::config::ConfigError::from(format!(
+                    "lmcutnumeric {name} must be non-negative, got {value}"
+                ))
+                .at_option(name));
+            }
+        }
+        if self.random_pcf {
+            return Err(crate::config::ConfigError::from(
+                "lmcutnumeric random_pcf=true is not implemented yet",
+            )
+            .at_option("random_pcf"));
+        }
+        Ok(())
+    }
+}
+
 impl<'task> LandmarkCutNumericHeuristic<'task> {
     pub fn from_config(
         task: &'task dyn AbstractNumericTask,
         config: LmCutNumericConfig,
     ) -> Result<Self, String> {
-        if config.precision < 0.0 {
-            return Err("lmcutnumeric precision must be non-negative".to_string());
-        }
-        if config.epsilon < 0.0 {
-            return Err("lmcutnumeric epsilon must be non-negative".to_string());
-        }
-        if config.random_pcf {
-            return Err("lmcutnumeric random_pcf=true is not implemented yet".to_string());
-        }
+        config.validate().map_err(|error| error.to_string())?;
         Ok(Self {
             name: "lmcutnumeric".to_string(),
             task,
@@ -161,8 +180,22 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
     fn heuristic_name(&self) -> &str {
         &self.name
     }
+}
 
-    fn dead_ends_are_reliable(&self) -> bool {
-        true
+/// Registry feature for numeric LM-cut.
+pub struct LmCutNumericFeature;
+impl crate::heuristic_factory::HeuristicFeature for LmCutNumericFeature {
+    const NAME: &'static str = "lmcutnumeric";
+    type Config = LmCutNumericConfig;
+    fn validate(config: &Self::Config) -> Result<(), crate::config::ConfigError> {
+        config.validate()
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
+        let heuristic = LandmarkCutNumericHeuristic::from_config(&**context.task, *config)
+            .map_err(|error| format!("failed to build lmcutnumeric heuristic: {error}"))?;
+        Ok(Box::new(heuristic))
     }
 }

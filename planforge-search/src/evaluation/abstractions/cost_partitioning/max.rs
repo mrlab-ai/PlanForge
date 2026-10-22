@@ -50,3 +50,56 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
         &self.name
     }
 }
+
+pub use registry_feature::MaxFeature;
+mod registry_feature {
+    use crate::config::ConfigError;
+    use crate::evaluation::{Heuristic, maximum::MaximumHeuristic};
+    use crate::heuristic_factory::*;
+
+    pub struct MaxFeature;
+    impl HeuristicFeature for MaxFeature {
+        const NAME: &'static str = "max";
+        type Config = MaxConfig;
+        fn nested(config: &Self::Config) -> Vec<&HeuristicConfig> {
+            config.heuristics.iter().collect()
+        }
+        fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+            if config.heuristics.is_empty() {
+                return Err("max requires at least one heuristic".into());
+            }
+            Ok(())
+        }
+        fn build<'a>(
+            config: &Self::Config,
+            context: &BuildContext<'a>,
+        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+            let mut sources = Vec::new();
+            let mut others = Vec::new();
+            for child in &config.heuristics {
+                match child.as_abstraction_source() {
+                    Some(source) => sources.push(source),
+                    None => others.push(child),
+                }
+            }
+            if others.is_empty() {
+                return build_max_from_sources(&**context.task, &sources, &context.name);
+            }
+            let mut children = Vec::new();
+            if !sources.is_empty() {
+                children.push(build_max_from_sources(
+                    &**context.task,
+                    &sources,
+                    &context.name,
+                )?);
+            }
+            for child in others {
+                children.push(child.build(context)?);
+            }
+            Ok(Box::new(MaximumHeuristic::new(
+                context.name.clone(),
+                children,
+            )))
+        }
+    }
+}

@@ -2,7 +2,7 @@
 //! file, and the statistics block.
 //!
 //! These are properties of the single entry point rather than of the search, so
-//! they live next to the CLI and not in `planforge-searcher`.
+//! they live next to the CLI and not in `planforge-search`.
 
 use std::fs;
 

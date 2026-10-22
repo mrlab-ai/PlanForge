@@ -76,7 +76,7 @@ A saturator expressible as a cap sequence needs `saturated_cost_partitioning/con
 
 ### Change the open-list discipline
 
-The core discipline spans `search/open_list.rs` (entry ordering and queues), `search/policy.rs` (algorithm policy), and `search/engine.rs` (insertion/pop use): three production files, with tests embedded in `open_list.rs` and `search/tests.rs`. Exposing a new user-visible search name additionally touches `search/registry.rs` and `planforge-searcher/src/recursive_config.rs`. The hot driver is generic over `SearchAlgorithm`, so this extension does not add a per-node `dyn` call. This is a good separation.
+The core discipline spans `search/open_list.rs` (entry ordering and queues), `search/policy.rs` (priority functions), and `search/engine.rs` (insertion and pop handling), with tests in `open_list.rs` and `search/tests.rs`. Search configurations live in `planforge-search/src/config/search.rs`. The driver is generic over `Priority` and `OpenList`; lazy evaluation is an A* option and uses the same pop-time hook as MPD. Priority calculation stays statically dispatched inside the expansion loop.
 
 ### Change numeric-effect semantics
 

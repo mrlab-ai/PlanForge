@@ -25,7 +25,13 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         assert!(!initial_candidates.is_empty());
         assert!(!initial_candidates[0].is_empty());
 
-        let deadline = budget.earliest(deadline_from_now("max_time", self.config.max_time)?);
+        let deadline = budget.earliest(deadline_from_now(
+            "max_time",
+            self.config
+                .max_time
+                .duration()
+                .map_err(EvaluationError::ComputationFailed)?,
+        )?);
         let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
         let samples = self.sample_states(collection.components, state, initial_h, deadline)?;
         assert!(

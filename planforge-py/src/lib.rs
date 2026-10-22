@@ -22,7 +22,9 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
-use planforge_search::search::{AStarSearch, SearchEngine, SearchResult, SearchStatus};
+use planforge_search::search::{
+    AStarSearch, GreedyBestFirstSearch, SearchEngine, SearchResult, SearchStatus,
+};
 use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,
     StateSpaceEnumerationError as RustStateSpaceEnumerationError, enumerate_state_space,
@@ -1019,7 +1021,7 @@ unsafe impl Send for GilReleasedTask {}
 impl GilReleasedTask {
     fn solve(
         self,
-        spec: &planforge_searcher::SearchSpec,
+        spec: &planforge_search::config::SearchConfig,
         time_limit: Option<Duration>,
         max_memory: Option<u64>,
     ) -> std::io::Result<SearchResult> {
@@ -1485,7 +1487,7 @@ impl Task {
         max_memory: Option<u64>,
     ) -> PyResult<PySearchResult> {
         let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-        let spec = planforge_searcher::parse_search_spec(&search).map_err(SpecError::new_err)?;
+        let spec = planforge_search::config::parse_search_spec(&search).map_err(SpecError::new_err)?;
         let time_limit = max_time.map(Duration::from_secs_f64);
         let task = GilReleasedTask(self.task.clone());
         let result = py
@@ -1520,10 +1522,31 @@ impl Task {
         // GIL is held for the whole search: the heuristic calls back into Python
         // once per evaluated state. This is intentionally NOT allow_threads.
         let result = if greedy {
-            AStarSearch::new_gbfs(&*self.task, registry, Some(heur), time_limit, max_memory)
-                .search()
+            GreedyBestFirstSearch::new(
+                &*self.task,
+                registry,
+                planforge_search::search::SearchParams {
+                    heuristic: heur,
+                    lazy: None,
+                    reevaluate_dynamic: false,
+                    time_limit,
+                    max_memory_bytes: max_memory,
+                },
+            )
+            .search()
         } else {
-            AStarSearch::new(&*self.task, registry, Some(heur), time_limit, max_memory).search()
+            AStarSearch::new(
+                &*self.task,
+                registry,
+                planforge_search::search::SearchParams {
+                    heuristic: heur,
+                    lazy: None,
+                    reevaluate_dynamic: false,
+                    time_limit,
+                    max_memory_bytes: max_memory,
+                },
+            )
+            .search()
         };
         if let Some(err) = error.borrow_mut().take() {
             return Err(err);
@@ -1661,7 +1684,7 @@ fn solve(
     }
 
     let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-    let spec = planforge_searcher::parse_search_spec(&search).map_err(SpecError::new_err)?;
+    let spec = planforge_search::config::parse_search_spec(&search).map_err(SpecError::new_err)?;
 
     let time_limit = max_time.map(Duration::from_secs_f64);
     let memory_limit = max_memory;

@@ -14,7 +14,6 @@ use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegist
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use rustc_hash::FxBuildHasher;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
 
@@ -304,8 +303,7 @@ pub(super) struct PdbState {
     numeric: Vec<NumericValue>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PdbInternalHeuristic {
     Zero,
     #[default]
@@ -319,7 +317,7 @@ option_enum!("PDB internal heuristic", PdbInternalHeuristic {
     Lmcut => "lmcut",
 });
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdbHeuristicConfig {
     pub exploration_heuristic: PdbInternalHeuristic,
     pub frontier_heuristic: PdbInternalHeuristic,
@@ -841,38 +839,6 @@ impl<'task> PatternDatabase<'task> {
         Ok(self.lookup_packed_pattern_distance(&packed_bins))
     }
 
-    #[inline]
-    fn lookup_pattern_distance_from_source_state_values_fast(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        source_numeric: &[NumericValue],
-    ) -> Option<f64> {
-        if self.task.pattern_numeric_projected_ids().is_empty() {
-            let prop_hash = self
-                .lookup_projection
-                .compact_prop_hash_from_state_values_unchecked(
-                    propositional,
-                    &self.compact_prop_hash_multipliers,
-                );
-            return self.lookup_compact_prop_distance_by_hash(prop_hash);
-        }
-
-        let prop_hash = self
-            .lookup_projection
-            .compact_prop_hash_from_state_values_unchecked(
-                propositional,
-                &self.compact_prop_hash_multipliers,
-            );
-        let mut packed_bins = self.compact_numeric_bins_scratch.borrow_mut();
-        self.lookup_projection
-            .fill_pattern_numeric_bins_from_source_numeric_into_unchecked(
-                source_numeric,
-                &mut packed_bins,
-            );
-        packed_bins[0] = prop_hash as u64;
-        self.lookup_compact_numeric_distance(&packed_bins)
-    }
-
     fn lookup_pattern_or_fallback_in_projected_values(
         &self,
         propositional: &[ExplicitValueIndex],
@@ -1207,32 +1173,6 @@ impl<'task> PatternDatabase<'task> {
             )?;
 
         Ok(self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num))
-    }
-
-    pub(crate) fn lookup_projected_or_fallback_from_source_state_values_fast(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        source_numeric: &[NumericValue],
-    ) -> f64 {
-        if let Some(distance) = self
-            .lookup_pattern_distance_from_source_state_values_fast(propositional, source_numeric)
-            && distance.is_finite()
-        {
-            return distance;
-        }
-
-        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
-        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
-
-        self.lookup_projection
-            .project_state_values_from_source_numeric_into_unchecked(
-                propositional,
-                source_numeric,
-                &mut projected_prop,
-                &mut projected_num,
-            );
-
-        self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num)
     }
 
     fn rebuild_lookup_indexes(&mut self) {

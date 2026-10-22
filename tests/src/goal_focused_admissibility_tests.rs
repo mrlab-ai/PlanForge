@@ -57,9 +57,15 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
     let mut search = AStarSearch::new(
         task,
         StateRegistry::for_task(Arc::new(task)),
-        None,
-        None,
-        None,
+        planforge_search::search::SearchParams {
+            heuristic: Box::new(
+                planforge_search::evaluation::heuristic::BlindHeuristic::for_task(task),
+            ),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
     );
     let result = search.search().expect("blind A* search failed");
     assert!(
@@ -104,7 +110,7 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
 fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
     DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 3_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
         progress_states: true,
@@ -112,7 +118,7 @@ fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
             cegar: CegarOptions {
                 random_seed: Some(1),
                 max_states: 300,
-                max_time: None,
+                max_time: None.into(),
                 flaw_kind: FlawKind::Progression,
                 flaw_scope: FlawScope::WholePlan,
                 ..DomainAbstractionCollectionConfig::default().member.cegar
@@ -138,12 +144,12 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
         max_collection_size: 3_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         progress_states: true,
         alternate_split_kinds: None,
         split_kind: None,
         single_goal_tasks: true,
-        stagnation_limit: Some(Duration::from_secs(20)),
+        stagnation_limit: Some(Duration::from_secs(20)).into(),
         blacklist_trigger_percentage: 0.75,
         enable_blacklist_on_stagnation: true,
     })
@@ -154,8 +160,8 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
 
 fn scp_config(partitioning: CostPartitioningMethod) -> ScpConfig {
     ScpConfig {
-        max_time: Some(Duration::from_secs(100)),
-        table_construction_max_time: Some(Duration::from_secs(100)),
+        max_time: Some(Duration::from_secs(100)).into(),
+        table_construction_max_time: Some(Duration::from_secs(100)).into(),
         random_seed: 1,
         partitioning,
         ..Default::default()
@@ -224,7 +230,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                         None,
                         components(domain.clone(), Vec::new()),
                         scp_config(partitioning),
-                        &task,
+                        std::sync::Arc::new(&task),
                         Default::default(),
                     ),
                 ),
@@ -234,7 +240,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                         None,
                         components(vec![], cartesian.clone()),
                         scp_config(partitioning),
-                        &task,
+                        std::sync::Arc::new(&task),
                         Default::default(),
                     ),
                 ),
@@ -244,7 +250,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                         None,
                         components(domain.clone(), cartesian.clone()),
                         scp_config(partitioning),
-                        &task,
+                        std::sync::Arc::new(&task),
                         Default::default(),
                     ),
                 ),

@@ -264,35 +264,6 @@ impl PatternLookupProjection {
         Ok(hash)
     }
 
-    #[inline]
-    pub(super) fn compact_prop_hash_from_state_values_unchecked(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        multipliers: &[usize],
-    ) -> usize {
-        debug_assert_eq!(self.pattern_regular_original_ids.len(), multipliers.len());
-        debug_assert!(propositional_values.len() >= self.base_propositional_len);
-
-        let mut hash = 0usize;
-        for (&original_var_id, &multiplier) in self
-            .pattern_regular_original_ids
-            .iter()
-            .zip(multipliers.iter())
-        {
-            let value = propositional_values[original_var_id.index()];
-            debug_assert!(
-                value
-                    .index()
-                    .checked_mul(multiplier)
-                    .and_then(|contribution| hash.checked_add(contribution))
-                    .is_some(),
-                "PDB propositional hash must fit in usize"
-            );
-            hash += value.index() * multiplier;
-        }
-        hash
-    }
-
     fn numeric_value_from_source(
         original_numeric_var: VariableIndex,
         source_numeric_values: &[NumericValue],
@@ -327,23 +298,6 @@ impl PatternLookupProjection {
             );
         }
         Ok(())
-    }
-
-    #[inline]
-    pub(super) fn fill_pattern_numeric_bins_from_source_numeric_into_unchecked(
-        &self,
-        source_numeric_values: &[NumericValue],
-        bins: &mut Vec<u64>,
-    ) {
-        debug_assert!(source_numeric_values.len() >= self.source_numeric_len);
-
-        bins.clear();
-        bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
-        for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
-        {
-            let value = source_numeric_values[original_numeric_var.index()];
-            bins[numeric_index + 1] = float_tolerance::canonical_bits(value);
-        }
     }
 
     pub(super) fn pack_pattern_state_values_from_source_numeric_into(
@@ -435,31 +389,6 @@ impl PatternLookupProjection {
             )?);
         }
         Ok(())
-    }
-
-    #[inline]
-    pub(super) fn project_state_values_from_source_numeric_into_unchecked(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        source_numeric_values: &[NumericValue],
-        projected_prop_values: &mut Vec<ExplicitValueIndex>,
-        projected_numeric_values: &mut Vec<NumericValue>,
-    ) {
-        debug_assert!(propositional_values.len() >= self.base_propositional_len);
-        debug_assert!(source_numeric_values.len() >= self.source_numeric_len);
-
-        projected_prop_values.clear();
-        projected_prop_values.extend(
-            self.projected_regular_original_ids
-                .iter()
-                .map(|&original_var_id| propositional_values[original_var_id.index()]),
-        );
-
-        projected_numeric_values.clear();
-        projected_numeric_values.reserve(self.projected_numeric_lookup.len());
-        for &original_numeric_var in &self.projected_numeric_lookup {
-            projected_numeric_values.push(source_numeric_values[original_numeric_var.index()]);
-        }
     }
 }
 

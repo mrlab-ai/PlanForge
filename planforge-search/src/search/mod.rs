@@ -1,7 +1,7 @@
 //! Best-first search for numeric planning.
 //!
 //! Split into focused submodules:
-//! - `open_list`: the dual-queue open list and its entry ordering.
+//! - `open_list`: the open lists and its entry ordering.
 //! - `space`: per-state search bookkeeping (parents, g-values, closed
 //!   flags, preferred-operator snapshots) and plan extraction.
 //! - `stats`: counters, progress snapshots, and trace flags.
@@ -14,29 +14,17 @@ mod config;
 mod engine;
 mod open_list;
 mod policy;
-mod registry;
 mod space;
 mod stats;
 
-pub use engine::{AStarSearch, BestFirstSearch};
-pub use policy::{AStar, FastSlow, GreedyBestFirst, SearchAlgorithm};
-pub use registry::{
-    SEARCH_ALGORITHMS, SearchAlgorithmPlugin, SearchBuildContext, SearchBuilder, SearchOptionKind,
-    search_algorithm, search_algorithm_help, search_algorithm_names,
-};
+pub use engine::{AStarSearch, BestFirstSearch, GreedyBestFirstSearch, SearchParams};
+pub use open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpenList};
+pub use policy::{G, GPlusH, H, Priority};
 
 use anyhow::Result;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, NumericTaskExt, NumericValue, Operator, OperatorIndex,
-};
+use planforge_sas::numeric_task::Operator;
 use planforge_sas::state_registry::StateID;
 use std::time::Duration;
-
-pub fn compute_effective_operator_costs(task: &dyn AbstractNumericTask) -> Vec<NumericValue> {
-    (0..task.get_operators().len())
-        .map(|op_id| task.abstract_operator_cost(OperatorIndex::from_usize(op_id)))
-        .collect()
-}
 
 /// Search status indicating the outcome of the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,20 +79,6 @@ pub trait SearchEngine {
     }
 }
 
-/// Type-erased boundary used by search registries.
-///
-/// A registry performs this one dynamic call per complete search run. The
-/// expansion loop itself remains monomorphized over [`SearchAlgorithm`].
-pub trait SearchDriver {
-    fn run(&mut self) -> Result<SearchResult>;
-}
-
-impl<T: SearchEngine> SearchDriver for T {
-    fn run(&mut self) -> Result<SearchResult> {
-        self.search()
-    }
-}
-
 pub(crate) fn format_progress_value(value: f64) -> String {
     if value.is_infinite() && value.is_sign_positive() {
         return "infinity".to_string();
@@ -117,38 +91,27 @@ pub(crate) fn format_progress_value(value: f64) -> String {
     }
 }
 
+/// Resident memory in KB from `/proc/self/status`; `None` on platforms
+/// without that measurement.
 #[cfg(target_os = "linux")]
-pub(crate) fn current_memory_kb() -> u64 {
-    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-        for line in status.lines() {
-            if let Some(value) = line.strip_prefix("VmRSS:")
-                && let Some(kb) = value
-                    .split_whitespace()
-                    .next()
-                    .and_then(|part| part.parse::<u64>().ok())
-            {
-                return kb;
-            }
-        }
-    }
-
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
-    let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-    if result != 0 {
-        return 0;
-    }
-    let usage = unsafe { usage.assume_init() };
-    usage.ru_maxrss.max(0) as u64
+pub(crate) fn current_memory_kb() -> Option<u64> {
+    let status =
+        std::fs::read_to_string("/proc/self/status").expect("/proc/self/status is readable");
+    let kb = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|kb| kb.parse().ok())
+        .expect("/proc/self/status reports VmRSS in KB");
+    Some(kb)
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn current_memory_kb() -> u64 {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    WARNED.call_once(|| {
-        tracing::warn!(
-            "resident-memory measurement is unsupported on this platform; in-process memory \
-             limits cannot be enforced"
-        );
-    });
-    0
+pub(crate) fn current_memory_kb() -> Option<u64> {
+    None
+}
+
+/// The progress-line suffix for resident memory, empty where it is not measured.
+pub(crate) fn memory_report() -> String {
+    current_memory_kb().map_or_else(String::new, |kb| format!(", {kb} KB"))
 }

@@ -1,9 +1,8 @@
-# Custom search algorithm
+# Custom search priority
 
-This crate defines and registers uniform-cost search outside PlanForge's search
-crate. It implements only `SearchAlgorithm::priority`, inheriting the generic
-best-first loop. The registry erases the concrete driver once per run; priority
-evaluation remains monomorphized inside the expansion loop.
+This crate instantiates uniform-cost search with the `G` priority and a
+`TieBreakingOpenList`. Implement `Priority` to supply another priority function;
+the shared best-first loop keeps priority calculation statically dispatched.
 
 From the repository root:
 

@@ -14,7 +14,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue, TaskRef};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use tracing::{debug, info, warn};
@@ -74,11 +74,11 @@ struct OnlineState {
 
 impl NumericPotentialHeuristic {
     pub fn from_config(
-        task: &dyn AbstractNumericTask,
         task_ref: TaskRef<'_>,
         config: NumericPotentialConfig,
     ) -> Result<Self, String> {
         config.validate()?;
+        let task = &*task_ref;
         let mut optimizer = NumericPotentialOptimizer::new(task, &config)?;
         let potential_task = optimizer.task().clone();
         let ordinary_columns = optimizer.num_columns();
@@ -232,12 +232,15 @@ impl NumericPotentialHeuristic {
                 &mut sampler,
             )?
         };
-        if !dead_end_certified && config.rays > rays.len() && config.max_ray_generation_time > 0.0 {
+        if !dead_end_certified
+            && config.rays > rays.len()
+            && config.max_ray_generation_time.seconds() > 0.0
+        {
             optimizer.prepare_for_ordinary_potential()?;
             let ray_start = Instant::now();
             let mut ray_samples = Vec::new();
             while ray_samples.len() < config.num_samples
-                && ray_start.elapsed().as_secs_f64() < config.max_ray_generation_time
+                && ray_start.elapsed().as_secs_f64() < config.max_ray_generation_time.seconds()
             {
                 let chunk = (config.num_samples - ray_samples.len()).min(16);
                 ray_samples.extend(sampler.sample(
@@ -253,7 +256,7 @@ impl NumericPotentialHeuristic {
                 .expect("positive ray count must construct a ray generator");
             for state in ray_samples {
                 if rays.len() >= config.rays
-                    || ray_start.elapsed().as_secs_f64() >= config.max_ray_generation_time
+                    || ray_start.elapsed().as_secs_f64() >= config.max_ray_generation_time.seconds()
                 {
                     break;
                 }
@@ -516,10 +519,6 @@ impl Heuristic for NumericPotentialHeuristic {
         value = self.maybe_add_online_function(eval_state, value)?;
         self.track_online_cache_entry(eval_state.state().get_id());
         Ok(value)
-    }
-
-    fn dead_ends_are_reliable(&self) -> bool {
-        true
     }
 
     fn heuristic_name(&self) -> &str {
@@ -858,7 +857,7 @@ fn build_conditioned_groups(
 
     let mut groups = Vec::new();
     for (var, value, achievers) in goals {
-        if !within_fraction(start, config.max_conditioned_generation_time, 1.0) {
+        if !within_fraction(start, config.max_conditioned_generation_time.seconds(), 1.0) {
             break;
         }
         let mut portfolios: Vec<Vec<NumericPotentialFunction>> = (0..config
@@ -867,7 +866,7 @@ fn build_conditioned_groups(
             .collect();
         let mut complete = vec![true; portfolios.len()];
         for achiever in achievers.iter().copied() {
-            if !within_fraction(start, config.max_conditioned_generation_time, 1.0) {
+            if !within_fraction(start, config.max_conditioned_generation_time.seconds(), 1.0) {
                 complete.fill(false);
                 break;
             }
@@ -986,7 +985,9 @@ fn build_diverse_portfolio(
     {
         functions.push(function);
     }
-    if functions.len() >= config.num_heuristics || config.max_diverse_generation_time <= 0.0 {
+    if functions.len() >= config.num_heuristics
+        || config.max_diverse_generation_time.seconds() <= 0.0
+    {
         if functions.is_empty() {
             functions.push(initial_function.take().unwrap());
         }
@@ -995,7 +996,7 @@ fn build_diverse_portfolio(
 
     let mut samples = Vec::new();
     while samples.len() < config.num_samples
-        && within_fraction(start, config.max_diverse_generation_time, 0.25)
+        && within_fraction(start, config.max_diverse_generation_time.seconds(), 0.25)
     {
         let chunk = (config.num_samples - samples.len()).min(16);
         samples.extend(sampler.sample(
@@ -1016,7 +1017,9 @@ fn build_diverse_portfolio(
     let mut seen = HashSet::new();
     let mut targets = Vec::new();
     for state in samples {
-        if !seen.is_empty() && !within_fraction(start, config.max_diverse_generation_time, 0.75) {
+        if !seen.is_empty()
+            && !within_fraction(start, config.max_diverse_generation_time.seconds(), 0.75)
+        {
             break;
         }
         if !seen.insert(state.get_id()) {
@@ -1037,7 +1040,7 @@ fn build_diverse_portfolio(
     }
     while !targets.is_empty()
         && functions.len() < config.num_heuristics
-        && within_fraction(start, config.max_diverse_generation_time, 1.0)
+        && within_fraction(start, config.max_diverse_generation_time.seconds(), 1.0)
     {
         let states: Vec<_> = targets.iter().map(|target| target.state.clone()).collect();
         let OptimizationOutcome::Optimal {

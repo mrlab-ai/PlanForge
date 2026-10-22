@@ -23,8 +23,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::config::parse_call;
 use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
@@ -33,13 +34,12 @@ use planforge_search::evaluation::abstractions::domain::collection::DomainAbstra
 use planforge_search::evaluation::abstractions::domain::config::{
     DomainAbstractionCollectionConfig, DomainAbstractionConfig,
 };
-use planforge_search::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
-use planforge_search::evaluation::abstractions::pdb::pdb_heuristic::GreedyNumericPdbHeuristic;
 use planforge_search::evaluation::ff_heuristic::FfHeuristic;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
     LandmarkCutNumericHeuristic, LmCutNumericConfig,
 };
+use planforge_search::heuristic_factory::{BuildContext, HeuristicConfig};
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
 
 use crate::corpus::{
@@ -121,7 +121,7 @@ const FIXTURE_SHAPES: &[(&str, Shape)] = &[
      Shape { layers: 3, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0, default_value_goals: 0 }),
     ("negated-dependency",
      Shape { layers: 2, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0, default_value_goals: 0 }),
-    // The only fixture with a negated derived goal. The `domain_abstraction`
+    // The only fixture with a negated derived goal. The `domain()`
     // family refuses all nine: the other eight for a derived *precondition* an
     // abstract operator cannot establish, this one for the goal itself -- see
     // `abstractions_refuse_a_negated_derived_goal`.
@@ -351,7 +351,17 @@ fn astar_solution<'task>(
     what: &str,
 ) -> Solution {
     let registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(task, registry, Some(heuristic), None, None);
+    let mut search = AStarSearch::new(
+        task,
+        registry,
+        planforge_search::search::SearchParams {
+            heuristic,
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
     let result = search
         .search()
         .unwrap_or_else(|error| panic!("{what}: A* failed: {error}"));
@@ -410,7 +420,7 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
 
     let collection = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 10_000,
-        stagnation_limit: Some(Duration::ZERO),
+        stagnation_limit: Some(Duration::ZERO).into(),
         enable_blacklist_on_stagnation: false,
         member: DomainAbstractionConfig {
             cegar: CegarOptions {
@@ -446,14 +456,15 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
         ),
     );
 
-    let pdb = GreedyNumericPdbHeuristic::new(
-        &task as &dyn AbstractNumericTask,
-        GreedyPatternGeneratorConfig::default(),
-    );
+    let task_ref: TaskRef<'_> = Arc::new(&task);
+    let pdb = HeuristicConfig::from_spec(&parse_call("pdb(patterns=greedy())").unwrap())
+        .unwrap()
+        .build(&BuildContext::new(&task_ref));
     assert_refusal(
         "the greedy numeric PDB",
         pdb.err()
-            .expect("a derived goal is not an abstractable goal"),
+            .expect("a derived goal is not an abstractable goal")
+            .to_string(),
     );
 
     // The other half: every configuration that evaluates the goal against a closed

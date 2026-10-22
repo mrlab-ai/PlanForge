@@ -4,7 +4,7 @@
 //! The crate owns the process-level concerns -- argument parsing, resource
 //! limits and the wrapped child process, logging, the plan file and the exit
 //! code -- and delegates the planning itself to `planforge-translate` and
-//! `planforge-searcher`/`planforge-search`.
+//! `planforge-search`.
 //! It therefore orchestrates the complete PDDL translation → SAS+ task →
 //! search pipeline. Embedders that need the standard CLI with an additional
 //! native heuristic should use [`run_with_heuristics`].
@@ -28,17 +28,17 @@ use limits::{
     apply_process_limits, format_time_limit, normalize_wrapped_exit, parse_memory_limit,
     parse_time_limit,
 };
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, INF_VALUE, NumericRootTask, NumericValue, ONE_VALUE, TaskRef, ZERO_VALUE,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::config::SearchConfig;
 use planforge_search::heuristic_factory::{
-    ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
+    BuildContext, HeuristicBuildError, HeuristicEntry, register_external_heuristics,
 };
-use planforge_search::search::{SearchBuildContext, SearchResult, search_algorithm};
+use planforge_search::search::{
+    AStarSearch, GreedyBestFirstSearch, SearchEngine, SearchParams, SearchResult,
+};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
-use planforge_searcher::{HeuristicSpec, SearchSpec};
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
@@ -89,7 +89,7 @@ pub fn init_logger(level: LevelFilter) {
 
 /// Run the standard PlanForge CLI, with extra heuristics registered first.
 /// This is the supported way to ship your own heuristic inside the real binary.
-pub fn run_with_heuristics(extra: Vec<ExternalHeuristic>) -> std::io::Result<()> {
+pub fn run_with_heuristics(extra: Vec<HeuristicEntry>) -> std::io::Result<()> {
     register_external_heuristics(extra).map_err(std::io::Error::other)?;
 
     let cli = PlannersCli::parse();
@@ -153,16 +153,16 @@ pub struct PlannersCli {
     pub grounding: GroundingOptions,
 
     /// Recursive search configuration.
-    /// Examples: `astar(blind())`, `astar(domain_abstraction())`,
-    /// `astar(check_admissible(domain_abstraction()))`.
+    /// Examples: `astar(blind())`, `astar(domain())`,
+    /// `astar(check_admissible(domain()))`.
     #[arg(
         long,
         value_name = "SPEC",
         default_value = "astar(blind())",
-        value_parser = planforge_searcher::parse_search_spec,
-        long_help = planforge_search::search::search_algorithm_help()
+        value_parser = planforge_search::config::parse_search_spec,
+        long_help = planforge_search::config::search_algorithm_help()
     )]
-    pub search: SearchSpec,
+    pub search: SearchConfig,
 
     #[command(flatten)]
     pub portfolio: PortfolioOptions,
@@ -320,71 +320,59 @@ pub fn install_process_hooks(memory_limit: Option<u64>) -> std::io::Result<()> {
 /// stay in `run_internal`.
 pub fn solve_task(
     task: TaskRef<'_>,
-    spec: &SearchSpec,
+    spec: &SearchConfig,
     time_limit: Option<Duration>,
     memory_limit: Option<u64>,
 ) -> std::io::Result<SearchResult> {
     let state_registry = StateRegistry::for_task(task.clone());
-    let (algorithm_name, primary_heuristic, secondary_heuristic, mpd) = match spec {
-        SearchSpec::Astar(heuristic, mpd) => {
-            let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
-            info!("Starting A* search with {heuristic:?}, mpd={mpd}...");
-            ("astar", heuristic_override, None, *mpd)
-        }
-        SearchSpec::Gbfs(heuristic) => {
-            let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
-            info!("Starting GBFS search with {heuristic:?}...");
-            ("gbfs", heuristic_override, None, false)
-        }
-        SearchSpec::AstarFs(fast_spec, slow_spec) => {
-            // A* with two admissible heuristics: a fast one for ordering
-            // and a slow one evaluated lazily on second-pop. Treats the
-            // user's `blind` choice as a placeholder by materializing a
-            // real `BlindHeuristic` with the task's min-action-cost.
-            let task_ref: &dyn AbstractNumericTask = &*task;
-            let min_cost = (0..task_ref.get_operators().len())
-                .map(|op_id| {
-                    planforge_sas::numeric_task::NumericTaskExt::abstract_operator_cost(
-                        task_ref,
-                        planforge_sas::numeric_task::OperatorIndex::from_usize(op_id),
-                    )
+    let context = BuildContext::new(&task);
+    let mut engine: Box<dyn SearchEngine + '_> = match spec {
+        SearchConfig::AStar {
+            heuristic,
+            lazy,
+            mpd,
+        } => {
+            let heuristic = heuristic
+                .build(&context)
+                .map_err(HeuristicBuildError::into_io_error)?;
+            let lazy = lazy
+                .as_ref()
+                .map(|spec| {
+                    spec.build(&context)
+                        .map_err(HeuristicBuildError::into_io_error)
                 })
-                .fold(INF_VALUE, NumericValue::min);
-            let min_action_cost = if min_cost.is_finite() {
-                min_cost.max(ZERO_VALUE)
-            } else {
-                ONE_VALUE
-            };
-            let make_blind = || {
-                Box::new(
-                    planforge_search::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
-                        min_action_cost,
-                        None,
-                    ),
-                ) as Box<dyn planforge_search::evaluation::Heuristic + '_>
-            };
-            let fast_h = build_heuristic_from_spec(fast_spec, task_ref, task.clone())?
-                .unwrap_or_else(make_blind);
-            let slow_h = build_heuristic_from_spec(slow_spec, task_ref, task.clone())?
-                .unwrap_or_else(make_blind);
-            info!("Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}...");
-            ("astar_fs", Some(fast_h), Some(slow_h), false)
+                .transpose()?;
+            info!("Starting A* search, mpd={mpd}, lazy={}", lazy.is_some());
+            Box::new(AStarSearch::new(
+                &*task,
+                state_registry,
+                SearchParams {
+                    heuristic,
+                    lazy,
+                    reevaluate_dynamic: *mpd,
+                    time_limit,
+                    max_memory_bytes: memory_limit,
+                },
+            ))
+        }
+        SearchConfig::Gbfs { heuristic } => {
+            let heuristic = heuristic
+                .build(&context)
+                .map_err(HeuristicBuildError::into_io_error)?;
+            info!("Starting GBFS search...");
+            Box::new(GreedyBestFirstSearch::new(
+                &*task,
+                state_registry,
+                SearchParams {
+                    time_limit,
+                    max_memory_bytes: memory_limit,
+                    ..SearchParams::new(heuristic)
+                },
+            ))
         }
     };
-    let plugin = search_algorithm(algorithm_name)
-        .expect("every parsed state-space search has a registered builder");
-    let mut driver = (plugin.build)(SearchBuildContext {
-        task: &*task,
-        state_registry,
-        primary_heuristic,
-        secondary_heuristic,
-        time_limit,
-        max_memory_bytes: memory_limit,
-        mpd,
-    })
-    .map_err(|error| std::io::Error::other(format!("could not build search: {error:#}")))?;
-    driver
-        .run()
+    engine
+        .search()
         .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }
 
@@ -544,7 +532,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         "subcommands are dispatched before the search pipeline"
     );
     register_event_handlers();
-    planforge_searcher::preflight_required_backends(&cli.search)?;
+    cli.search.preflight()?;
 
     let start_time = std::time::Instant::now();
     let (mut task, sas_label) = if cli.inputs.len() == 2 {
@@ -568,7 +556,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     };
     if cli.restrict_task {
         let original_numeric_count = task.numeric_variables().len();
-        let restricted_task = if cli.search.contains_call("icaps26_cartesian") {
+        let restricted_task = if cli.search.requirements().icaps26_restriction {
             build_icaps26_restricted_task(&task)
         } else {
             build_restricted_task(&task)
@@ -604,13 +592,4 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     print_search_result(&result);
 
     Ok(result)
-}
-
-fn build_heuristic_from_spec<'a>(
-    spec: &HeuristicSpec,
-    task_ref: &'a dyn AbstractNumericTask,
-    sampling_task: TaskRef<'a>,
-) -> std::io::Result<Option<Box<dyn planforge_search::evaluation::Heuristic + 'a>>> {
-    planforge_search::heuristic_factory::build_heuristic_from_spec(spec, task_ref, sampling_task)
-        .map_err(HeuristicBuildError::into_io_error)
 }

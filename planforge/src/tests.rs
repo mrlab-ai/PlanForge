@@ -85,3 +85,29 @@ fn normalizes_wrapped_timeout_exit_code() {
         EXIT_TIMEOUT
     );
 }
+
+#[test]
+fn cli_rejects_nested_config_errors_without_loading_pddl() {
+    for (spec, detail) in [
+        (
+            "astar(scp(domian(),bogus=1))",
+            "scp.sources: unknown AbstractionSource `domian`",
+        ),
+        ("astar(scp(domain(),bogus=1))", "scp.bogus"),
+        ("astar(domain(max_states=bogus))", "max_states"),
+        (
+            "astar(numeric_potential(bogus=1))",
+            "numeric_potential.bogus",
+        ),
+    ] {
+        let error = PlannersCli::try_parse_from([
+            "planforge",
+            "--search",
+            spec,
+            "missing-domain.pddl",
+            "missing-problem.pddl",
+        ])
+        .expect_err("configuration must fail during CLI parsing");
+        assert!(error.to_string().contains(detail), "{error}");
+    }
+}

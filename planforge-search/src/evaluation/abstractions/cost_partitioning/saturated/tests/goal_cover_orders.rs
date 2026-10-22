@@ -19,7 +19,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 16,
-                    max_time: None,
+                    max_time: None.into(),
                     combine_labels: false,
                     random_seed: Some(1),
                     debug: false,
@@ -29,7 +29,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
             max_collection_size: 128,
-            total_max_time: None,
+            total_max_time: None.into(),
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,

@@ -113,16 +113,12 @@ impl Action {
         let name = format!("({} {})", self.name, arg_list.join(" "));
 
         // Instantiate precondition
-        let mut precondition = vec![];
-        {
-            let conds = self.precondition.instantiate_action(
-                var_mapping,
-                tables,
-                task_function_admin,
-                new_constant_axioms,
-            )?;
-            precondition = conds
-        }
+        let precondition = self.precondition.instantiate_action(
+            var_mapping,
+            tables,
+            task_function_admin,
+            new_constant_axioms,
+        )?;
 
         // Instantiate effects
         let mut add_effects = vec![];

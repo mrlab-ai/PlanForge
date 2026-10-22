@@ -873,10 +873,7 @@ fn build_consumer_index(operators: &RelaxedOperators, num_facts: usize) -> Vec<V
     consumers
 }
 
-pub struct FfHeuristic<'task> {
-    /// Live borrow of the task — used to return cloned `Operator`s for the
-    /// helpful-action interface.
-    task: &'task dyn AbstractNumericTask,
+pub struct FfHeuristic {
     /// For each (real or synthetic) operator in `op_preconditions`, the
     /// index into `task.get_operators()` if it's a real operator (used for
     /// helpful-action reporting), `None` for synthetic conditional-effect
@@ -931,17 +928,15 @@ pub struct FfHeuristic<'task> {
     /// `compute_heuristic`. The search engine reads it once per state via
     /// `copy_preferred_operator_ids` and stores the IDs on the search node;
     /// from there on it does integer-membership tests, not `Operator`
-    /// clones. `get_preferred_operators` (the `Operator`-returning trait
-    /// method) is still implemented by cloning from the task on demand,
-    /// for callers that want full operator objects.
+    /// clones.
     last_helpful_action_ids: RefCell<Vec<OperatorIndex>>,
 }
 
-impl<'task> FfHeuristic<'task> {
+impl FfHeuristic {
     /// Compile the task into the relaxed planning graph this heuristic
     /// evaluates: a fact universe, the operators over it, and the achiever and
     /// consumer indices the BFS and relaxed-plan extraction walk.
-    pub fn new(task: &'task dyn AbstractNumericTask) -> Result<Self, String> {
+    pub fn new(task: &dyn AbstractNumericTask) -> Result<Self, String> {
         let universe = FactUniverse::build(task)?;
         let num_facts = universe.len();
         let num_numeric = task.numeric_variables().len();
@@ -980,7 +975,6 @@ impl<'task> FfHeuristic<'task> {
             })
             .collect();
         Ok(Self {
-            task,
             op_task_idx: operators.task_idx,
             op_preconditions: operators.preconditions,
             state_dep_ops,
@@ -1614,11 +1608,7 @@ fn axiom_needs_direction(
     }
 }
 
-impl<'task> Heuristic for FfHeuristic<'task> {
-    fn dead_ends_are_reliable(&self) -> bool {
-        false
-    }
-
+impl Heuristic for FfHeuristic {
     fn compute_heuristic(
         &self,
         eval_state: &EvaluationState<'_, '_>,
@@ -1644,22 +1634,6 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         Ok(cost)
     }
 
-    fn get_preferred_operators(
-        &self,
-        _state: &planforge_sas::state_registry::ConcreteState,
-    ) -> Vec<planforge_sas::numeric_task::Operator> {
-        // The search engine is expected to call `compute_heuristic` for a
-        // state before asking for its preferred operators; we serve the
-        // snapshot from there. If the engine queries without an
-        // intervening `compute_heuristic`, the snapshot is stale — but
-        // that's a contract violation, not a fallback.
-        let ids = self.last_helpful_action_ids.borrow();
-        let task_ops = self.task.get_operators();
-        ids.iter()
-            .filter_map(|&task_idx| task_ops.get(task_idx.index()).cloned())
-            .collect()
-    }
-
     fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
         out.clear();
         out.extend_from_slice(&self.last_helpful_action_ids.borrow());
@@ -1667,5 +1641,20 @@ impl<'task> Heuristic for FfHeuristic<'task> {
 
     fn heuristic_name(&self) -> &str {
         "ff"
+    }
+}
+
+/// Registry feature for FF.
+pub struct FfFeature;
+impl crate::heuristic_factory::HeuristicFeature for FfFeature {
+    const NAME: &'static str = "ff";
+    type Config = crate::heuristic_factory::EmptyConfig;
+    fn build<'a>(
+        _: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
+        let heuristic = FfHeuristic::new(&**context.task)
+            .map_err(|error| format!("failed to construct ff heuristic: {error}"))?;
+        Ok(Box::new(heuristic))
     }
 }

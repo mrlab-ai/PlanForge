@@ -65,7 +65,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 1_000,
-                    max_time: Some(Duration::from_secs(5)),
+                    max_time: Some(Duration::from_secs(5)).into(),
                     random_seed: Some(1),
                     debug: false,
                     ..CartesianAbstractionConfig::default().cegar
@@ -74,7 +74,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
             max_collection_size: 10_000,
-            total_max_time: Some(Duration::from_secs(15)),
+            total_max_time: Some(Duration::from_secs(15)).into(),
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
@@ -180,7 +180,7 @@ fn initial_cartesian_scp_value(
         })
         .collect::<Vec<_>>();
     let config = ScpConfig {
-        table_construction_max_time: Some(Duration::from_secs(30)),
+        table_construction_max_time: Some(Duration::from_secs(30)).into(),
         saturator: Saturator::All,
         random_seed: 1,
         partitioning: if partitioning {
@@ -197,7 +197,7 @@ fn initial_cartesian_scp_value(
             .map(AbstractionComponent::from)
             .collect(),
         config,
-        task,
+        std::sync::Arc::new(task),
         Default::default(),
     )
     .expect("failed to construct oracle SCP heuristic");
@@ -240,13 +240,13 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     }
 
     let config = ScpConfig {
-        max_time: Some(Duration::from_secs(300)),
-        table_construction_max_time: Some(Duration::from_secs(30)),
+        max_time: Some(Duration::from_secs(300)).into(),
+        table_construction_max_time: Some(Duration::from_secs(30)).into(),
         diversify: false,
         samples: 1_000,
         max_orders: usize::MAX,
         order_generator: OrderGenerator::Greedy,
-        initial_order_generation_max_time: Some(Duration::ZERO),
+        initial_order_generation_max_time: Some(Duration::ZERO).into(),
         saturator: Saturator::All,
         random_seed: 1,
         partitioning: CostPartitioningMethod::Region,
@@ -265,7 +265,7 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
             .map(AbstractionComponent::from)
             .collect(),
         config,
-        transformed_task,
+        std::sync::Arc::new(transformed_task),
         Default::default(),
     )
     .expect("failed to construct SCP heuristic");

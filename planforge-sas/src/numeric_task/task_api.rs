@@ -102,6 +102,14 @@ pub trait AbstractNumericTask: Send + Sync {
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String>;
 
+    /// Effective operator costs in task order. Root tasks compute these once
+    /// when closing the initial state; views can expose the same stored table.
+    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [NumericValue]> {
+        (0..self.get_operators().len())
+            .map(|id| self.operator_cost_for_abstraction(OperatorIndex::from_usize(id)))
+            .collect()
+    }
+
     /// Customization hook used by [`NumericTaskExt::abstract_operator_cost`].
     fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue;
 }
@@ -529,6 +537,9 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         (**self).evaluate_initial_state_values()
+    }
+    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [NumericValue]> {
+        (**self).effective_operator_costs()
     }
     fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {
         (**self).operator_cost_for_abstraction(operator_id)
@@ -1035,6 +1046,10 @@ impl AbstractNumericTask for NumericRootTask {
             (*fact2, *fact1)
         };
         self.mutex_pairs.contains(&pair)
+    }
+
+    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [NumericValue]> {
+        std::borrow::Cow::Borrowed(&self.operator_costs)
     }
 
     fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {

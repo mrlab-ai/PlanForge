@@ -18,14 +18,12 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{
-    INF_VALUE, NumericValue, Operator, OperatorIndex, TaskRef, ZERO_VALUE,
-};
+use planforge_sas::numeric_task::{NumericValue, OperatorIndex, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use crate::evaluation::heuristic::{BlindHeuristic, CostType, Heuristic};
-use crate::search::compute_effective_operator_costs;
+use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::heuristic::minimum_action_cost;
 use crate::successor_generator::RegistryExpander;
 
 /// Slack allowed on `h <= h*` before an estimate counts as inadmissible.
@@ -48,22 +46,8 @@ pub struct CheckAdmissibleHeuristic<'task> {
 
 impl<'task> CheckAdmissibleHeuristic<'task> {
     /// Wrap `inner`, verifying it against the goal distances of `task`.
-    ///
-    /// `inner` is `None` for `check_admissible(blind())`: the heuristic factory
-    /// reports `blind` as "no heuristic object" and leaves the caller to
-    /// materialize one from the task's minimum action cost, which the oracle
-    /// computes anyway.
-    pub fn new(
-        inner: Option<Box<dyn Heuristic + 'task>>,
-        task: TaskRef<'task>,
-    ) -> Result<Self, String> {
+    pub fn new(inner: Box<dyn Heuristic + 'task>, task: TaskRef<'task>) -> Result<Self, String> {
         let oracle = GoalDistanceOracle::new(task)?;
-        let inner = inner.unwrap_or_else(|| {
-            Box::new(BlindHeuristic::with_min_action_cost(
-                oracle.min_action_cost,
-                None,
-            ))
-        });
         Ok(Self {
             // Keep the wrapper distinct from the heuristic it checks in diagnostics.
             name: format!("check_admissible_{}", inner.heuristic_name()),
@@ -130,33 +114,8 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
         self.inner.reevaluate_on_every_pop()
     }
 
-    fn dead_ends_are_reliable(&self) -> bool {
-        Heuristic::dead_ends_are_reliable(&*self.inner)
-    }
-
-    fn reach_state(
-        &mut self,
-        parent_state: &ConcreteState,
-        operator: &Operator,
-        state: &ConcreteState,
-    ) -> bool {
-        self.inner.reach_state(parent_state, operator, state)
-    }
-
-    fn get_preferred_operators(&self, state: &ConcreteState) -> Vec<Operator> {
-        self.inner.get_preferred_operators(state)
-    }
-
     fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
         self.inner.copy_preferred_operator_ids(out)
-    }
-
-    fn get_cost_type(&self) -> CostType {
-        self.inner.get_cost_type()
-    }
-
-    fn print_statistics(&self) {
-        self.inner.print_statistics();
     }
 }
 
@@ -179,8 +138,8 @@ impl<'task> GoalDistanceOracle<'task> {
         // Creating the initial state is what fixes the registry's numeric
         // layout (constant values and packed slots); `copy_state_in` needs it.
         registry.get_initial_state();
-        let operator_costs = compute_effective_operator_costs(&*task);
-        let min_action_cost = minimum_action_cost(&operator_costs)?;
+        let operator_costs = task.effective_operator_costs().into_owned();
+        let min_action_cost = minimum_action_cost(&operator_costs);
         let expander = RegistryExpander::new(&*task);
         Ok(Self {
             task,
@@ -329,26 +288,36 @@ fn open_entry(f_value: f64, g_value: f64, state_id: StateID) -> Result<OpenEntry
     Ok((Reverse(f_value), Reverse(g_value), state_id))
 }
 
-/// Cheapest operator in the task, used as the oracle's blind estimate.
-///
-/// Dijkstra is only correct for non-negative edge costs, so a task the oracle
-/// cannot measure exactly is rejected here rather than silently mismeasured.
-fn minimum_action_cost(operator_costs: &[NumericValue]) -> Result<NumericValue, String> {
-    let mut minimum = INF_VALUE;
-    for (operator_id, &cost) in operator_costs.iter().enumerate() {
-        if !cost.is_finite() || cost < ZERO_VALUE {
-            return Err(format!(
-                "`check_admissible` cannot verify a task whose operator {operator_id} costs \
-                 {cost}; it needs finite non-negative costs"
-            ));
-        }
-        minimum = minimum.min(cost);
+#[derive(Debug, Clone, Default)]
+pub struct CheckAdmissibleConfig {
+    inner: crate::heuristic_factory::HeuristicConfig,
+}
+impl crate::config::ApplyOptions for CheckAdmissibleConfig {
+    fn apply_options(
+        &mut self,
+        args: &[crate::config::ConfigArg],
+    ) -> Result<(), crate::config::ConfigError> {
+        let spec =
+            crate::heuristic_factory::single_wrapped_heuristic_spec("check_admissible", args)?;
+        self.inner = crate::heuristic_factory::HeuristicConfig::from_spec(&spec)?;
+        Ok(())
     }
-    // A task without operators has no transitions at all, so zero is the
-    // tightest lower bound on the remaining cost.
-    Ok(if operator_costs.is_empty() {
-        ZERO_VALUE
-    } else {
-        minimum
-    })
+}
+pub struct CheckAdmissibleFeature;
+impl crate::heuristic_factory::HeuristicFeature for CheckAdmissibleFeature {
+    const NAME: &'static str = "check_admissible";
+    type Config = CheckAdmissibleConfig;
+    fn nested(config: &Self::Config) -> Vec<&crate::heuristic_factory::HeuristicConfig> {
+        vec![&config.inner]
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
+        let inner = config.inner.build(context)?;
+        Ok(Box::new(CheckAdmissibleHeuristic::new(
+            inner,
+            context.task.clone(),
+        )?))
+    }
 }

@@ -35,7 +35,10 @@ impl Default for Icaps26CartesianConfig {
 }
 
 impl crate::config::ApplyOptions for Icaps26CartesianConfig {
-    fn apply_options(&mut self, args: &[crate::config::ConfigArg]) -> Result<(), String> {
+    fn apply_options(
+        &mut self,
+        args: &[crate::config::ConfigArg],
+    ) -> Result<(), crate::config::ConfigError> {
         use crate::config::FromOptionValue;
 
         let mut seen = HashSet::new();
@@ -44,7 +47,7 @@ impl crate::config::ApplyOptions for Icaps26CartesianConfig {
                 .key()
                 .ok_or_else(|| "all options for `icaps26_cartesian` must be named".to_string())?;
             if !seen.insert(key) {
-                return Err(format!("duplicate option `{key}` for `icaps26_cartesian`"));
+                return Err(format!("duplicate option `{key}` for `icaps26_cartesian`").into());
             }
             match key {
                 "pick" => {
@@ -56,20 +59,14 @@ impl crate::config::ApplyOptions for Icaps26CartesianConfig {
                         _ => {
                             return Err(format!(
                                 "invalid ICAPS 2026 split selector `{value}`; expected random, min_unwanted, or max_unwanted"
-                            ));
+                            ).into());
                         }
                     };
                 }
                 "max_states" => self.max_states = usize::from_option_value(arg.value())?,
                 "max_time" => {
-                    let seconds = f64::from_option_value(arg.value())?;
-                    self.max_time = if seconds.is_infinite() {
-                        None
-                    } else {
-                        Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
-                            format!("invalid ICAPS 2026 max_time {seconds}: {error}")
-                        })?)
-                    };
+                    self.max_time =
+                        crate::config::TimeLimit::from_option_value(arg.value())?.duration()?;
                 }
                 "random_seed" => {
                     let seed = u64::from_option_value(arg.value())?;
@@ -80,7 +77,7 @@ impl crate::config::ApplyOptions for Icaps26CartesianConfig {
                 "combine_labels" => self.combine_labels = bool::from_option_value(arg.value())?,
                 "debug" => self.debug = bool::from_option_value(arg.value())?,
                 other => {
-                    return Err(format!("unknown option `{other}`"));
+                    return Err(format!("unknown option `{other}`").into());
                 }
             }
         }

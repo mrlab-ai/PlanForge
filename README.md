@@ -65,9 +65,19 @@ heuristic is an explicit configuration error.
 
 Single-call PDDL pipeline:
 
-    planforge --search 'astar(canonical_abstractions::domain(...))' \
+    planforge --search 'astar(canonical([domain(max_states=1000)]))' \
               --max-time 30m --max-memory 8G \
               domain.pddl problem.pddl
+
+A* accepts an optional lazy heuristic: `astar(blind(),lazy=lmcutnumeric())`.
+This is Lazy A*: a state is evaluated by the second heuristic when popped and
+reinserted with the combined priority before expansion. Evaluation
+statistics include calls to both heuristics. Dynamic heuristic re-evaluation
+is enabled separately with `mpd=true` on A*.
+
+`max([ff(),lmcutnumeric(),domain(max_states=1000)])` takes the maximum over
+any heuristics. Abstraction sources among its children share one abstraction
+evaluator; other heuristics are evaluated alongside it.
 
 Hierarchical abstraction sources make collection generation and combination
 independent. For example:
@@ -84,10 +94,20 @@ independent. For example:
       'astar(canonical([icaps26_cartesian(pick=min_unwanted,max_time=900)]))' \
       domain.pddl problem.pddl
 
-The `[...]` source-list form is canonical for `max`, `canonical` and `scp`; the
-older flat positional source form remains accepted. PDB sources
-select their generator explicitly with `patterns=systematic(...)` or
-`patterns=greedy(...)`.
+`max`, `canonical`, `scp` and `posthoc_optimization` take their children as
+their first argument: one list `[a, b]`, or a single child without brackets.
+Every abstraction source is also a heuristic on its own, the maximum over its
+abstractions: `astar(domain(...))`, `astar(pdb(...))`. A PDB source selects its
+pattern generator with `patterns=systematic(...)` (the default) or
+`patterns=greedy(...)`; `exploration_heuristic`, `frontier_heuristic` and
+`failed_lookup_heuristic` are options of `pdb(...)` itself and apply to both.
+
+Configuration values are calls, identifiers, nested lists, numbers or single- or
+double-quoted strings; anything else, such as a path, must be quoted, for example
+`ray_certificate_file="Results/Run 1,certificate.txt"`. String case is preserved;
+option names, heuristic names and enum values match without regard to case.
+Configuration errors are reported before PDDL translation, with the nested
+option path.
 
 Domain and Cartesian abstractions take the same CEGAR options, by name:
 `max_states`, `max_iterations`, `max_time` (seconds, or `infinity`),
@@ -127,7 +147,7 @@ Common options:
   - `astar(canonical(domain(...)))`
   - `astar(numeric_potential(opt=initial_state,max_potential=1e8))`
   - `astar(numeric_potential(opt=diverse_samples,num_heuristics=4,num_samples=100,max_potential=1e8,cache_estimates=true,invalidate_online_cache_on_growth=true),mpd=true)`
-  - `astar(posthoc_optimization(domain_collection(...)))` — LP-based dominator of canonical over the same abstraction sources; `pho(...)` is accepted as an alias
+  - `astar(posthoc_optimization(domain_collection(...)))` — LP-based dominator of canonical over the same abstraction sources
   - `astar(ff())`
   - `gbfs(ff())` — fast non-admissible search
   - `gbfs(lmcutnumeric())`
@@ -145,7 +165,7 @@ Common options:
   already restricted tasks are retained unchanged.
 - `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
   under a tight budget (`--lmcut-time`, `--lmcut-memory`), then
-  `astar(canonical_abstractions::domain(...))` (`--canonical-construction-time`,
+  `astar(canonical([domain(max_states=1000)]))` (`--canonical-construction-time`,
   `--canonical-memory`, `--canonical-time`). Each stage is a child `planforge`
   process, so stage 1's limits are enforced and stage 2 starts clean.
 
@@ -156,10 +176,10 @@ Workspace crates:
 - `planforge` — both binaries: the planner (`planforge`) and the translate-only
   staging tool (`planforge-translator`), plus the CLI, the reporting allocator,
   the resource limits, the portfolio and the plan output.
-- `planforge-searcher` — which search engine a `--search` spec names.
 - `planforge-translate`, `planforge-search`, `planforge-sas` — translation, search and task libraries.
-  Adding a heuristic is a change to `planforge-search` alone: the heuristic's own
-  module, and one arm of `heuristic_factory::build_heuristic_from_spec`.
+  `planforge-search` also parses the `--search` language. Adding a heuristic is a
+  change to `planforge-search` alone: the heuristic's own module, and one entry
+  in the `heuristic_factory` registry.
 - `planforge-config-derive` — `#[derive(ApplyOptions)]`, which cannot be merged: a
   `proc-macro` crate is its own compilation unit. It derives each config's
   positional-argument order from its field order; a config that flattens shared

@@ -56,7 +56,13 @@ pub(crate) fn refine_from_root<R: Refinable>(
             flaw_kind: options.flaw_kind,
             flaw_scope: options.flaw_scope,
             refinement_root,
-            driver: CegarDriver::new(options.max_iterations, options.max_time),
+            driver: CegarDriver::new(
+                options.max_iterations,
+                options
+                    .max_time
+                    .duration()
+                    .expect("validated CEGAR time limit"),
+            ),
         },
         start,
     )

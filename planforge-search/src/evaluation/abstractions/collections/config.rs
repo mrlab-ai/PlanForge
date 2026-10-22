@@ -1,6 +1,8 @@
 //! The configuration of a collection of abstractions, the same for domain and
 //! Cartesian abstractions.
 
+use crate::config::TimeLimit;
+
 use std::time::Duration;
 
 use anyhow::{Result, ensure};
@@ -27,7 +29,7 @@ pub trait MemberConfig: ApplyOptions + Clone {
         let mut config = self.clone();
         let cegar = config.cegar_mut();
         cegar.max_states = construction.max_states;
-        cegar.max_time = construction.max_time;
+        cegar.max_time = construction.max_time.into();
         cegar.random_seed = construction.random_seed;
         cegar.split_kind = construction.split_kind;
         cegar.split_selection_rank = construction.split_selection_rank;
@@ -48,8 +50,8 @@ pub struct CollectionConfig<M: ApplyOptions> {
     pub variants_per_goal: usize,
     /// The most abstract states of all members together.
     pub max_collection_size: usize,
-    /// How long building the collection may take; unbounded when `None`.
-    pub total_max_time: Option<Duration>,
+    /// How long building the collection may take; unbounded for `infinity`.
+    pub total_max_time: TimeLimit,
     /// Let every variant of a goal-focused collection refine from the
     /// concrete states its earlier members' plans reached.
     pub progress_states: bool,
@@ -67,8 +69,8 @@ pub struct CollectionConfig<M: ApplyOptions> {
     /// so the members' own `split_kind` keeps its default.
     pub split_kind: Option<SplitKind>,
     /// Standard collections: how long without a new member the collection
-    /// stagnates after; never when `None`.
-    pub stagnation_limit: Option<Duration>,
+    /// stagnates after; never for `infinity`.
+    pub stagnation_limit: TimeLimit,
     /// Standard collections: the share of `total_max_time`, between 0 and 1,
     /// after which restarts blacklist variables; never without a
     /// `total_max_time`.
@@ -80,7 +82,7 @@ pub struct CollectionConfig<M: ApplyOptions> {
     pub member: M,
 }
 
-const DEFAULT_STAGNATION_LIMIT: Option<Duration> = Some(Duration::from_secs(20));
+const DEFAULT_STAGNATION_LIMIT: TimeLimit = TimeLimit(20.0);
 const DEFAULT_BLACKLIST_TRIGGER_PERCENTAGE: f64 = 0.75;
 const DEFAULT_ENABLE_BLACKLIST_ON_STAGNATION: bool = true;
 
@@ -114,7 +116,7 @@ impl<M: MemberConfig + Default> Default for CollectionConfig<M> {
             collection_strategy: CollectionStrategy::Standard,
             variants_per_goal: 1,
             max_collection_size: 10_000_000,
-            total_max_time: Some(Duration::from_secs(10)),
+            total_max_time: TimeLimit::from(Some(Duration::from_secs(10))),
             progress_states: false,
             alternate_split_kinds: None,
             single_goal_tasks: true,
@@ -130,6 +132,10 @@ impl<M: MemberConfig + Default> Default for CollectionConfig<M> {
 impl<M: MemberConfig> CollectionConfig<M> {
     /// Rejects options the strategy does not follow.
     pub(crate) fn validate(&self) -> Result<()> {
+        self.total_max_time.duration().map_err(anyhow::Error::msg)?;
+        self.stagnation_limit
+            .duration()
+            .map_err(anyhow::Error::msg)?;
         let strategy = self.collection_strategy;
         ensure!(
             self.max_collection_size > 0,
@@ -180,7 +186,12 @@ impl<M: MemberConfig> CollectionConfig<M> {
         );
         if strategy != CollectionStrategy::Standard {
             ensure!(
-                self.stagnation_limit == DEFAULT_STAGNATION_LIMIT
+                self.stagnation_limit
+                    .duration()
+                    .map_err(anyhow::Error::msg)?
+                    == DEFAULT_STAGNATION_LIMIT
+                        .duration()
+                        .expect("the default stagnation limit fits Duration")
                     && self.blacklist_trigger_percentage == DEFAULT_BLACKLIST_TRIGGER_PERCENTAGE
                     && self.enable_blacklist_on_stagnation
                         == DEFAULT_ENABLE_BLACKLIST_ON_STAGNATION,
@@ -213,29 +224,49 @@ impl<M: MemberConfig> CollectionConfig<M> {
     }
 
     /// Bounds the collection and each member by `limit`.
-    pub(crate) fn cap_construction_time(&mut self, limit: Duration) {
-        self.total_max_time = min_time_limit(self.total_max_time, Some(limit));
+    pub(crate) fn cap_construction_time(&mut self, limit: Duration) -> Result<()> {
+        self.total_max_time = min_time_limit(
+            self.total_max_time.duration().map_err(anyhow::Error::msg)?,
+            Some(limit),
+        )
+        .into();
         let cegar = self.member.cegar_mut();
-        cegar.max_time = min_time_limit(cegar.max_time, Some(limit));
+        cegar.max_time = min_time_limit(
+            cegar.max_time.duration().map_err(anyhow::Error::msg)?,
+            Some(limit),
+        )
+        .into();
+        Ok(())
     }
 
     fn limits(&self) -> CollectionLimits {
         let cegar = self.member.cegar();
         CollectionLimits {
             max_collection_states: self.max_collection_size,
-            total_max_time: self.total_max_time,
+            total_max_time: self
+                .total_max_time
+                .duration()
+                .expect("validated total time limit"),
             member_max_states: cegar.max_states,
-            member_max_time: cegar.max_time,
+            member_max_time: cegar
+                .max_time
+                .duration()
+                .expect("validated member time limit"),
         }
     }
 
     pub(crate) fn standard_schedule(&self) -> StandardSchedule {
         StandardSchedule {
             limits: self.limits(),
-            stagnation_limit: self.stagnation_limit,
+            stagnation_limit: self
+                .stagnation_limit
+                .duration()
+                .expect("validated stagnation limit"),
             // Blacklisting by time needs a time limit to take the share of.
             blacklist_start: self
                 .total_max_time
+                .duration()
+                .expect("validated total time limit")
                 .map(|total| total.mul_f64(self.blacklist_trigger_percentage)),
             enable_blacklist_on_stagnation: self.enable_blacklist_on_stagnation,
             random_seed: self.random_seed().unwrap_or(DEFAULT_RANDOM_SEED),

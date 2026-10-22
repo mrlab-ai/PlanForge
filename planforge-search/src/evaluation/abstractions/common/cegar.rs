@@ -12,14 +12,12 @@ pub(crate) mod view;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 use crate::config::option_enum;
 use crate::resource_limits::Deadline;
 
 /// How CEGAR finds the flaws of an abstract plan.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlawKind {
     /// By executing the plan from the refinement root.
     Progression,
@@ -33,8 +31,7 @@ option_enum!("flaw_kind", FlawKind {
 });
 
 /// Which flaws of an abstract plan CEGAR collects.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlawScope {
     /// The first flaw.
     First,
@@ -52,18 +49,11 @@ option_enum!("flaw_scope", FlawScope {
 
 /// Where a split separates a flawed value from the values the abstract plan
 /// wants: next to the concrete value, or at the bound of the wanted values.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SplitKind {
     #[default]
     Concrete,
     Wanted,
-}
-
-impl crate::config::FromOptionValue for Option<SplitKind> {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        SplitKind::from_option_value(value).map(Some)
-    }
 }
 
 option_enum!("split_kind", SplitKind {
@@ -72,8 +62,7 @@ option_enum!("split_kind", SplitKind {
 });
 
 /// How CEGAR chooses among the candidate splits of a flaw.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitSelection {
     /// The split that grows the abstraction least (Kreft et al. 2023); ties
     /// by a seeded key.

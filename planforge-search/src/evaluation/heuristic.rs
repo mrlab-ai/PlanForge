@@ -1,8 +1,7 @@
 //! Base trait for heuristic evaluators.
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_sas::numeric_task::{NumericValue, Operator, OperatorIndex};
-use planforge_sas::state_registry::ConcreteState;
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, OperatorIndex, ZERO_VALUE};
 
 /// Base trait for heuristic functions.
 ///
@@ -47,34 +46,8 @@ pub trait Heuristic {
         false
     }
 
-    /// Return true if dead ends detected by this heuristic are reliable.
-    fn dead_ends_are_reliable(&self) -> bool {
-        false
-    }
-
     /// Get the name of this heuristic (it allows custom names).
     fn heuristic_name(&self) -> &str;
-
-    /// Called when a new state is reached during search.
-    ///
-    /// This allows heuristics to update internal state or caches.
-    /// Return true if the heuristic successfully processed the state.
-    fn reach_state(
-        &mut self,
-        _parent_state: &ConcreteState,
-        _operator: &Operator,
-        _state: &ConcreteState,
-    ) -> bool {
-        true
-    }
-
-    /// Get preferred operators for the given state.
-    ///
-    /// Some heuristics can suggest operators that are likely to lead
-    /// towards the goal. The default implementation returns no preferences.
-    fn get_preferred_operators(&self, _state: &ConcreteState) -> Vec<Operator> {
-        vec![]
-    }
 
     /// Get the task-operator indices of preferred operators for the most
     /// recently evaluated state.
@@ -90,27 +63,6 @@ pub trait Heuristic {
     fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
         out.clear();
     }
-
-    /// Return the cost type used by this heuristic.
-    fn get_cost_type(&self) -> CostType {
-        CostType::Normal
-    }
-
-    /// Print statistics about this heuristic.
-    fn print_statistics(&self) {
-        // Default implementation does nothing.
-    }
-}
-
-/// Different ways to handle operator costs in heuristics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CostType {
-    /// Use normal operator costs.
-    Normal,
-    /// Treat all operators as having cost 1.
-    Unit,
-    /// Use only the cost of the most expensive operator.
-    Max,
 }
 
 /// A heuristic that returns `0` for goal states and `min_action_cost` for
@@ -123,19 +75,11 @@ pub struct BlindHeuristic {
 }
 
 impl BlindHeuristic {
-    pub fn new(name: Option<String>) -> Self {
+    /// Build the blind estimate from the task's cheapest effective action cost.
+    pub fn for_task(task: &dyn AbstractNumericTask) -> Self {
         Self {
-            name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
-            min_action_cost: NumericValue::new(1.0),
-        }
-    }
-
-    /// Create a `BlindHeuristic` that uses the provided `min_action_cost` for
-    /// non-goal states.
-    pub fn with_min_action_cost(min_action_cost: NumericValue, name: Option<String>) -> Self {
-        Self {
-            name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
-            min_action_cost,
+            name: "blind_heuristic".to_string(),
+            min_action_cost: minimum_action_cost(&task.effective_operator_costs()),
         }
     }
 }
@@ -155,5 +99,35 @@ impl Heuristic for BlindHeuristic {
 
     fn heuristic_name(&self) -> &str {
         &self.name
+    }
+}
+
+/// The cheapest operator cost: a lower bound on the remaining cost of every
+/// non-goal state, and zero for a task without operators. Tasks reject
+/// negative costs when they are constructed.
+pub(crate) fn minimum_action_cost(operator_costs: &[NumericValue]) -> NumericValue {
+    operator_costs
+        .iter()
+        .copied()
+        .inspect(|&cost| {
+            assert!(
+                cost.is_finite() && cost >= ZERO_VALUE,
+                "operator costs are finite and non-negative, got {cost}"
+            );
+        })
+        .reduce(NumericValue::min)
+        .unwrap_or(ZERO_VALUE)
+}
+
+/// Registry feature for the blind heuristic.
+pub struct BlindFeature;
+impl crate::heuristic_factory::HeuristicFeature for BlindFeature {
+    const NAME: &'static str = "blind";
+    type Config = crate::heuristic_factory::EmptyConfig;
+    fn build<'a>(
+        _: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
+        Ok(Box::new(BlindHeuristic::for_task(&**context.task)))
     }
 }

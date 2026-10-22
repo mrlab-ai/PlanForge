@@ -551,7 +551,19 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
 
     let blind_plan = {
         let registry = StateRegistry::for_task(Arc::new(&task));
-        let mut search = AStarSearch::new(&task, registry, None, None, None);
+        let mut search = AStarSearch::new(
+            &task,
+            registry,
+            planforge_search::search::SearchParams {
+                heuristic: Box::new(
+                    planforge_search::evaluation::heuristic::BlindHeuristic::for_task(&task),
+                ),
+                lazy: None,
+                reevaluate_dynamic: false,
+                time_limit: None,
+                max_memory_bytes: None,
+            },
+        );
         let result = search.search().expect("blind A* search failed");
         match (&result.status, result.plan) {
             (SearchStatus::Solved(_), Some(plan)) => plan,
@@ -620,7 +632,17 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
         LmCutNumericConfig::default(),
     )
     .expect("default lmcutnumeric config should be supported");
-    let mut search = AStarSearch::new(&task, registry, Some(Box::new(heuristic)), None, None);
+    let mut search = AStarSearch::new(
+        &task,
+        registry,
+        planforge_search::search::SearchParams {
+            heuristic: Box::new(heuristic),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
     let result = search.search().expect("LM-cut A* search failed");
 
     let plan = match (&result.status, &result.plan) {

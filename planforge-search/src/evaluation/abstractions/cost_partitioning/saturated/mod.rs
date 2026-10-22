@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt, OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::TaskRef;
 use rand::{SeedableRng, rngs::SmallRng};
 use tracing::info;
 
@@ -75,7 +75,7 @@ struct RetainedCostPartitionings {
 
 pub struct SaturatedCostPartitioningHeuristic<'task> {
     name: String,
-    task: &'task dyn AbstractNumericTask,
+    task: TaskRef<'task>,
     config: ScpConfig,
     original_operator_costs: Vec<f64>,
     state: RefCell<ScpState<'task>>,
@@ -84,41 +84,25 @@ pub struct SaturatedCostPartitioningHeuristic<'task> {
     construction_deadline: Deadline,
 }
 
-/// What a [`SaturatedCostPartitioningHeuristic`] needs besides its abstractions
-/// and configuration.
-#[derive(Default)]
-pub struct ScpBuildOptions<'task> {
-    /// An owned task to sample states from by random walks; required for
-    /// diverse orders.
-    pub sampling_task: Option<TaskRef<'task>>,
-    /// When the heuristic's construction must end, which bounds building the
-    /// cost partitionings at the first evaluated state too.
-    pub construction_deadline: Deadline,
-}
-
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     pub fn new(
         name: Option<String>,
         components: Vec<AbstractionComponent<'task>>,
         config: ScpConfig,
-        task: &'task dyn AbstractNumericTask,
-        options: ScpBuildOptions<'task>,
+        task: TaskRef<'task>,
+        construction_deadline: Deadline,
     ) -> Result<Self, EvaluationError> {
-        let ScpBuildOptions {
-            sampling_task,
-            construction_deadline,
-        } = options;
         if components.is_empty() {
             return Err(EvaluationError::ComputationFailed(
                 "SCP requires at least one abstraction component".to_string(),
             ));
         }
         config
-            .validate(sampling_task.is_some())
+            .validate()
             .map_err(EvaluationError::ComputationFailed)?;
         let mut components = components;
         if config.partitioning.uses_regions() {
-            let regions = RegionSemantics::new(task)
+            let regions = RegionSemantics::new(&*task)
                 .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
             for (component_id, component) in components.iter_mut().enumerate() {
                 match component {
@@ -135,11 +119,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 }
             }
         }
-        let original_costs: Vec<f64> = (0..task.get_operators().len())
-            .map(|op_id| {
-                task.abstract_operator_cost(OperatorIndex::from_usize(op_id))
-                    .value()
-            })
+        let original_costs: Vec<f64> = task
+            .effective_operator_costs()
+            .iter()
+            .map(|cost| cost.value())
             .collect();
 
         let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(components.len());
@@ -179,7 +162,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let selection = OrderSelection {
             goal_distances_by_abstraction: h_values,
             stolen_costs_by_abstraction: stolen_costs,
-            sampling_task,
+            sampling_task: Some(task.clone()),
             ..OrderSelection::new(config.random_seed)
         };
 
@@ -209,7 +192,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         let budget = self.construction_deadline.earliest(deadline_from_now(
             "table_construction_max_time",
-            self.config.table_construction_max_time,
+            self.config
+                .table_construction_max_time
+                .duration()
+                .map_err(EvaluationError::ComputationFailed)?,
         )?);
         let abstraction_h = abstraction_heuristic_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
@@ -243,7 +229,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             collection,
             &mut order,
             budget,
-            self.config.initial_order_generation_max_time,
+            self.config
+                .initial_order_generation_max_time
+                .duration()
+                .map_err(EvaluationError::ComputationFailed)?,
         )?;
         let best = candidates.partitions.swap_remove(candidates.best_index);
         if best.is_empty() {
@@ -317,3 +306,30 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
 
 #[cfg(test)]
 mod tests;
+
+pub use registry_feature::ScpFeature;
+mod registry_feature {
+    use crate::config::ConfigError;
+    use crate::evaluation::Heuristic;
+    use crate::heuristic_factory::features::{source_requirements, validate_sources};
+    use crate::heuristic_factory::*;
+
+    pub struct ScpFeature;
+    impl HeuristicFeature for ScpFeature {
+        const NAME: &'static str = "scp";
+        type Config = ScpHeuristicConfig;
+        fn requirements(config: &Self::Config) -> TaskRequirements {
+            source_requirements(&config.sources)
+        }
+        fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+            validate_sources(&config.sources)?;
+            config.scp.validate().map_err(Into::into)
+        }
+        fn build<'a>(
+            config: &Self::Config,
+            context: &BuildContext<'a>,
+        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+            build_scp_from_sources(context, config)
+        }
+    }
+}
