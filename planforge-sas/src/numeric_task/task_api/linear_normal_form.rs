@@ -10,6 +10,10 @@ impl NumericRootTask {
     /// Differences from operation-by-operation rounding within the existing
     /// canonicalization tolerance are intentional; the tolerance itself is
     /// unchanged. Nonlinear comparisons keep their expression definitions.
+    /// Terms are ordered by variable. A multivariate part is divided by the
+    /// magnitude of its leading coefficient, leaving that coefficient +1 or
+    /// -1; its orientation is retained. A unary part instead becomes its
+    /// regular variable, reversing the comparison for a negative coefficient.
     pub(super) fn normalize_linear_comparisons(&mut self) {
         self.fold_arithmetic_constants();
         let mut parts = std::collections::HashMap::new();
@@ -99,9 +103,14 @@ impl NumericRootTask {
                 "comparison {id} has non-finite linear coefficients"
             );
             let mut operator = comparison.operator.clone();
-            let scale = terms
+            let leading = terms
                 .first()
                 .map_or(ONE_VALUE, |(_, coefficient)| *coefficient);
+            let scale = if terms.len() == 1 {
+                leading
+            } else {
+                leading.abs()
+            };
             if scale < ZERO_VALUE {
                 operator = match operator {
                     ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,
@@ -111,8 +120,8 @@ impl NumericRootTask {
                     other => other,
                 };
             }
-            // Dividing by the leading coefficient identifies positive scalar
-            // multiples as well as opposite orientations of the same sum.
+            // Multivariate parts preserve orientation and identify positive
+            // scalar multiples. Unary coefficients are eliminated entirely.
             for (_, coefficient) in &mut terms {
                 *coefficient = float_tolerance::canonicalize(*coefficient / scale);
                 assert!(

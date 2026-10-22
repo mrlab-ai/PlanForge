@@ -88,7 +88,7 @@ fn task(
 }
 
 #[test]
-fn shares_linear_parts_across_constants_order_and_scale() {
+fn shares_linear_parts_across_constants_order_and_positive_scale() {
     use CalOperator::*;
     use ComparisonOperator::*;
     // x+y-4 >= 0, 2*(y+x) > 4 and -(x+y) <= 0.
@@ -101,21 +101,21 @@ fn shares_linear_parts_across_constants_order_and_scale() {
             (Sum, 1, 0),
             (Product, 8, 4),
             (Product, 6, 5),
+            (Product, 10, 4),
         ],
         &[
             (7, 3, GreaterThanOrEqual),
             (9, 2, GreaterThan),
             (10, 3, LessThanOrEqual),
+            (11, 2, LessThanOrEqual),
         ],
     );
-    assert_eq!(task.assignment_axioms.len(), 1);
+    assert_eq!(task.assignment_axioms.len(), 2);
     let comparisons = &task.comparison_axioms;
-    assert!(
-        comparisons
-            .iter()
-            .all(|comparison| comparison.left_hand_side == comparisons[0].left_hand_side)
-    );
-    assert_eq!(comparisons[2].operator, GreaterThanOrEqual);
+    assert_eq!(comparisons[0].left_hand_side, comparisons[1].left_hand_side);
+    assert_eq!(comparisons[2].left_hand_side, comparisons[3].left_hand_side);
+    assert_ne!(comparisons[0].left_hand_side, comparisons[2].left_hand_side);
+    assert_eq!(comparisons[2].operator, LessThanOrEqual);
     assert_eq!(
         task.numeric_state[comparisons[0].right_hand_side.index()],
         NumericValue::new(4.0)
