@@ -101,9 +101,9 @@ older flat positional source form remains accepted. PDB sources
 select their generator explicitly with `patterns=systematic(...)` or
 `patterns=greedy(...)`.
 
-Configurations support nested lists and single- or double-quoted scalar
-values. Quote paths containing spaces or delimiters, for example
-`ray_certificate_file="Results/Run 1,certificate.txt"`. Scalar case is preserved;
+Configuration values are calls, identifiers, nested lists, numbers or single- or
+double-quoted strings; anything else, such as a path, must be quoted, for example
+`ray_certificate_file="Results/Run 1,certificate.txt"`. String case is preserved;
 option names, heuristic names and enum values match without regard to case.
 Configuration errors are reported before PDDL translation, with the nested
 option path. The `search(astar(...))` wrapper and trailing `.` or `;` remain

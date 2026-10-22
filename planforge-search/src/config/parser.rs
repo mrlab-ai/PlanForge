@@ -1,10 +1,10 @@
 //! Text to AST for the option language.
 //!
 //! Calls contain positional values and named `key=value` arguments. Values
-//! are calls, recursive lists or scalars; quoted scalars preserve delimiters.
-//! Bare identifiers and zero-argument calls share the same call node. Paths
-//! without whitespace or delimiters remain accepted as unquoted scalars for
-//! compatibility. Search engine options are decoded by [`super::SearchConfig`].
+//! are calls, recursive lists, numbers or quoted strings. Bare identifiers and
+//! zero-argument calls share the same call node; any other text, such as a
+//! path, must be quoted. Search engine options are decoded by
+//! [`super::SearchConfig`].
 
 use super::{ConfigArg, ConfigCall, ConfigValue};
 
@@ -117,7 +117,7 @@ impl<'a> ConfigParser<'a> {
             }
         }
         self.pos = checkpoint;
-        Ok(ConfigValue::Atom(self.parse_scalar()?))
+        Ok(ConfigValue::Atom(self.parse_number()?))
     }
 
     fn parse_quoted(&mut self) -> Result<String, String> {
@@ -208,23 +208,24 @@ impl<'a> ConfigParser<'a> {
         }
     }
 
-    fn parse_scalar(&mut self) -> Result<String, String> {
+    /// A decimal number such as `-2`, `0.5` or `1e-3`.
+    fn parse_number(&mut self) -> Result<String, String> {
         self.skip_ws();
         let start = self.pos;
         while let Some(ch) = self.peek_char() {
-            if matches!(ch, ',' | ')' | ']' | '[' | '(' | '=' | '\'' | '"') || ch.is_whitespace() {
+            if !(ch.is_ascii_digit() || matches!(ch, '+' | '-' | '.' | 'e' | 'E')) {
                 break;
             }
-            self.pos += ch.len_utf8();
+            self.pos += 1;
         }
-        let value = self.input[start..self.pos].trim();
-        if value.is_empty() {
-            Err(format!(
-                "Invalid configuration: expected value at byte {start}"
-            ))
-        } else {
-            Ok(value.to_string())
+        let value = &self.input[start..self.pos];
+        if value.parse::<f64>().is_err() {
+            return Err(format!(
+                "Invalid configuration: expected a value (call, list, number or quoted \
+                 string) at byte {start}"
+            ));
         }
+        Ok(value.to_string())
     }
 
     fn skip_ws(&mut self) {
@@ -284,8 +285,26 @@ mod tests {
         assert_eq!(spec.args[1].value.as_atom().unwrap(), "A\\B");
         assert!(bool::from_option_value(&spec.args[2].value).unwrap());
         assert_eq!(parse_call(&spec.to_string()).unwrap(), spec);
-        let unquoted = parse_call("root(path=Dir/MyFile.txt)").unwrap();
-        assert_eq!(unquoted.args[0].value.as_atom().unwrap(), "Dir/MyFile.txt");
+    }
+
+    #[test]
+    fn unquoted_values_are_identifiers_calls_lists_or_numbers() {
+        let spec = parse_call("root(-2, 0.5, 1e-3, +7)").unwrap();
+        let atoms: Vec<_> = spec
+            .args
+            .iter()
+            .map(|arg| arg.value.as_atom().unwrap())
+            .collect();
+        assert_eq!(atoms, ["-2", "0.5", "1e-3", "+7"]);
+        for text in [
+            "root(path=Dir/MyFile.txt)",
+            "root(path=file.txt)",
+            "root(value=1.2.3)",
+            "root(value=$x)",
+        ] {
+            let error = parse_call(text).unwrap_err();
+            assert!(error.contains("expected a value"), "{text}: {error}");
+        }
     }
 
     #[test]
@@ -321,7 +340,7 @@ mod tests {
     fn errors_identify_the_failed_construct() {
         let error = parse_call("outer(inner(value=))").unwrap_err();
         assert!(error.contains("inner(...):"), "{error}");
-        assert!(error.contains("expected value"), "{error}");
+        assert!(error.contains("expected a value"), "{error}");
         assert!(!error.contains("--search"));
         assert!(
             parse_call("root(value=\"unterminated)")
