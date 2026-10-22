@@ -195,16 +195,35 @@ pub fn write_sas<W: Write>(parts: &SasTaskParts, out: &mut W) -> io::Result<()> 
 
     writeln!(out, "{}", parts.assignment_axioms.len())?;
     out.block("numeric_axioms", |out| {
-        parts.assignment_axioms.iter().try_for_each(|axiom| {
-            writeln!(
-                out,
-                "{} {} {} {}",
-                axiom.get_affected_var_id(),
-                axiom.get_operator().as_sas(),
-                axiom.get_left_var_id(),
-                axiom.get_right_var_id()
-            )
-        })
+        parts
+            .assignment_axioms
+            .iter()
+            .try_for_each(|axiom| match &axiom.expression {
+                crate::axioms::NumericExpression::Binary {
+                    operator,
+                    left,
+                    right,
+                } => writeln!(
+                    out,
+                    "{} {} {} {}",
+                    axiom.get_affected_var_id(),
+                    operator.as_sas(),
+                    left,
+                    right
+                ),
+                crate::axioms::NumericExpression::Linear(terms) => {
+                    write!(
+                        out,
+                        "{} linear {}",
+                        axiom.get_affected_var_id(),
+                        terms.len()
+                    )?;
+                    for (variable, coefficient) in terms {
+                        write!(out, " {variable} {coefficient}")?;
+                    }
+                    writeln!(out)
+                }
+            })
     })?;
 
     out.block("global_constraint", |out| {

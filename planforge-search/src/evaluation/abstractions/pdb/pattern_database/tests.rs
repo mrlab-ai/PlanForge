@@ -1,4 +1,4 @@
-use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
@@ -92,12 +92,7 @@ fn propositional_task() -> NumericRootTask {
         )],
         axioms: vec![],
         comparison_axioms: vec![],
-        assignment_axioms: vec![AssignmentAxiom::new(
-            VariableIndex::from_usize(0),
-            CalOperator::Sum,
-            VariableIndex::from_usize(0),
-            VariableIndex::from_usize(0),
-        )],
+        assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     })
 }

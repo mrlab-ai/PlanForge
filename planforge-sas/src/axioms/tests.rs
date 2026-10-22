@@ -82,9 +82,10 @@ fn complete_evaluation_runs_arithmetic_before_comparisons() {
             ExplicitValueIndex::new(ConditionValue::False.as_u32()),
         )],
         numeric_variables: vec![
-            NumericVariable::new("left".to_string(), NumericType::Constant, None),
-            NumericVariable::new("right".to_string(), NumericType::Constant, None),
+            NumericVariable::new("left".to_string(), NumericType::Regular, None),
+            NumericVariable::new("right".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
+            NumericVariable::new("zero".to_string(), NumericType::Constant, None),
         ],
         goals: vec![ExplicitFact::condition(0, ConditionValue::True.as_usize())],
         mutexes: Vec::new(),
@@ -93,13 +94,14 @@ fn complete_evaluation_runs_arithmetic_before_comparisons() {
             NumericValue::new(2.0),
             NumericValue::new(3.0),
             NumericValue::new(0.0),
+            NumericValue::new(0.0),
         ],
         operators: Vec::new(),
         axioms: Vec::new(),
         comparison_axioms: vec![ComparisonAxiom::new(
             VariableIndex::new(0),
             VariableIndex::new(2),
-            VariableIndex::new(0),
+            VariableIndex::new(3),
             ComparisonOperator::GreaterThan,
         )],
         assignment_axioms: vec![AssignmentAxiom::new(
@@ -111,20 +113,18 @@ fn complete_evaluation_runs_arithmetic_before_comparisons() {
         global_constraint: ExplicitFact::condition(0, ConditionValue::True.as_usize()),
     }));
     let state_packer = std::sync::Arc::new(StatePacker::new(&[ConditionValue::DOMAIN_SIZE as u64]));
+    let result_var = problem.comparison_axioms()[0].get_left_var_id();
+    let mut numeric_state = problem.get_initial_numeric_state_values().to_vec();
+    numeric_state[result_var.index()] = ZERO_VALUE;
     let axiom_evaluator = AxiomEvaluator::new(problem, state_packer.clone());
     let mut buffer = vec![0; state_packer.num_bins()];
     state_packer.set(&mut buffer, 0, ConditionValue::False.as_usize() as u64);
-    let mut numeric_state = vec![
-        NumericValue::new(2.0),
-        NumericValue::new(3.0),
-        NumericValue::new(0.0),
-    ];
 
     axiom_evaluator
         .evaluate(&mut buffer, &mut numeric_state)
         .unwrap();
 
-    assert_eq!(numeric_state[2], NumericValue::new(5.0));
+    assert_eq!(numeric_state[result_var.index()], NumericValue::new(5.0));
     assert_eq!(
         state_packer.get(&buffer, 0),
         ConditionValue::True.as_usize() as u64

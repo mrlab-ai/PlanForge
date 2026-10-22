@@ -452,13 +452,11 @@ impl SnpNumericSupport {
                         format!("derived numeric variable {numeric_var_id} has no assignment axiom")
                     })?;
                 let axiom = &task.assignment_axioms()[axiom_id];
-                let mut dependencies =
-                    self.collect_regular_dependencies(task, axiom.get_left_var_id(), visiting)?;
-                dependencies.extend(self.collect_regular_dependencies(
-                    task,
-                    axiom.get_right_var_id(),
-                    visiting,
-                )?);
+                let mut dependencies = BTreeSet::new();
+                for operand in axiom.expression.dependencies() {
+                    dependencies
+                        .extend(self.collect_regular_dependencies(task, operand, visiting)?);
+                }
                 dependencies
             }
         };

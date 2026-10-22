@@ -1,4 +1,4 @@
-use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
     Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, ONE_VALUE,
@@ -42,7 +42,7 @@ fn derived_task(
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
-        NumericVariable::new("x_plus_y".into(), NumericType::Derived, None),
+        NumericVariable::new("x_plus_y".into(), NumericType::Derived, Some(0)),
         NumericVariable::new("one".into(), NumericType::Constant, None),
     ];
     let operator = Operator::new(
@@ -61,11 +61,20 @@ fn derived_task(
     NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
-        variables: vec![global_constraint_variable()],
+        variables: vec![
+            global_constraint_variable(),
+            ExplicitVariable::new(
+                2,
+                "comparison".into(),
+                vec!["true".into(), "false".into()],
+                Some(1),
+                ExplicitValueIndex::new(1),
+            ),
+        ],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
         numeric_state: vec![
             NumericValue::new(0.0),
             NumericValue::new(0.0),
@@ -74,7 +83,12 @@ fn derived_task(
         ],
         operators: vec![operator],
         axioms: vec![],
-        comparison_axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(1),
+            VariableIndex::new(2),
+            VariableIndex::new(3),
+            ComparisonOperator::GreaterThan,
+        )],
         assignment_axioms: vec![AssignmentAxiom::new(
             VariableIndex::from_usize(2),
             definition,
@@ -89,11 +103,17 @@ fn derived_task(
 fn affine_sum_is_an_exact_additive_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Plus);
     let coordinates = Coordinates::new(&task);
-    let view = coordinates.views()[2]
+    let view = coordinates.views()[task.comparison_axioms()[0].get_left_var_id().index()]
         .as_ref()
         .expect("x+y should be additive");
 
-    assert_eq!(view.expression.coefficients, vec![1.0, 1.0, 0.0, 0.0]);
+    assert_eq!(
+        view.expression,
+        NumericExpression::Linear(vec![
+            (VariableIndex::new(0), ONE_VALUE),
+            (VariableIndex::new(1), ONE_VALUE)
+        ])
+    );
     assert_eq!(view.operator_delta(OperatorIndex::new(0)), ONE_VALUE);
 }
 
@@ -101,7 +121,10 @@ fn affine_sum_is_an_exact_additive_coordinate() {
 fn non_additive_effect_rejects_affine_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Assign);
 
-    assert!(Coordinates::new(&task).views()[2].is_none());
+    assert!(
+        Coordinates::new(&task).views()[task.comparison_axioms()[0].get_left_var_id().index()]
+            .is_none()
+    );
 }
 
 #[test]
@@ -148,7 +171,11 @@ fn a_coordinate_preimage_lies_on_the_canonical_lattice() {
     let target = Interval::new(NumericValue::new(-900.0), INF_VALUE, false, false);
 
     let preimage = coordinates
-        .preimage(target, OperatorIndex::new(0), VariableIndex::from_usize(2))
+        .preimage(
+            target,
+            OperatorIndex::new(0),
+            task.comparison_axioms()[0].get_left_var_id(),
+        )
         .expect("an additive coordinate has a preimage");
 
     assert_eq!(preimage, preimage.canonicalized());
@@ -166,10 +193,10 @@ fn a_one_variable_expression_is_refined_along_its_variable() {
     );
     let coordinates = Coordinates::new(&task);
 
-    assert!(coordinates.views()[2].is_none());
-    assert!(!coordinates.is_coordinate(VariableIndex::from_usize(2)));
     assert_eq!(
-        coordinates.operand_coordinates[2],
-        Some(VariableIndex::from_usize(0))
+        task.comparison_axioms()[0].get_left_var_id(),
+        VariableIndex::new(0)
     );
+    assert!(coordinates.is_coordinate(VariableIndex::new(0)));
+    assert!(coordinates.views().iter().all(Option::is_none));
 }

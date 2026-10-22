@@ -174,9 +174,9 @@ fn projection_rejects_an_unrestricted_task() {
         )],
         assignment_axioms: vec![AssignmentAxiom::new(
             VariableIndex::from_usize(2),
-            CalOperator::Sum,
+            CalOperator::Product,
             VariableIndex::from_usize(1),
-            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
         )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });

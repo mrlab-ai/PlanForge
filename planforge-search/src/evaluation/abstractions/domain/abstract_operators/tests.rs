@@ -359,131 +359,78 @@ fn affected_numeric_var_keeps_its_partition_in_an_identity_transition() {
 
 #[test]
 fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
-    let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, None),
-        NumericVariable::new("c1".into(), NumericType::Constant, None),
-        NumericVariable::new("c5".into(), NumericType::Constant, None),
-        NumericVariable::new("d1".into(), NumericType::Derived, None),
-        NumericVariable::new("d2".into(), NumericType::Derived, None),
-        NumericVariable::new("one".into(), NumericType::Regular, None),
-    ];
-
-    let assignment_axioms = vec![
-        // `x + one` over a second regular variable: a view of its own, where
-        // `x + c1` would be a threshold on `x`.
-        AssignmentAxiom::new(
-            VariableIndex::from_usize(3),
-            CalOperator::Sum,
-            VariableIndex::from_usize(0),
-            VariableIndex::from_usize(5),
-        ),
-        AssignmentAxiom::new(
-            VariableIndex::from_usize(4),
-            CalOperator::Difference,
-            VariableIndex::from_usize(3),
-            VariableIndex::from_usize(2),
-        ),
-    ];
-
-    let op = Operator::new(
-        "inc".into(),
-        vec![],
-        vec![],
-        vec![AssignmentEffect::new(
-            VariableIndex::new(0),
-            AssignmentOperation::Plus,
-            VariableIndex::new(1),
-            false,
-            vec![],
-        )],
-        OperatorCost::new(1),
-    );
-
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
         variables: vec![global_constraint_variable()],
-        numeric_variables,
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("y".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("x+y".into(), NumericType::Derived, Some(0)),
+        ],
         goals: vec![],
         mutexes: vec![],
         state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![
-            NumericValue::new(3.0),
-            NumericValue::new(1.0),
-            NumericValue::new(5.0),
-            NumericValue::new(4.0),
-            NumericValue::new(-1.0),
-            NumericValue::new(1.0),
-        ],
-        operators: vec![op.clone()],
+        numeric_state: [3.0, 1.0, 1.0, 4.0].map(NumericValue::new).to_vec(),
+        operators: vec![Operator::new(
+            "inc".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                VariableIndex::new(0),
+                AssignmentOperation::Plus,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
+        )],
         axioms: vec![],
         comparison_axioms: vec![],
-        assignment_axioms,
+        assignment_axioms: vec![AssignmentAxiom::linear(
+            VariableIndex::new(3),
+            vec![
+                (VariableIndex::new(0), NumericValue::new(1.0)),
+                (VariableIndex::new(1), NumericValue::new(1.0)),
+            ],
+        )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-
+    let singleton = |value| Interval::singleton(NumericValue::new(value));
     let partitions = NumericPartitions::with_partitions(vec![
-        vec![
-            Interval::singleton(NumericValue::new(3.0)),
-            Interval::singleton(NumericValue::new(4.0)),
-        ],
-        vec![Interval::singleton(NumericValue::new(1.0))],
-        vec![Interval::singleton(NumericValue::new(5.0))],
-        vec![
-            Interval::singleton(NumericValue::new(4.0)),
-            Interval::singleton(NumericValue::new(5.0)),
-        ],
-        vec![
-            Interval::singleton(NumericValue::new(-1.0)),
-            Interval::singleton(NumericValue::new(0.0)),
-        ],
-        vec![Interval::singleton(NumericValue::new(1.0))],
+        vec![singleton(3.0), singleton(4.0)],
+        vec![singleton(1.0)],
+        vec![singleton(1.0)],
+        vec![singleton(4.0), singleton(5.0)],
     ]);
-
     let function = identity_function(&task, partitions);
     let transitions = numeric_partition_transitions(
         &task,
         &function,
         OperatorIndex::new(0),
         &[],
-        op.assignment_effects(),
+        task.get_operators()[0].assignment_effects(),
         Deadline::NONE,
     )
     .unwrap();
-
-    assert!(transitions.iter().any(|trans| {
-        trans
+    assert!(transitions.iter().any(|transition| {
+        transition
             .source_partition_facts
             .contains(&ExplicitFact::numeric_variable(1, 0))
-            && trans
+            && transition
                 .target_partition_facts
                 .contains(&ExplicitFact::numeric_variable(1, 1))
     }));
-    assert!(transitions.iter().all(|trans| {
-        trans
+    assert!(transitions.iter().all(|transition| {
+        transition
             .source_partition_facts
             .iter()
             .any(|fact| fact.var() == 4)
-            && trans
+            && transition
                 .target_partition_facts
                 .iter()
                 .any(|fact| fact.var() == 4)
-            && trans
-                .source_partition_facts
-                .iter()
-                .any(|fact| fact.var() == 5)
-            && trans
-                .target_partition_facts
-                .iter()
-                .any(|fact| fact.var() == 5)
-            && trans
-                .source_partition_facts
-                .iter()
-                .any(|fact| fact.var() == 1)
-            && trans
-                .target_partition_facts
-                .iter()
-                .any(|fact| fact.var() == 1)
     }));
 }
 
@@ -614,11 +561,12 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
     ];
 
     // `y = x + half` over a second regular variable is a view of its own.
-    let assignment_axioms = vec![AssignmentAxiom::new(
-        VariableIndex::from_usize(2),
-        CalOperator::Sum,
-        VariableIndex::from_usize(0),
-        VariableIndex::from_usize(4),
+    let assignment_axioms = vec![AssignmentAxiom::linear(
+        VariableIndex::new(2),
+        vec![
+            (VariableIndex::new(0), NumericValue::new(1.0)),
+            (VariableIndex::new(4), NumericValue::new(1.0)),
+        ],
     )];
     let comparison_axioms = vec![ComparisonAxiom::new(
         VariableIndex::new(0),
@@ -760,11 +708,12 @@ fn additive_view_filters_false_equality_precondition() {
             ComparisonOperator::Equal,
         )],
         // `x - target` over a regular target is a view of its own.
-        assignment_axioms: vec![AssignmentAxiom::new(
-            VariableIndex::from_usize(2),
-            CalOperator::Difference,
-            VariableIndex::from_usize(0),
-            VariableIndex::from_usize(4),
+        assignment_axioms: vec![AssignmentAxiom::linear(
+            VariableIndex::new(2),
+            vec![
+                (VariableIndex::new(0), NumericValue::new(1.0)),
+                (VariableIndex::new(4), NumericValue::new(-1.0)),
+            ],
         )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
@@ -798,8 +747,9 @@ fn additive_view_filters_false_equality_precondition() {
 }
 
 #[test]
-fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+#[should_panic(expected = "derived variable has an arithmetic definition")]
+fn task_rejects_a_missing_arithmetic_definition() {
+    NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
         variables: vec![global_constraint_variable()],
@@ -829,30 +779,6 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
         )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-
-    let partitions = NumericPartitions::with_partitions(vec![
-        vec![
-            Interval::singleton(NumericValue::new(5.0)),
-            Interval::singleton(NumericValue::new(6.0)),
-        ],
-        vec![Interval::singleton(NumericValue::new(0.0))],
-        vec![Interval::unbounded()],
-        vec![Interval::unbounded()],
-    ]);
-
-    let function = identity_function(&task, partitions);
-    let mut intervals = Vec::new();
-    assert!(fill_source_intervals(
-        &task,
-        &function,
-        &[(VariableIndex::from_usize(0), 0)],
-        &mut intervals,
-    ));
-
-    assert_eq!(intervals[0], Interval::singleton(NumericValue::new(5.0)));
-    assert_eq!(intervals[1], Interval::singleton(NumericValue::new(0.0)));
-    assert_eq!(intervals[2], Interval::unbounded());
-    assert_eq!(intervals[3], Interval::unbounded());
 }
 
 #[test]

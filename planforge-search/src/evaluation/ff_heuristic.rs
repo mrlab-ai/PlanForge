@@ -56,6 +56,7 @@
 //!   * Hoffmann & Nebel, *The FF Planning System*, JAIR 2001.
 //!   * Hoffmann, *The Metric-FF Planning System*, JAIR 2003.
 
+use planforge_sas::axioms::{AssignmentAxiom, NumericExpression};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 
@@ -138,19 +139,6 @@ struct AssignmentEffectDesc {
     operation: AssignmentOperation,
     rhs_var: NumVarId,
     direction: EffectDirection,
-}
-
-/// Per-state-propagation descriptor for a single assignment axiom. The
-/// axiom computes `affected := left ∘ right` where `∘` is `Sum` or
-/// `Difference`. Multiplicative axioms (`Product` / `Division`) are
-/// rejected at construction — they don't admit a sign-agnostic monotonic
-/// bound.
-#[derive(Debug, Clone)]
-struct AssignmentAxiomDesc {
-    affected_var: NumVarId,
-    left_var: NumVarId,
-    right_var: NumVarId,
-    op: CalOperator,
 }
 
 #[derive(Debug, Clone)]
@@ -725,29 +713,23 @@ fn index_comparison_axioms_by_numeric_var(
 fn collect_assignment_axioms(
     task: &dyn AbstractNumericTask,
     num_numeric: usize,
-) -> Result<Vec<AssignmentAxiomDesc>, String> {
+) -> Result<Vec<AssignmentAxiom>, String> {
     task.assignment_axioms()
         .iter()
         .enumerate()
         .map(|(axiom_idx, axiom)| {
             let affected = axiom.get_affected_var_id();
-            let left = axiom.get_left_var_id();
-            let right = axiom.get_right_var_id();
             if affected.index() >= num_numeric
-                || left.index() >= num_numeric
-                || right.index() >= num_numeric
+                || axiom
+                    .expression
+                    .dependencies()
+                    .any(|var| var.index() >= num_numeric)
             {
                 return Err(format!(
-                    "assignment axiom {axiom_idx} references out-of-range numeric variable \
-                     (affected={affected}, left={left}, right={right}, num_numeric={num_numeric})"
+                    "assignment axiom {axiom_idx} references an out-of-range numeric variable"
                 ));
             }
-            Ok(AssignmentAxiomDesc {
-                affected_var: affected,
-                left_var: left,
-                right_var: right,
-                op: axiom.get_operator().clone(),
-            })
+            Ok(axiom.clone())
         })
         .collect()
 }
@@ -764,7 +746,7 @@ fn collect_assignment_axioms(
 /// on tasks like plant-watering.
 fn comparison_axioms_via_derived_vars(
     comparison_axioms: &[ComparisonAxiomDesc],
-    assignment_axioms: &[AssignmentAxiomDesc],
+    assignment_axioms: &[AssignmentAxiom],
     num_numeric: usize,
 ) -> Vec<Vec<AxiomIdx>> {
     let depends_on = compute_numeric_dependency_closure(num_numeric, assignment_axioms);
@@ -916,7 +898,7 @@ pub struct FfHeuristic {
     /// Assignment axioms in topological (SAS axiom-layer) order. Each
     /// describes a derived numeric variable as `affected := left ∘ right`
     /// for `∘ ∈ {Sum, Difference}`.
-    assignment_axioms: Vec<AssignmentAxiomDesc>,
+    assignment_axioms: Vec<AssignmentAxiom>,
     /// For each numeric var, indices of comparison axioms whose LHS or
     /// RHS mentions it. Lets `fire_operator` re-evaluate only the affected
     /// comparison axioms after a numeric update.
@@ -1051,61 +1033,87 @@ impl FfHeuristic {
         loop {
             let mut changed = false;
             for ax in &self.assignment_axioms {
-                let l = numeric[ax.left_var.index()];
-                let r = numeric[ax.right_var.index()];
-                let new = match ax.op {
-                    CalOperator::Sum => NumericRange {
-                        max: l.max + r.max,
-                        min: l.min + r.min,
-                    },
-                    CalOperator::Difference => NumericRange {
-                        max: l.max - r.min,
-                        min: l.min - r.max,
-                    },
-                    // Sign-aware interval multiplication for `d := l * r`.
-                    // With l ∈ [l.min, l.max] and r ∈ [r.min, r.max], the
-                    // resulting range is bracketed by the four corner
-                    // products. Each product is `extreme * extreme`, so
-                    // any value of l*r lies in the [min, max] of those
-                    // four. The monotonic-relaxation join is a union with
-                    // the existing envelope, so widening is admissible.
-                    CalOperator::Product => {
-                        let p1 = l.min * r.min;
-                        let p2 = l.min * r.max;
-                        let p3 = l.max * r.min;
-                        let p4 = l.max * r.max;
+                let new = match &ax.expression {
+                    NumericExpression::Linear(terms) => terms.iter().fold(
                         NumericRange {
-                            max: p1.max(p2).max(p3).max(p4),
-                            min: p1.min(p2).min(p3).min(p4),
-                        }
-                    }
-                    // Sign-aware interval division for `d := l / r`. If
-                    // r's interval contains zero, the quotient is
-                    // unbounded — yield `[-∞, +∞]` (still admissible).
-                    // Otherwise the four corner quotients bracket the
-                    // result the same way Product does.
-                    CalOperator::Division => {
-                        if r.min <= ZERO_VALUE && ZERO_VALUE <= r.max {
+                            min: ZERO_VALUE,
+                            max: ZERO_VALUE,
+                        },
+                        |sum, (var, coefficient)| {
+                            let range = numeric[var.index()];
+                            let (min, max) = if *coefficient > ZERO_VALUE {
+                                (range.min, range.max)
+                            } else {
+                                (range.max, range.min)
+                            };
                             NumericRange {
-                                max: INF_VALUE,
-                                min: NEG_INF_VALUE,
+                                min: sum.min + *coefficient * min,
+                                max: sum.max + *coefficient * max,
                             }
-                        } else {
-                            let q1 = l.min / r.min;
-                            let q2 = l.min / r.max;
-                            let q3 = l.max / r.min;
-                            let q4 = l.max / r.max;
-                            NumericRange {
-                                max: q1.max(q2).max(q3).max(q4),
-                                min: q1.min(q2).min(q3).min(q4),
+                        },
+                    ),
+                    NumericExpression::Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        let l = numeric[left.index()];
+                        let r = numeric[right.index()];
+                        match operator {
+                            CalOperator::Sum => NumericRange {
+                                max: l.max + r.max,
+                                min: l.min + r.min,
+                            },
+                            CalOperator::Difference => NumericRange {
+                                max: l.max - r.min,
+                                min: l.min - r.max,
+                            },
+                            // Sign-aware interval multiplication for `d := l * r`.
+                            // With l ∈ [l.min, l.max] and r ∈ [r.min, r.max], the
+                            // resulting range is bracketed by the four corner
+                            // products. Each product is `extreme * extreme`, so
+                            // any value of l*r lies in the [min, max] of those
+                            // four. The monotonic-relaxation join is a union with
+                            // the existing envelope, so widening is admissible.
+                            CalOperator::Product => {
+                                let p1 = l.min * r.min;
+                                let p2 = l.min * r.max;
+                                let p3 = l.max * r.min;
+                                let p4 = l.max * r.max;
+                                NumericRange {
+                                    max: p1.max(p2).max(p3).max(p4),
+                                    min: p1.min(p2).min(p3).min(p4),
+                                }
+                            }
+                            // Sign-aware interval division for `d := l / r`. If
+                            // r's interval contains zero, the quotient is
+                            // unbounded — yield `[-∞, +∞]` (still admissible).
+                            // Otherwise the four corner quotients bracket the
+                            // result the same way Product does.
+                            CalOperator::Division => {
+                                if r.min <= ZERO_VALUE && ZERO_VALUE <= r.max {
+                                    NumericRange {
+                                        max: INF_VALUE,
+                                        min: NEG_INF_VALUE,
+                                    }
+                                } else {
+                                    let q1 = l.min / r.min;
+                                    let q2 = l.min / r.max;
+                                    let q3 = l.max / r.min;
+                                    let q4 = l.max / r.max;
+                                    NumericRange {
+                                        max: q1.max(q2).max(q3).max(q4),
+                                        min: q1.min(q2).min(q3).min(q4),
+                                    }
+                                }
                             }
                         }
                     }
                 };
-                if numeric[ax.affected_var.index()].join(new) {
-                    if !dirty_mark[ax.affected_var.index()] {
-                        dirty_mark[ax.affected_var.index()] = true;
-                        dirty_out.push(ax.affected_var);
+                if numeric[ax.affected_var_id.index()].join(new) {
+                    if !dirty_mark[ax.affected_var_id.index()] {
+                        dirty_mark[ax.affected_var_id.index()] = true;
+                        dirty_out.push(ax.affected_var_id);
                     }
                     changed = true;
                     any_change = true;
@@ -1542,7 +1550,7 @@ impl FfHeuristic {
 /// bounded by `num_numeric`.
 fn compute_numeric_dependency_closure(
     num_numeric: usize,
-    assignment_axioms: &[AssignmentAxiomDesc],
+    assignment_axioms: &[AssignmentAxiom],
 ) -> Vec<Vec<NumVarId>> {
     let mut sets: Vec<HashSet<NumVarId>> = (0..num_numeric)
         .map(|v| {
@@ -1554,17 +1562,12 @@ fn compute_numeric_dependency_closure(
     loop {
         let mut changed = false;
         for ax in assignment_axioms {
-            // Snapshot the operands' current closures, then union into
-            // the affected var. The clone is intentional — borrowing
-            // `sets` mutably for the destination while also reading from
-            // it for the sources would need split-borrow gymnastics that
-            // aren't worth it for a one-shot construction step.
-            let left = sets[ax.left_var.index()].clone();
-            let right = sets[ax.right_var.index()].clone();
-            let dst = &mut sets[ax.affected_var.index()];
-            for v in left.into_iter().chain(right) {
-                if dst.insert(v) {
-                    changed = true;
+            for operand in ax.expression.dependencies() {
+                let sources = sets[operand.index()].clone();
+                for variable in sources {
+                    if sets[ax.affected_var_id.index()].insert(variable) {
+                        changed = true;
+                    }
                 }
             }
         }

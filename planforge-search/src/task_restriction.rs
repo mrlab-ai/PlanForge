@@ -4,7 +4,7 @@ mod tests;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType,
@@ -29,6 +29,13 @@ impl RestrictedTask {
 }
 
 pub fn validate_restricted_task(task: &dyn AbstractNumericTask) -> std::result::Result<(), String> {
+    if let Some(variable) = task.metric().var_id()
+        && task.numeric_variables()[variable.index()].get_type() == &NumericType::Derived
+    {
+        return Err(format!(
+            "task is not restricted: metric variable {variable} is derived"
+        ));
+    }
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
         for (side, numeric_var_id) in [
             ("left", comparison_axiom.get_left_var_id()),
@@ -118,27 +125,11 @@ impl AffineExpression {
         expr
     }
 
-    fn add(mut self, rhs: Self) -> Self {
-        for (lhs, rhs) in self.coefficients.iter_mut().zip(rhs.coefficients) {
-            *lhs += rhs;
-        }
-        self.constant += rhs.constant;
-        self
-    }
-
     fn sub(mut self, rhs: Self) -> Self {
         for (lhs, rhs) in self.coefficients.iter_mut().zip(rhs.coefficients) {
             *lhs -= rhs;
         }
         self.constant -= rhs.constant;
-        self
-    }
-
-    fn scale(mut self, factor: NumericValue) -> Self {
-        for coefficient in &mut self.coefficients {
-            *coefficient *= factor;
-        }
-        self.constant *= factor;
         self
     }
 
@@ -198,29 +189,15 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
         Err(reason) => reason,
     };
     let num_numeric_vars = task.numeric_variables().len();
-    if num_numeric_vars == 0 || task.comparison_axioms().is_empty() {
+    if num_numeric_vars == 0 {
         bail!(
             "task violates restricted-task invariants ({restriction_reason}), but has no numeric comparison roots that can be promoted"
         );
     }
 
     let initial_numeric = task.get_initial_numeric_state_values().to_vec();
-    let assignment_lookup = task
-        .assignment_axiom_lookup()
-        .map_err(|error| anyhow!("invalid assignment axiom layout: {error}"))?;
-    let mut linearizer = Linearizer {
-        task,
-        assignment_lookup,
-        initial_numeric: &initial_numeric,
-        memo: vec![None; num_numeric_vars],
-        visiting: vec![false; num_numeric_vars],
-    };
-
-    // A comparison whose operands are not derived is already restricted. One
-    // that depends on a single regular variable, such as `fuel - c >= 0`
-    // with a constant `c`, is a threshold on that variable. Only comparisons
-    // over several variables need their derived operands promoted.
-    let mut comparisons = Vec::with_capacity(task.comparison_axioms().len());
+    // Every linear comparison is already a direct threshold. Promote each
+    // shared multi-variable linear part once.
     let mut root_var_ids = BTreeSet::new();
     let mut root_exprs = BTreeMap::new();
     for comparison_axiom in task.comparison_axioms() {
@@ -231,53 +208,12 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
         let is_derived = |var_id: VariableIndex| {
             task.numeric_variables()[var_id.index()].get_type() == &NumericType::Derived
         };
-        if !operands.iter().any(|&var_id| is_derived(var_id)) {
-            root_var_ids.extend(operands);
-            comparisons.push(RestrictedComparison::Operands);
-            continue;
-        }
-        let difference = linearizer
-            .linearize(operands[0])?
-            .sub(linearizer.linearize(operands[1])?);
-        if let [var_id] = difference.non_zero_vars()[..]
-            && task.numeric_variables()[var_id.index()].get_type() == &NumericType::Regular
-        {
-            let coefficient = difference.coefficients[var_id.index()];
-            let threshold = float_tolerance::canonicalize(-difference.constant / coefficient);
-            ensure!(
-                threshold.is_finite(),
-                "comparison over numeric variable {var_id} has non-finite threshold {threshold}"
-            );
-            let operator = if coefficient > ZERO_VALUE {
-                comparison_axiom.get_operator().clone()
-            } else {
-                reverse_comparison(comparison_axiom.get_operator())
-            };
-            root_var_ids.insert(var_id);
-            comparisons.push(RestrictedComparison::Threshold {
-                var_id,
-                threshold,
-                operator,
-            });
-            continue;
-        }
         for var_id in operands {
             root_var_ids.insert(var_id);
             if is_derived(var_id) {
-                root_exprs.insert(var_id, linearizer.linearize(var_id)?);
+                root_exprs.insert(var_id, affine_expression(task, var_id)?);
             }
         }
-        comparisons.push(RestrictedComparison::Operands);
-    }
-
-    if root_exprs.is_empty()
-        && !comparisons
-            .iter()
-            .any(|comparison| matches!(comparison, RestrictedComparison::Threshold { .. }))
-    {
-        bail!(
-            "task violates restricted-task invariants ({restriction_reason}), but no derived numeric comparison roots can be promoted"
-        );
     }
 
     let mut numeric_var_ids: Vec<VariableIndex> = root_var_ids
@@ -291,7 +227,7 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
         })
         .collect();
     if let Some(metric_var_id) = task.metric().var_id() {
-        if let Some(expr) = derived_metric_expression(task, &mut linearizer, metric_var_id)? {
+        if let Some(expr) = derived_metric_expression(task, metric_var_id)? {
             ensure!(
                 !root_exprs.contains_key(&metric_var_id),
                 "metric variable {metric_var_id} is also a numeric comparison operand"
@@ -304,26 +240,7 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
     numeric_var_ids.sort_unstable();
     numeric_var_ids.dedup();
 
-    build_task(
-        task,
-        &initial_numeric,
-        &root_exprs,
-        &numeric_var_ids,
-        &comparisons,
-    )
-}
-
-/// How a comparison axiom of the original task appears in the restricted one.
-enum RestrictedComparison {
-    /// Over its (mapped) original operands; derived ones are promoted.
-    Operands,
-    /// `var_id operator threshold` for an operand difference that depends on
-    /// the single regular variable `var_id`.
-    Threshold {
-        var_id: VariableIndex,
-        threshold: NumericValue,
-        operator: ComparisonOperator,
-    },
+    build_task(task, &initial_numeric, &root_exprs, &numeric_var_ids)
 }
 
 /// Builds the restricted representation consumed by the ICAPS 2026 Cartesian
@@ -340,15 +257,6 @@ pub fn build_icaps26_restricted_task(
 
     let initial_numeric = task.get_initial_numeric_state_values().to_vec();
     let num_original_numeric = task.numeric_variables().len();
-    let mut linearizer = Linearizer {
-        task,
-        assignment_lookup: task
-            .assignment_axiom_lookup()
-            .map_err(|error| anyhow!("invalid assignment axiom layout: {error}"))?,
-        initial_numeric: &initial_numeric,
-        memo: vec![None; num_original_numeric],
-        visiting: vec![false; num_original_numeric],
-    };
     let mut used_comparison_vars = BTreeSet::new();
     for operator in task.get_operators() {
         used_comparison_vars.extend(operator.preconditions().iter().map(ExplicitFact::var_index));
@@ -363,9 +271,9 @@ pub fn build_icaps26_restricted_task(
         if !used_comparison_vars.contains(&comparison_axiom.get_affected_var_id()) {
             continue;
         }
-        let difference = linearizer
-            .linearize(comparison_axiom.get_left_var_id())?
-            .sub(linearizer.linearize(comparison_axiom.get_right_var_id())?);
+        let difference = affine_expression(task, comparison_axiom.get_left_var_id())?.sub(
+            affine_expression(task, comparison_axiom.get_right_var_id())?,
+        );
         comparisons.push((comparison_axiom_id, difference));
     }
 
@@ -391,7 +299,7 @@ pub fn build_icaps26_restricted_task(
         let value = initial_numeric[original_id.index()];
         if matches!(variable.get_type(), NumericType::Constant) {
             constants.by_bits.insert(
-                float_tolerance::canonicalize(value).to_bits(),
+                float_tolerance::canonical_bits(value),
                 VariableIndex::from_usize(transformed_id),
             );
             transformed_to_expr.push(AffineExpression::constant(value, num_original_numeric));
@@ -402,7 +310,7 @@ pub fn build_icaps26_restricted_task(
         numeric_initial.push(value);
     }
     if let Some(metric_var_id) = task.metric().var_id()
-        && let Some(expr) = derived_metric_expression(task, &mut linearizer, metric_var_id)?
+        && let Some(expr) = derived_metric_expression(task, metric_var_id)?
     {
         original_to_transformed[metric_var_id.index()] =
             Some(VariableIndex::from_usize(numeric_variables.len()));
@@ -561,7 +469,6 @@ fn build_task(
     initial_numeric: &[NumericValue],
     root_exprs: &BTreeMap<VariableIndex, AffineExpression>,
     numeric_var_ids: &[VariableIndex],
-    comparisons: &[RestrictedComparison],
 ) -> Result<Option<RestrictedTask>> {
     let num_original_numeric = task.numeric_variables().len();
     let mut original_to_transformed = vec![None; num_original_numeric];
@@ -630,37 +537,18 @@ fn build_task(
         original_to_transformed[var_id.index()]
             .expect("every comparison operand is a restricted numeric variable")
     };
-    let mut comparison_axioms = Vec::with_capacity(comparisons.len());
-    for (comparison_axiom, comparison) in task.comparison_axioms().iter().zip(comparisons) {
-        let (left, right, operator) = match comparison {
-            RestrictedComparison::Operands => (
-                transformed(comparison_axiom.get_left_var_id()),
-                transformed(comparison_axiom.get_right_var_id()),
-                comparison_axiom.get_operator().clone(),
-            ),
-            RestrictedComparison::Threshold {
-                var_id,
-                threshold,
-                operator,
-            } => (
-                transformed(*var_id),
-                constants.get_or_insert(
-                    *threshold,
-                    &mut numeric_variables,
-                    &mut numeric_initial,
-                    &mut transformed_to_expr,
-                    num_original_numeric,
-                ),
-                operator.clone(),
-            ),
-        };
-        comparison_axioms.push(ComparisonAxiom::new(
-            comparison_axiom.get_affected_var_id(),
-            left,
-            right,
-            operator,
-        ));
-    }
+    let comparison_axioms = task
+        .comparison_axioms()
+        .iter()
+        .map(|comparison| {
+            ComparisonAxiom::new(
+                comparison.get_affected_var_id(),
+                transformed(comparison.get_left_var_id()),
+                transformed(comparison.get_right_var_id()),
+                comparison.get_operator().clone(),
+            )
+        })
+        .collect::<Vec<_>>();
     let variables = renumber_propositional_axiom_layers(task, &comparison_axioms);
 
     let metric_var_id = task.metric().var_id().and_then(|var_id| {
@@ -703,7 +591,6 @@ fn build_task(
 /// increments.
 fn derived_metric_expression(
     task: &dyn AbstractNumericTask,
-    linearizer: &mut Linearizer<'_>,
     metric_var_id: VariableIndex,
 ) -> Result<Option<AffineExpression>> {
     if !matches!(
@@ -712,8 +599,7 @@ fn derived_metric_expression(
     ) {
         return Ok(None);
     }
-    linearizer
-        .linearize(metric_var_id)
+    affine_expression(task, metric_var_id)
         .with_context(|| format!("metric variable {metric_var_id} is not affine"))
         .map(Some)
 }
@@ -1064,7 +950,7 @@ impl ConstantPool {
         num_original_numeric: usize,
     ) -> VariableIndex {
         let value = float_tolerance::canonicalize(value);
-        let bits = value.to_bits();
+        let bits = float_tolerance::canonical_bits(value);
         if let Some(&id) = self.by_bits.get(&bits) {
             return id;
         }
@@ -1081,71 +967,21 @@ impl ConstantPool {
     }
 }
 
-struct Linearizer<'a> {
-    task: &'a dyn AbstractNumericTask,
-    assignment_lookup: Vec<Option<AxiomIndex>>,
-    initial_numeric: &'a [NumericValue],
-    memo: Vec<Option<AffineExpression>>,
-    visiting: Vec<bool>,
-}
-
-impl Linearizer<'_> {
-    fn linearize(&mut self, numeric_var_id: VariableIndex) -> Result<AffineExpression> {
-        ensure!(
-            numeric_var_id.index() < self.task.numeric_variables().len(),
-            "numeric variable {numeric_var_id} out of bounds"
-        );
-        if let Some(expr) = &self.memo[numeric_var_id.index()] {
-            return Ok(expr.clone());
-        }
-        ensure!(
-            !self.visiting[numeric_var_id.index()],
-            "cycle in numeric assignment axioms at numeric variable {numeric_var_id}"
-        );
-        self.visiting[numeric_var_id.index()] = true;
-
-        let num_vars = self.task.numeric_variables().len();
-        let expr = match self.task.numeric_variables()[numeric_var_id.index()].get_type() {
-            NumericType::Regular => AffineExpression::var(numeric_var_id, num_vars),
-            NumericType::Constant => {
-                AffineExpression::constant(self.initial_numeric[numeric_var_id.index()], num_vars)
-            }
-            NumericType::Cost => AffineExpression::var(numeric_var_id, num_vars),
-            NumericType::Derived => {
-                let axiom_id =
-                    self.assignment_lookup[numeric_var_id.index()].with_context(|| {
-                        format!("missing assignment axiom for numeric variable {numeric_var_id}")
-                    })?;
-                let axiom = &self.task.assignment_axioms()[axiom_id.index()];
-                let lhs = self.linearize(axiom.get_left_var_id())?;
-                let rhs = self.linearize(axiom.get_right_var_id())?;
-                match axiom.get_operator() {
-                    CalOperator::Sum => lhs.add(rhs),
-                    CalOperator::Difference => lhs.sub(rhs),
-                    CalOperator::Product => {
-                        if rhs.non_zero_vars().is_empty() {
-                            lhs.scale(rhs.constant)
-                        } else if lhs.non_zero_vars().is_empty() {
-                            rhs.scale(lhs.constant)
-                        } else {
-                            bail!("numeric assignment axiom {axiom_id} is nonlinear")
-                        }
-                    }
-                    CalOperator::Division => {
-                        ensure!(
-                            rhs.non_zero_vars().is_empty() && !approx_eq(rhs.constant, ZERO_VALUE),
-                            "numeric assignment axiom {axiom_id} has non-constant or zero divisor"
-                        );
-                        lhs.scale(ONE_VALUE / rhs.constant)
-                    }
-                }
-            }
-        };
-
-        self.visiting[numeric_var_id.index()] = false;
-        self.memo[numeric_var_id.index()] = Some(expr.clone());
-        Ok(expr)
-    }
+fn affine_expression(
+    task: &dyn AbstractNumericTask,
+    variable: VariableIndex,
+) -> Result<AffineExpression> {
+    let expression = task
+        .linearize_numeric_var(variable)
+        .map_err(|error| anyhow!("{error}"))?;
+    Ok(AffineExpression {
+        coefficients: expression
+            .coefficients
+            .into_iter()
+            .map(NumericValue::new)
+            .collect(),
+        constant: NumericValue::new(expression.constant),
+    })
 }
 
 fn approx_eq(lhs: NumericValue, rhs: NumericValue) -> bool {

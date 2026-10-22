@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use planforge_sas::axioms::{CalOperator, ComparisonOperator};
+use planforge_sas::axioms::{CalOperator, ComparisonOperator, NumericExpression};
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericTaskExt,
@@ -584,32 +584,21 @@ fn build_cpp_numeric_features(
         }
     }
 
-    let assignment_by_var: BTreeMap<VariableIndex, usize> = task
-        .assignment_axioms()
-        .iter()
-        .enumerate()
-        .map(|(axiom_id, axiom)| (axiom.affected_var_id, axiom_id))
-        .collect();
     let mut auxiliary_by_name = BTreeMap::new();
-    let mut recursion_stack = BTreeSet::new();
     for comparison_var in used_comparison_vars {
         let comparison_id = comparison_by_var[&comparison_var];
         let comparison = &task.comparison_axioms()[comparison_id];
         let left = parse_cpp_numeric_expression(
             task,
             comparison.get_left_var_id(),
-            &assignment_by_var,
             &mut auxiliary_by_name,
             &mut features,
-            &mut recursion_stack,
         )?;
         let right = parse_cpp_numeric_expression(
             task,
             comparison.get_right_var_id(),
-            &assignment_by_var,
             &mut auxiliary_by_name,
             &mut features,
-            &mut recursion_stack,
         )?;
         if !left.is_constant && !right.is_constant {
             insert_cpp_auxiliary_feature(
@@ -634,118 +623,48 @@ fn build_cpp_numeric_features(
 fn parse_cpp_numeric_expression(
     task: &dyn AbstractNumericTask,
     numeric_var_id: VariableIndex,
-    assignment_by_var: &BTreeMap<VariableIndex, usize>,
     auxiliary_by_name: &mut BTreeMap<String, usize>,
     features: &mut Vec<NumericFeature>,
-    recursion_stack: &mut BTreeSet<VariableIndex>,
 ) -> Result<ParsedNumericExpression, String> {
-    let variable = task
-        .numeric_variables()
-        .get(numeric_var_id.index())
-        .ok_or_else(|| {
-            format!(
-                "numeric_potential expression references unknown numeric variable {numeric_var_id}"
-            )
-        })?;
-    match variable.get_type() {
-        NumericType::Regular => Ok(ParsedNumericExpression {
-            coefficients: vec![(numeric_var_id, 1.0)],
-            constant: 0.0,
+    let expression = match task.linearize_numeric_var(numeric_var_id) {
+        Ok(expression) => ParsedNumericExpression {
+            is_constant: expression.is_constant(),
+            coefficients: expression
+                .coefficients
+                .into_iter()
+                .enumerate()
+                .filter(|(_, value)| *value != 0.0)
+                .map(|(id, coefficient)| (VariableIndex::from_usize(id), coefficient))
+                .collect(),
+            constant: expression.constant,
             affine: true,
-            is_constant: false,
-        }),
-        NumericType::Constant => Ok(ParsedNumericExpression {
+        },
+        Err(
+            planforge_sas::utils::linear_effects::LinearizationError::NonLinearAssignmentAxiom {
+                ..
+            },
+        ) => ParsedNumericExpression {
             coefficients: Vec::new(),
-            constant: task.get_initial_numeric_state_values()[numeric_var_id.index()].value(),
-            affine: true,
-            is_constant: true,
-        }),
-        NumericType::Derived => {
-            if !recursion_stack.insert(numeric_var_id) {
-                return Err(format!(
-                    "numeric_potential found a cyclic numeric assignment expression at variable {numeric_var_id}"
-                ));
-            }
-            let axiom_id = assignment_by_var.get(&numeric_var_id).ok_or_else(|| {
-                format!(
-                    "numeric_potential found no assignment axiom for derived numeric variable {numeric_var_id}"
-                )
-            })?;
-            let axiom = &task.assignment_axioms()[*axiom_id];
-            let left = parse_cpp_numeric_expression(
-                task,
-                axiom.left_hand_side,
-                assignment_by_var,
-                auxiliary_by_name,
-                features,
-                recursion_stack,
-            )?;
-            let right = parse_cpp_numeric_expression(
-                task,
-                axiom.right_hand_side,
-                assignment_by_var,
-                auxiliary_by_name,
-                features,
-                recursion_stack,
-            )?;
-            recursion_stack.remove(&numeric_var_id);
-            let expression = combine_numeric_expression(&axiom.operator, &left, &right);
-            if !left.is_constant && !right.is_constant {
-                insert_cpp_auxiliary_feature(
-                    task,
-                    numeric_var_id,
-                    expression.clone(),
-                    auxiliary_by_name,
-                    features,
-                );
-            }
-            Ok(expression)
+            constant: 0.0,
+            affine: false,
+            is_constant: false,
+        },
+        Err(error) => {
+            return Err(format!(
+                "numeric_potential cannot expand variable {numeric_var_id}: {error}"
+            ));
         }
-        other => Err(format!(
-            "numeric_potential does not support numeric variable {numeric_var_id} (`{}`) of type {other:?} in a comparison",
-            variable.name()
-        )),
-    }
-}
-
-fn combine_numeric_expression(
-    operator: &CalOperator,
-    left: &ParsedNumericExpression,
-    right: &ParsedNumericExpression,
-) -> ParsedNumericExpression {
-    let mut result = ParsedNumericExpression {
-        coefficients: Vec::new(),
-        constant: 0.0,
-        affine: left.affine && right.affine,
-        is_constant: left.is_constant && right.is_constant,
     };
-    match operator {
-        CalOperator::Sum | CalOperator::Difference => {
-            let right_scale = if matches!(operator, CalOperator::Sum) {
-                1.0
-            } else {
-                -1.0
-            };
-            result.coefficients = add_sparse(&left.coefficients, &right.coefficients, right_scale);
-            result.constant = left.constant + right_scale * right.constant;
-        }
-        CalOperator::Product if left.is_constant && right.affine => {
-            result.coefficients = scale_sparse(&right.coefficients, left.constant);
-            result.constant = left.constant * right.constant;
-        }
-        CalOperator::Product if right.is_constant && left.affine => {
-            result.coefficients = scale_sparse(&left.coefficients, right.constant);
-            result.constant = right.constant * left.constant;
-        }
-        CalOperator::Division if right.is_constant && right.constant != 0.0 && left.affine => {
-            result.coefficients = scale_sparse(&left.coefficients, 1.0 / right.constant);
-            result.constant = left.constant / right.constant;
-        }
-        CalOperator::Product | CalOperator::Division => {
-            result.affine = false;
-        }
+    if task.numeric_variables()[numeric_var_id.index()].get_type() == &NumericType::Derived {
+        insert_cpp_auxiliary_feature(
+            task,
+            numeric_var_id,
+            expression.clone(),
+            auxiliary_by_name,
+            features,
+        );
     }
-    result
+    Ok(expression)
 }
 
 fn insert_cpp_auxiliary_feature(
@@ -815,13 +734,38 @@ fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, S
         let previous_intervals = intervals.clone();
 
         for axiom in task.assignment_axioms() {
-            let left = intervals[axiom.get_left_var_id().index()];
-            let right = intervals[axiom.get_right_var_id().index()];
-            let value = match axiom.get_operator() {
-                CalOperator::Sum => interval_add(left, right),
-                CalOperator::Difference => interval_subtract(left, right),
-                CalOperator::Product => interval_product(left, right),
-                CalOperator::Division => interval_divide(left, right),
+            let value = match &axiom.expression {
+                NumericExpression::Linear(terms) => terms.iter().fold(
+                    FeatureBounds {
+                        lower: 0.0,
+                        upper: 0.0,
+                    },
+                    |sum, (var, coefficient)| {
+                        interval_add(
+                            sum,
+                            interval_product(
+                                intervals[var.index()],
+                                FeatureBounds {
+                                    lower: coefficient.value(),
+                                    upper: coefficient.value(),
+                                },
+                            ),
+                        )
+                    },
+                ),
+                NumericExpression::Binary {
+                    operator,
+                    left,
+                    right,
+                } => {
+                    let (left, right) = (intervals[left.index()], intervals[right.index()]);
+                    match operator {
+                        CalOperator::Sum => interval_add(left, right),
+                        CalOperator::Difference => interval_subtract(left, right),
+                        CalOperator::Product => interval_product(left, right),
+                        CalOperator::Division => interval_divide(left, right),
+                    }
+                }
             };
             hull_into(&mut intervals[axiom.get_affected_var_id().index()], value);
         }
@@ -1251,34 +1195,6 @@ fn dot_sparse(left: &[(VariableIndex, f64)], right: &[(VariableIndex, f64)]) -> 
         }
     }
     result
-}
-
-fn add_sparse(
-    left: &[(VariableIndex, f64)],
-    right: &[(VariableIndex, f64)],
-    right_scale: f64,
-) -> Vec<(VariableIndex, f64)> {
-    let mut coefficients = BTreeMap::new();
-    for &(variable_id, coefficient) in left {
-        coefficients.insert(variable_id, coefficient);
-    }
-    for &(variable_id, coefficient) in right {
-        *coefficients.entry(variable_id).or_default() += right_scale * coefficient;
-    }
-    coefficients
-        .into_iter()
-        .filter(|(_, coefficient)| *coefficient != 0.0)
-        .collect()
-}
-
-fn scale_sparse(coefficients: &[(VariableIndex, f64)], scale: f64) -> Vec<(VariableIndex, f64)> {
-    coefficients
-        .iter()
-        .filter_map(|&(variable_id, coefficient)| {
-            let coefficient = coefficient * scale;
-            (coefficient != 0.0).then_some((variable_id, coefficient))
-        })
-        .collect()
 }
 
 fn sparse_value(sparse: &[(VariableIndex, f64)], index: VariableIndex) -> f64 {

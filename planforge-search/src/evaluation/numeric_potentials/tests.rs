@@ -87,6 +87,7 @@ fn every_cpp_numeric_potential_option_parses() {
         config
             .apply_options(&[option("not_a_cpp_option", "1")])
             .unwrap_err()
+            .to_string()
             .contains("unknown option")
     );
     let mut invalid = NumericPotentialConfig::default();
