@@ -17,11 +17,11 @@ impl HeuristicFeature for ExternalTest {
     type Config = EmptyConfig;
     fn build<'a>(
         _: &Self::Config,
-        _: &BuildContext<'a>,
+        context: &BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
         BUILD_CALLED.store(true, Ordering::SeqCst);
         Ok(Box::new(
-            planforge_search::evaluation::heuristic::BlindHeuristic::new(None),
+            planforge_search::evaluation::heuristic::BlindHeuristic::for_task(&**context.task),
         ))
     }
 }

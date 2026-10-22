@@ -1,9 +1,7 @@
 //! Base trait for heuristic evaluators.
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, INF_VALUE, NumericValue, ONE_VALUE, OperatorIndex, ZERO_VALUE,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, OperatorIndex, ZERO_VALUE};
 
 /// Base trait for heuristic functions.
 ///
@@ -79,22 +77,9 @@ pub struct BlindHeuristic {
 impl BlindHeuristic {
     /// Build the blind estimate from the task's cheapest effective action cost.
     pub fn for_task(task: &dyn AbstractNumericTask) -> Self {
-        Self::with_min_action_cost(minimum_action_cost(task), None)
-    }
-
-    pub fn new(name: Option<String>) -> Self {
         Self {
-            name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
-            min_action_cost: NumericValue::new(1.0),
-        }
-    }
-
-    /// Create a `BlindHeuristic` that uses the provided `min_action_cost` for
-    /// non-goal states.
-    pub fn with_min_action_cost(min_action_cost: NumericValue, name: Option<String>) -> Self {
-        Self {
-            name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
-            min_action_cost,
+            name: "blind_heuristic".to_string(),
+            min_action_cost: minimum_action_cost(&task.effective_operator_costs()),
         }
     }
 }
@@ -117,19 +102,21 @@ impl Heuristic for BlindHeuristic {
     }
 }
 
-/// Lower bound used for every non-goal search evaluation, including blind.
-/// An empty task uses one, matching the search engine's historical convention.
-pub(crate) fn minimum_action_cost(task: &dyn AbstractNumericTask) -> NumericValue {
-    let minimum = task
-        .effective_operator_costs()
+/// The cheapest operator cost: a lower bound on the remaining cost of every
+/// non-goal state, and zero for a task without operators. Tasks reject
+/// negative costs when they are constructed.
+pub(crate) fn minimum_action_cost(operator_costs: &[NumericValue]) -> NumericValue {
+    operator_costs
         .iter()
         .copied()
-        .fold(INF_VALUE, NumericValue::min);
-    if minimum.is_finite() {
-        minimum.max(ZERO_VALUE)
-    } else {
-        ONE_VALUE
-    }
+        .inspect(|&cost| {
+            assert!(
+                cost.is_finite() && cost >= ZERO_VALUE,
+                "operator costs are finite and non-negative, got {cost}"
+            );
+        })
+        .reduce(NumericValue::min)
+        .unwrap_or(ZERO_VALUE)
 }
 
 /// Registry feature for the blind heuristic.

@@ -24,13 +24,9 @@ pub use policy::{G, GPlusH, H, Priority};
 pub use registry::search_algorithm_help;
 
 use anyhow::Result;
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, Operator};
+use planforge_sas::numeric_task::Operator;
 use planforge_sas::state_registry::StateID;
 use std::time::Duration;
-
-pub fn compute_effective_operator_costs(task: &dyn AbstractNumericTask) -> Vec<NumericValue> {
-    task.effective_operator_costs().into_owned()
-}
 
 /// Search status indicating the outcome of the search.
 #[derive(Debug, Clone, PartialEq, Eq)]

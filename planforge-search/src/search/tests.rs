@@ -92,7 +92,7 @@ fn test_compute_effective_operator_costs_plus_constants() {
     assert!((d0.value() - 0.5).abs() < 1e-12);
     assert!((d1.value() - 0.002).abs() < 1e-12);
 
-    let operator_costs = compute_effective_operator_costs(&*task);
+    let operator_costs = task.effective_operator_costs();
     assert_eq!(operator_costs.len(), 2);
     assert!((operator_costs[0].value() - 0.5).abs() < 1e-12);
     assert!((operator_costs[1].value() - 0.002).abs() < 1e-12);

@@ -183,10 +183,3 @@ fn goal_distance_is_computed_per_state() {
         1.0
     );
 }
-
-#[test]
-fn rejects_a_task_with_a_negative_operator_cost() {
-    let error = minimum_action_cost(&[NumericValue::new(1.0), NumericValue::new(-1.0)])
-        .expect_err("negative costs break Dijkstra");
-    assert!(error.contains("operator 1"), "{error}");
-}

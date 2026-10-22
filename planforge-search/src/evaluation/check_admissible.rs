@@ -18,12 +18,12 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{INF_VALUE, NumericValue, OperatorIndex, TaskRef, ZERO_VALUE};
+use planforge_sas::numeric_task::{NumericValue, OperatorIndex, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
-use crate::search::compute_effective_operator_costs;
+use crate::evaluation::heuristic::minimum_action_cost;
 use crate::successor_generator::RegistryExpander;
 
 /// Slack allowed on `h <= h*` before an estimate counts as inadmissible.
@@ -138,8 +138,8 @@ impl<'task> GoalDistanceOracle<'task> {
         // Creating the initial state is what fixes the registry's numeric
         // layout (constant values and packed slots); `copy_state_in` needs it.
         registry.get_initial_state();
-        let operator_costs = compute_effective_operator_costs(&*task);
-        let min_action_cost = minimum_action_cost(&operator_costs)?;
+        let operator_costs = task.effective_operator_costs().into_owned();
+        let min_action_cost = minimum_action_cost(&operator_costs);
         let expander = RegistryExpander::new(&*task);
         Ok(Self {
             task,
@@ -286,30 +286,6 @@ fn open_entry(f_value: f64, g_value: f64, state_id: StateID) -> Result<OpenEntry
         format!("the admissibility oracle computed a NaN g-value for state {state_id}")
     })?;
     Ok((Reverse(f_value), Reverse(g_value), state_id))
-}
-
-/// Cheapest operator in the task, used as the oracle's blind estimate.
-///
-/// Dijkstra is only correct for non-negative edge costs, so a task the oracle
-/// cannot measure exactly is rejected here rather than silently mismeasured.
-fn minimum_action_cost(operator_costs: &[NumericValue]) -> Result<NumericValue, String> {
-    let mut minimum = INF_VALUE;
-    for (operator_id, &cost) in operator_costs.iter().enumerate() {
-        if !cost.is_finite() || cost < ZERO_VALUE {
-            return Err(format!(
-                "`check_admissible` cannot verify a task whose operator {operator_id} costs \
-                 {cost}; it needs finite non-negative costs"
-            ));
-        }
-        minimum = minimum.min(cost);
-    }
-    // A task without operators has no transitions at all, so zero is the
-    // tightest lower bound on the remaining cost.
-    Ok(if operator_costs.is_empty() {
-        ZERO_VALUE
-    } else {
-        minimum
-    })
 }
 
 #[derive(Debug, Clone, Default)]

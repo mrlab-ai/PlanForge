@@ -5,14 +5,13 @@ use super::space::{SearchNodeInfo, SearchSpace};
 use super::stats::{ProgressSnapshot, SearchCounters, SearchStats};
 use super::{SearchEngine, SearchResult, SearchStatus, current_memory_kb, format_progress_value};
 use crate::{
-    evaluation::{EvaluationError, EvaluationState, Heuristic},
+    evaluation::{EvaluationError, EvaluationState, Heuristic, heuristic::minimum_action_cost},
     successor_generator::SuccessorTree,
 };
 use anyhow::{Context, Result, anyhow};
 use ordered_float::OrderedFloat;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, INF_VALUE, NumericValue, ONE_VALUE, Operator, OperatorIndex,
-    ZERO_VALUE,
+    AbstractNumericTask, ExplicitFact, NumericValue, Operator, OperatorIndex,
 };
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use planforge_sas::utils::float_tolerance;
@@ -151,18 +150,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
         let operator_costs = task.effective_operator_costs();
-
-        // Determine `min_action_cost`.
-        let min_action_cost = operator_costs
-            .iter()
-            .copied()
-            .fold(INF_VALUE, NumericValue::min);
-
-        let min_action_cost = if min_action_cost.is_finite() {
-            min_action_cost.max(ZERO_VALUE)
-        } else {
-            ONE_VALUE
-        };
+        let min_action_cost = minimum_action_cost(&operator_costs);
 
         let heuristic_name = heuristic.heuristic_name().to_string();
         let initial_state_is_proven_optimal = heuristic.proves_initial_state_optimal();
