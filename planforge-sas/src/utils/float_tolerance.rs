@@ -1,6 +1,10 @@
 use crate::numeric_task::NumericValue;
 
 pub const ABS_EPSILON: f64 = 1e-12;
+/// Exact decimal scale of the canonical grid.
+pub const GRID_SCALE: f64 = 1e12;
+/// Above this magnitude, adjacent grid units cannot all be represented in f64.
+pub const GRID_BOUND: f64 = (1u64 << 53) as f64 / GRID_SCALE;
 pub const REL_EPSILON: f64 = 1e-12;
 pub const DIJKSTRA_EPSILON: f64 = 1e-12;
 pub const SEARCH_EPSILON: f64 = 1e-9;
@@ -19,10 +23,21 @@ const _: () = assert!(REL_EPSILON < 1.0);
 /// constructor owns this operation.
 #[inline]
 pub(crate) fn canonicalize(value: f64) -> f64 {
-    if value.is_infinite() {
-        return value;
+    if value.abs() >= GRID_BOUND {
+        value
+    } else {
+        let scaled = value * GRID_SCALE;
+        let mut units = scaled.round();
+        // Multiplication can round a value just below a half-grid point onto
+        // that point. Resolve those ties using the exact product residual;
+        // otherwise canonicalizing the resulting f64 a second time can move it.
+        if (scaled - units).abs() == 0.5
+            && value.mul_add(GRID_SCALE, -scaled) * (units - scaled) < 0.0
+        {
+            units -= scaled.signum();
+        }
+        units / GRID_SCALE
     }
-    (value / ABS_EPSILON).round() * ABS_EPSILON
 }
 
 #[inline]

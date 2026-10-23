@@ -237,7 +237,9 @@ u32_index!(
 /// A canonical numeric state value, constant, threshold or interval endpoint.
 ///
 /// Values represent reals approximated in f64. Equality means equality after
-/// rounding to the absolute grid; signed zero has a single representation.
+/// rounding to the 1e-12 grid; signed zero has a single representation.
+/// Values at or above 2^53 / 1e12 in magnitude are retained unchanged because
+/// the grid is finer than f64 resolution. Integers remain exact.
 /// Construction and arithmetic round their result. An affine expression must
 /// use [`Self::affine`]: its products and sum are computed in raw f64 and rounded
 /// once, rather than rounding each intermediate operation. Costs and distances
@@ -900,6 +902,48 @@ mod numeric_value_tests {
             NumericValue::new(0.1) + NumericValue::new(0.2),
             NumericValue::new(0.3)
         );
+    }
+
+    #[test]
+    fn grid_preserves_integers_and_large_values() {
+        for value in [
+            0.0,
+            1.0,
+            -1.0,
+            9007.0,
+            10_000_001.0,
+            636_192_524.0,
+            -636_192_524.0,
+            f64::MAX,
+            -f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            assert_eq!(NumericValue::new(value).value(), value);
+        }
+        for value in [
+            9007.25,
+            -9007.25,
+            1e10 + 0.25,
+            4480.672703054073,
+            -4480.672703054073,
+        ] {
+            assert_eq!(NumericValue::new(value).value(), value);
+        }
+    }
+
+    #[test]
+    fn canonical_construction_is_idempotent_across_the_grid() {
+        let mut bits = 1u64;
+        for _ in 0..100_000 {
+            bits = bits.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let raw = f64::from_bits(bits);
+            if raw.is_nan() {
+                continue;
+            }
+            let value = NumericValue::new(raw);
+            assert_eq!(NumericValue::new(value.value()).to_bits(), value.to_bits());
+        }
     }
 
     #[test]
