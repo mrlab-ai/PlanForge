@@ -1327,18 +1327,36 @@ fn project_assignment_axiom(
     let affected = num_var_map
         .get(axiom.get_affected_var_id().index())
         .and_then(|mapped| *mapped)?;
-    let left = num_var_map
-        .get(axiom.get_left_var_id().index())
-        .and_then(|mapped| *mapped)?;
-    let right = num_var_map
-        .get(axiom.get_right_var_id().index())
-        .and_then(|mapped| *mapped)?;
-    Some(AssignmentAxiom::new(
-        VariableIndex::from_usize(affected),
-        axiom.get_operator().clone(),
-        VariableIndex::from_usize(left),
-        VariableIndex::from_usize(right),
-    ))
+    let mapped = |var: VariableIndex| {
+        num_var_map
+            .get(var.index())
+            .copied()
+            .flatten()
+            .map(VariableIndex::from_usize)
+    };
+    let expression = match &axiom.expression {
+        planforge_sas::axioms::NumericExpression::Binary {
+            operator,
+            left,
+            right,
+        } => planforge_sas::axioms::NumericExpression::Binary {
+            operator: operator.clone(),
+            left: mapped(*left)?,
+            right: mapped(*right)?,
+        },
+        planforge_sas::axioms::NumericExpression::Linear(terms) => {
+            planforge_sas::axioms::NumericExpression::Linear(
+                terms
+                    .iter()
+                    .map(|(var, coefficient)| Some((mapped(*var)?, *coefficient)))
+                    .collect::<Option<_>>()?,
+            )
+        }
+    };
+    Some(AssignmentAxiom {
+        affected_var_id: VariableIndex::from_usize(affected),
+        expression,
+    })
 }
 
 fn normalize_projected_variable_layers(

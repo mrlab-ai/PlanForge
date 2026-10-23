@@ -1,3 +1,4 @@
+use planforge_sas::axioms::CalOperator;
 use planforge_sas::axioms::ComparisonOperator;
 use planforge_sas::numeric_task::{
     ExplicitValueIndex, ExplicitVariable, NumericValue, OperatorCost, VariableIndex,
@@ -72,36 +73,29 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
     let transformed = restricted.task();
 
     assert_eq!(transformed.numeric_variables().len(), 3);
-    assert!(transformed.numeric_variables()[0].name().ends_with("|u"));
-    assert_eq!(transformed.numeric_variables()[1].name(), "limit");
-    assert_eq!(
-        transformed.get_variable_axiom_layer(VariableIndex::from_usize(0)),
-        Ok(Some(0))
+    let comparison = &transformed.comparison_axioms()[0];
+    let root = comparison.get_left_var_id();
+    let limit = comparison.get_right_var_id();
+    assert!(
+        transformed.numeric_variables()[root.index()]
+            .name()
+            .starts_with("rt-shape:1,1|linear-part-")
     );
     assert_eq!(
-        transformed.get_initial_numeric_state_values(),
-        &[
-            NumericValue::new(5.0),
-            NumericValue::new(10.0),
-            NumericValue::new(1.0)
-        ]
+        transformed.numeric_variables()[limit.index()].name(),
+        "limit"
     );
     assert_eq!(
-        transformed.comparison_axioms()[0].get_left_var_id(),
-        VariableIndex::from_usize(0)
+        transformed.get_initial_numeric_state_values()[root.index()],
+        NumericValue::new(5.0)
     );
     assert_eq!(
-        transformed.comparison_axioms()[0].get_right_var_id(),
-        VariableIndex::from_usize(1)
+        transformed.get_initial_numeric_state_values()[limit.index()],
+        NumericValue::new(10.0)
     );
-
     let assignment_effects = transformed.get_operators()[0].assignment_effects();
     assert_eq!(assignment_effects.len(), 1);
-    assert_eq!(
-        assignment_effects[0].affected_var_id(),
-        VariableIndex::from_usize(0)
-    );
-    assert_eq!(assignment_effects[0].var_id(), VariableIndex::from_usize(2));
+    assert_eq!(assignment_effects[0].affected_var_id(), root);
     assert_eq!(
         transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id().index()],
         NumericValue::new(1.0)
@@ -197,10 +191,8 @@ fn a_unary_comparison_becomes_a_threshold_on_its_variable() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let restricted = build_restricted_task(&task)
-        .unwrap()
-        .expect("task should be restricted");
-    let transformed = restricted.task();
+    assert!(build_restricted_task(&task).unwrap().is_none());
+    let transformed = &task;
     let assignment_effects = transformed.get_operators()[0].assignment_effects();
 
     // `capacity - fuel > capacity` is `fuel < 0`: no promoted variable, and the
@@ -296,10 +288,8 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let restricted = build_restricted_task(&task)
-        .unwrap()
-        .expect("task should be restricted");
-    let transformed = restricted.task();
+    assert!(build_restricted_task(&task).unwrap().is_none());
+    let transformed = &task;
     assert_eq!(
         task.abstract_operator_cost(OperatorIndex::new(0)),
         NumericValue::new(1.0)

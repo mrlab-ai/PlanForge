@@ -313,15 +313,14 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    // The derived variable is expanded into the condition's DAG instead of
-    // being read from the state, so the condition depends on x0 and x1 only.
+    // x0 + x1 == x0 becomes the direct threshold x1 == 0.
     let condition = task
         .numeric_conditions()
         .for_var(VariableIndex::from_usize(0))
         .expect("var 0 carries the comparison's truth value");
     assert_eq!(
         condition.regular_numeric_var_dependencies(),
-        &[VariableIndex::from_usize(0), VariableIndex::from_usize(1)]
+        &[VariableIndex::from_usize(1)]
     );
     assert_eq!(condition.required_numeric_len(), 3);
 }

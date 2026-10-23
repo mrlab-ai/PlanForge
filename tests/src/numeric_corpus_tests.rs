@@ -267,7 +267,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
         let target_layer = numeric_layer_of[target.index()].unwrap_or_else(|| {
             panic!("{name}: assignment axiom {index} writes non-derived numeric variable {target}")
         });
-        for operand in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
+        for operand in axiom.expression.dependencies() {
             assert!(
                 operand.index() < numeric_count,
                 "{name}: assignment axiom {index} reads numeric variable {operand} of {numeric_count}"

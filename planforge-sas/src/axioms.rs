@@ -66,26 +66,104 @@ pub enum CalOperator {
     Product,
     Division,
 }
+/// Arithmetic definitions retain binary syntax for nonlinear expressions and
+/// effect sources. Normalized comparisons use a single linear sum.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NumericExpression {
+    Binary {
+        operator: CalOperator,
+        left: VariableIndex,
+        right: VariableIndex,
+    },
+    /// A constant-free sum over regular numeric variables.
+    Linear(Vec<(VariableIndex, NumericValue)>),
+}
+
+impl NumericExpression {
+    pub fn dependencies(&self) -> impl Iterator<Item = VariableIndex> + '_ {
+        let (binary, linear) = match self {
+            Self::Binary { left, right, .. } => ([Some(*left), Some(*right)], &[][..]),
+            Self::Linear(terms) => ([None, None], terms.as_slice()),
+        };
+        binary
+            .into_iter()
+            .flatten()
+            .chain(linear.iter().map(|(variable, _)| *variable))
+    }
+
+    pub fn evaluate(&self, values: &[NumericValue]) -> Result<NumericValue, AssignmentAxiomError> {
+        for variable in self.dependencies() {
+            if variable.index() >= values.len() {
+                return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
+                    length: values.len(),
+                    index: variable.index(),
+                }));
+            }
+        }
+        let value = match self {
+            Self::Linear(terms) => NumericValue::new(
+                terms
+                    .iter()
+                    .map(|(variable, coefficient)| {
+                        coefficient.value() * values[variable.index()].value()
+                    })
+                    .sum(),
+            ),
+            Self::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                let (lhs, rhs) = (values[left.index()], values[right.index()]);
+                match operator {
+                    CalOperator::Sum => lhs + rhs,
+                    CalOperator::Difference => lhs - rhs,
+                    CalOperator::Product => lhs * rhs,
+                    CalOperator::Division => {
+                        if rhs == ZERO_VALUE {
+                            return Err(AssignmentAxiomError::DivisionByZero {
+                                divisor: right.index(),
+                            });
+                        }
+                        lhs / rhs
+                    }
+                }
+            }
+        };
+        Ok(float_tolerance::canonicalize(value))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentAxiom {
     pub affected_var_id: VariableIndex,
-    pub operator: CalOperator,
-    pub left_hand_side: VariableIndex,
-    pub right_hand_side: VariableIndex,
+    pub expression: NumericExpression,
 }
 
 impl AssignmentAxiom {
     pub fn new(
         affected_var_id: VariableIndex,
         operator: CalOperator,
-        left_hand_side: VariableIndex,
-        right_hand_side: VariableIndex,
+        left: VariableIndex,
+        right: VariableIndex,
     ) -> Self {
-        AssignmentAxiom {
+        Self {
             affected_var_id,
-            operator,
-            left_hand_side,
-            right_hand_side,
+            expression: NumericExpression::Binary {
+                operator,
+                left,
+                right,
+            },
+        }
+    }
+
+    pub fn linear(
+        affected_var_id: VariableIndex,
+        terms: Vec<(VariableIndex, NumericValue)>,
+    ) -> Self {
+        Self {
+            affected_var_id,
+            expression: NumericExpression::Linear(terms),
         }
     }
 
@@ -93,58 +171,19 @@ impl AssignmentAxiom {
         &self,
         numeric_state: &mut [NumericValue],
     ) -> Result<NumericValue, AssignmentAxiomError> {
-        let left = self.left_hand_side;
-        let right = self.right_hand_side;
-        if left.index() >= numeric_state.len() {
+        if self.affected_var_id.index() >= numeric_state.len() {
             return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
                 length: numeric_state.len(),
-                index: left.index(),
+                index: self.affected_var_id.index(),
             }));
         }
-        if right.index() >= numeric_state.len() {
-            return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
-                length: numeric_state.len(),
-                index: right.index(),
-            }));
-        }
-        let affected = self.affected_var_id;
-        if affected.index() >= numeric_state.len() {
-            return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
-                length: numeric_state.len(),
-                index: affected.index(),
-            }));
-        }
-        let result = float_tolerance::canonicalize(match self.operator {
-            CalOperator::Sum => numeric_state[left.index()] + numeric_state[right.index()],
-            CalOperator::Difference => numeric_state[left.index()] - numeric_state[right.index()],
-            CalOperator::Product => numeric_state[left.index()] * numeric_state[right.index()],
-            CalOperator::Division => {
-                if numeric_state[right.index()] == ZERO_VALUE {
-                    return Err(AssignmentAxiomError::DivisionByZero {
-                        divisor: right.index(),
-                    });
-                }
-                numeric_state[left.index()] / numeric_state[right.index()]
-            }
-        });
-        numeric_state[affected.index()] = result;
-        Ok(result)
-    }
-
-    pub fn get_left_var_id(&self) -> VariableIndex {
-        self.left_hand_side
-    }
-
-    pub fn get_right_var_id(&self) -> VariableIndex {
-        self.right_hand_side
+        let value = self.expression.evaluate(numeric_state)?;
+        numeric_state[self.affected_var_id.index()] = value;
+        Ok(value)
     }
 
     pub fn get_affected_var_id(&self) -> VariableIndex {
         self.affected_var_id
-    }
-
-    pub fn get_operator(&self) -> &CalOperator {
-        &self.operator
     }
 }
 

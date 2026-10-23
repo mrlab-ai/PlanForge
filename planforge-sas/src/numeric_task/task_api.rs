@@ -1,3 +1,4 @@
+mod linear_normal_form;
 use super::*;
 
 /// A planning task the search can read.
@@ -667,11 +668,11 @@ impl NumericRootTask {
         let NumericRootTaskParts {
             version,
             metric,
-            mut variables,
+            variables,
             numeric_variables,
             goals,
             mutexes,
-            mut state,
+            state,
             numeric_state,
             operators,
             axioms,
@@ -679,16 +680,6 @@ impl NumericRootTask {
             assignment_axioms,
             global_constraint,
         } = parts;
-        let numeric_conditions = Arc::new(
-            NumericConditions::build(
-                variables.len(),
-                &numeric_variables,
-                &comparison_axioms,
-                &assignment_axioms,
-            )
-            .unwrap_or_else(|error| panic!("malformed numeric axioms in SAS task: {error}")),
-        );
-        narrow_condition_variables(&numeric_conditions, &mut variables, &mut state);
         let mut task = NumericRootTask {
             version,
             metric,
@@ -704,9 +695,25 @@ impl NumericRootTask {
             axioms,
             comparison_axioms,
             assignment_axioms,
-            numeric_conditions,
+            numeric_conditions: Arc::new(NumericConditions::default()),
             global_constraint,
         };
+        task.assert_invariants();
+        task.normalize_linear_comparisons();
+        task.numeric_conditions = Arc::new(
+            NumericConditions::build(
+                task.variables.len(),
+                &task.numeric_variables,
+                &task.comparison_axioms,
+                &task.assignment_axioms,
+            )
+            .unwrap_or_else(|error| panic!("malformed numeric axioms in SAS task: {error}")),
+        );
+        narrow_condition_variables(
+            &task.numeric_conditions,
+            &mut task.variables,
+            &mut task.state,
+        );
         task.assign_fact_namespaces();
         task.assert_invariants();
         task.close_initial_state_under_axioms();
@@ -743,6 +750,22 @@ impl NumericRootTask {
             self.numeric_state.len(),
             self.numeric_variables.len()
         );
+
+        for axiom in &self.assignment_axioms {
+            if let crate::axioms::NumericExpression::Linear(terms) = &axiom.expression {
+                for &(variable, _) in terms {
+                    assert!(
+                        self.numeric_variables
+                            .get(variable.index())
+                            .is_some_and(
+                                |definition| definition.get_type() == &NumericType::Regular
+                            ),
+                        "linear sum {} reads non-regular numeric variable {variable}",
+                        axiom.get_affected_var_id()
+                    );
+                }
+            }
+        }
 
         if let Some(metric_var_id) = self.metric.var_id() {
             let metric_var = self

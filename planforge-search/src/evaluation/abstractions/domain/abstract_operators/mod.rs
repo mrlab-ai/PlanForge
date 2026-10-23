@@ -23,8 +23,6 @@ use super::function::DomainAbstractionFunction;
 use super::layout::StateLayout;
 use crate::resource_limits::Deadline;
 use labels::{LabelCombiner, signature_hash};
-#[cfg(test)]
-use numeric::fill_source_intervals;
 use numeric::{NumericTransition, numeric_partition_transitions};
 use propositional::{PropositionalSkeleton, PropositionalSkeletons};
 

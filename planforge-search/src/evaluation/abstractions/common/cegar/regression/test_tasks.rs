@@ -273,11 +273,12 @@ pub(crate) fn diagonal_task() -> NumericRootTask {
             compare(0, 2, 3, ComparisonOperator::Equal),
             compare(1, 0, 4, ComparisonOperator::GreaterThanOrEqual),
         ],
-        assignment_axioms: vec![AssignmentAxiom::new(
-            VariableIndex::from_usize(2),
-            CalOperator::Difference,
-            VariableIndex::from_usize(0),
-            VariableIndex::from_usize(1),
+        assignment_axioms: vec![AssignmentAxiom::linear(
+            VariableIndex::new(2),
+            vec![
+                (VariableIndex::new(0), ONE_VALUE),
+                (VariableIndex::new(1), -ONE_VALUE),
+            ],
         )],
         global_constraint: ExplicitFact::propositional(0, 0),
     })

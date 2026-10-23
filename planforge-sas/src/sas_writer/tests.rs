@@ -29,3 +29,31 @@ fn the_checked_in_sas_tasks_survive_a_round_trip() {
         assert_round_trips(&sas_text, fixture);
     }
 }
+
+#[test]
+fn a_linear_sum_definition_survives_a_round_trip() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/assets/numeric_sas/example2.sas");
+    let text = std::fs::read_to_string(fixture).unwrap();
+    let (_, mut parts) = parse_sas_parts(&text).unwrap();
+    parts.assignment_axioms = vec![crate::axioms::AssignmentAxiom::linear(
+        crate::numeric_task::VariableIndex::new(2),
+        vec![
+            (
+                crate::numeric_task::VariableIndex::new(0),
+                crate::numeric_task::NumericValue::new(1.0),
+            ),
+            (
+                crate::numeric_task::VariableIndex::new(1),
+                crate::numeric_task::NumericValue::new(-2.0),
+            ),
+        ],
+    )];
+    let mut written = Vec::new();
+    write_sas(&parts, &mut written).unwrap();
+    let text = String::from_utf8(written).unwrap();
+    let (rest, read) = parse_sas_parts(&text).unwrap();
+    assert!(rest.is_empty());
+    assert_eq!(read.assignment_axioms, parts.assignment_axioms);
+    assert_round_trips(&text, "linear definition");
+}

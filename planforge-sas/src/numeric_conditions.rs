@@ -1,12 +1,10 @@
 //! Numeric conditions: the comparisons a task can test on its numeric state.
 //!
 //! A numeric condition is the semantic content of one [`ComparisonAxiom`]:
-//! an arithmetic expression on the left, a comparison operator, and an
-//! arithmetic expression on the right. The expressions are not stored as
-//! syntax; they are *recovered* from the chain of [`AssignmentAxiom`]s that
-//! define the derived numeric variables the comparison mentions, and kept in
-//! a small arena DAG — a variable used by both sides is expanded once and
-//! referenced twice.
+//! linear part and constant threshold for a linear comparison, or two
+//! arithmetic operands for a nonlinear one. Definitions are expanded into an
+//! arena DAG. A shared linear sum stays one node and canonicalizes once;
+//! nonlinear arithmetic retains its binary operations.
 //!
 //! Conditions are a first-class part of a task: [`NumericConditions`] is
 //! built once at task construction and reached through
@@ -21,7 +19,9 @@
 #[cfg(test)]
 mod tests;
 
-use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use crate::axioms::{
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, NumericExpression,
+};
 use crate::numeric_task::value_types::{ExplicitFact, FactNamespace, NumericType, NumericVariable};
 use crate::numeric_task::{AxiomIndex, NumericValue, VariableIndex};
 use crate::utils::float_tolerance;
@@ -264,6 +264,10 @@ impl From<&ComparisonOperator> for CompOp {
 /// recomputes the variable defined by `assignment_axiom_id`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConditionNode {
+    Linear {
+        result_numeric_var_id: VariableIndex,
+        terms: Vec<(VariableIndex, NumericValue)>,
+    },
     Leaf {
         numeric_var_id: VariableIndex,
     },
@@ -285,6 +289,10 @@ impl ConditionNode {
     pub fn result_numeric_var_id(&self) -> VariableIndex {
         match self {
             ConditionNode::Leaf { numeric_var_id } => *numeric_var_id,
+            ConditionNode::Linear {
+                result_numeric_var_id,
+                ..
+            } => *result_numeric_var_id,
             ConditionNode::Arith {
                 result_numeric_var_id,
                 ..
@@ -315,6 +323,12 @@ pub trait ConditionDomain: Copy {
         inputs: &[Self],
     ) -> Self;
 
+    fn linear(
+        terms: &[(VariableIndex, NumericValue)],
+        result: VariableIndex,
+        inputs: &[Self],
+    ) -> Self;
+
     fn compare(op: CompOp, lhs: Self, rhs: Self) -> Self::Verdict;
 }
 
@@ -332,6 +346,15 @@ impl ConditionDomain for NumericValue {
         _: &[NumericValue],
     ) -> NumericValue {
         op.apply(lhs, rhs)
+    }
+
+    fn linear(terms: &[(VariableIndex, NumericValue)], _: VariableIndex, inputs: &[Self]) -> Self {
+        float_tolerance::canonicalize(NumericValue::new(
+            terms
+                .iter()
+                .map(|(var, coefficient)| coefficient.value() * inputs[var.index()].value())
+                .sum(),
+        ))
     }
 
     #[inline]
@@ -356,6 +379,28 @@ impl ConditionDomain for Interval {
     ) -> Interval {
         let computed = op.apply_interval(lhs, rhs);
         let supplied = inputs[result_numeric_var_id.index()];
+        if supplied.is_empty() {
+            computed
+        } else {
+            computed.intersection(&supplied)
+        }
+    }
+
+    fn linear(
+        terms: &[(VariableIndex, NumericValue)],
+        result: VariableIndex,
+        inputs: &[Self],
+    ) -> Self {
+        let computed = terms
+            .iter()
+            .fold(
+                Interval::singleton(NumericValue::new(0.0)),
+                |sum, (var, coefficient)| {
+                    sum + inputs[var.index()] * Interval::singleton(*coefficient)
+                },
+            )
+            .canonicalized();
+        let supplied = inputs[result.index()];
         if supplied.is_empty() {
             computed
         } else {
@@ -478,8 +523,12 @@ impl NumericCondition {
     }
 
     fn evaluate_node<T: ConditionDomain>(&self, node_id: NodeId, inputs: &[T]) -> T {
-        match self.nodes[node_id] {
+        match &self.nodes[node_id] {
             ConditionNode::Leaf { numeric_var_id } => inputs[numeric_var_id.index()],
+            ConditionNode::Linear {
+                result_numeric_var_id,
+                terms,
+            } => T::linear(terms, *result_numeric_var_id, inputs),
             ConditionNode::Arith {
                 op,
                 left,
@@ -487,9 +536,9 @@ impl NumericCondition {
                 result_numeric_var_id,
                 ..
             } => {
-                let lhs = self.evaluate_node(left, inputs);
-                let rhs = self.evaluate_node(right, inputs);
-                T::combine(op, lhs, rhs, result_numeric_var_id, inputs)
+                let lhs = self.evaluate_node(*left, inputs);
+                let rhs = self.evaluate_node(*right, inputs);
+                T::combine(*op, lhs, rhs, *result_numeric_var_id, inputs)
             }
         }
     }
@@ -504,8 +553,16 @@ impl NumericCondition {
     }
 
     fn evaluate_node_and_fill(&self, node_id: NodeId, intervals: &mut [Interval]) -> Interval {
-        match self.nodes[node_id] {
+        match &self.nodes[node_id] {
             ConditionNode::Leaf { numeric_var_id } => intervals[numeric_var_id.index()],
+            ConditionNode::Linear {
+                result_numeric_var_id,
+                terms,
+            } => {
+                let result = Interval::linear(terms, *result_numeric_var_id, intervals);
+                intervals[result_numeric_var_id.index()] = result;
+                result
+            }
             ConditionNode::Arith {
                 op,
                 left,
@@ -513,9 +570,9 @@ impl NumericCondition {
                 result_numeric_var_id,
                 ..
             } => {
-                let lhs = self.evaluate_node_and_fill(left, intervals);
-                let rhs = self.evaluate_node_and_fill(right, intervals);
-                let result = Interval::combine(op, lhs, rhs, result_numeric_var_id, intervals);
+                let lhs = self.evaluate_node_and_fill(*left, intervals);
+                let rhs = self.evaluate_node_and_fill(*right, intervals);
+                let result = Interval::combine(*op, lhs, rhs, *result_numeric_var_id, intervals);
                 intervals[result_numeric_var_id.index()] = result;
                 result
             }
@@ -906,18 +963,35 @@ impl DagBuilder {
         let node = match definition {
             Some(assignment_axiom_id) => {
                 let axiom = &assignment_axioms[assignment_axiom_id.index()];
-                let left_numeric_var_id = axiom.get_left_var_id();
-                let right_numeric_var_id = axiom.get_right_var_id();
-                let left = self.expand(left_numeric_var_id, definitions, assignment_axioms)?;
-                let right = self.expand(right_numeric_var_id, definitions, assignment_axioms)?;
-                ConditionNode::Arith {
-                    result_numeric_var_id: numeric_var_id,
-                    assignment_axiom_id,
-                    op: ArithOp::from(axiom.get_operator()),
-                    left_numeric_var_id,
-                    right_numeric_var_id,
-                    left,
-                    right,
+                match &axiom.expression {
+                    NumericExpression::Linear(terms) => {
+                        for &(variable, _) in terms {
+                            self.expand(variable, definitions, assignment_axioms)?;
+                        }
+                        ConditionNode::Linear {
+                            result_numeric_var_id: numeric_var_id,
+                            terms: terms.clone(),
+                        }
+                    }
+                    NumericExpression::Binary {
+                        operator,
+                        left: left_numeric_var_id,
+                        right: right_numeric_var_id,
+                    } => {
+                        let left =
+                            self.expand(*left_numeric_var_id, definitions, assignment_axioms)?;
+                        let right =
+                            self.expand(*right_numeric_var_id, definitions, assignment_axioms)?;
+                        ConditionNode::Arith {
+                            result_numeric_var_id: numeric_var_id,
+                            assignment_axiom_id,
+                            op: ArithOp::from(operator),
+                            left_numeric_var_id: *left_numeric_var_id,
+                            right_numeric_var_id: *right_numeric_var_id,
+                            left,
+                            right,
+                        }
+                    }
                 }
             }
             None => ConditionNode::Leaf { numeric_var_id },
@@ -946,7 +1020,7 @@ fn regular_leaf_dependencies(
                 .get(numeric_var_id.index())
                 .filter(|variable| variable.get_type() == &NumericType::Regular)
                 .map(|_| *numeric_var_id),
-            ConditionNode::Arith { .. } => None,
+            ConditionNode::Arith { .. } | ConditionNode::Linear { .. } => None,
         })
         .collect();
     dependencies.sort_unstable();

@@ -368,6 +368,23 @@ fn parse_cal_operator(input: &str) -> IResult<&str, CalOperator> {
 fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
     let (input, affected_var_id) = u32(input)?;
     let (input, _) = space1(input)?;
+    if let Some(input) = input.strip_prefix("linear ") {
+        let (input, length) = usize(input)?;
+        let (input, terms) = count((space1, u32, space1, double), length).parse(input)?;
+        let (input, _) = line_ending(input)?;
+        return Ok((
+            input,
+            AssignmentAxiom::linear(
+                VariableIndex::new(affected_var_id),
+                terms
+                    .into_iter()
+                    .map(|(_, variable, _, coefficient)| {
+                        (VariableIndex::new(variable), NumericValue::new(coefficient))
+                    })
+                    .collect(),
+            ),
+        ));
+    }
     let (input, cal_operator) = parse_cal_operator(input)?;
     let (input, _) = space1(input)?;
     let (input, left_hand_side) = u32(input)?;

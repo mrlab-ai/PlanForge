@@ -3,7 +3,7 @@ mod tests;
 
 use std::fmt;
 
-use crate::axioms::{AssignmentAxiom, CalOperator};
+use crate::axioms::{CalOperator, NumericExpression};
 use crate::numeric_conditions::NumericConditionError;
 use crate::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
@@ -44,7 +44,7 @@ impl LinearExpression {
     pub fn is_constant(&self) -> bool {
         self.coefficients
             .iter()
-            .all(|coefficient| coefficient.abs() < float_tolerance::ABS_EPSILON)
+            .all(|coefficient| *coefficient == 0.0)
     }
 
     pub fn add(&self, rhs: &Self) -> Self {
@@ -214,6 +214,7 @@ pub fn linearize_numeric_var<T: AbstractNumericTask + ?Sized>(
         &assignment_lookup,
         &initial_numeric_values,
         &mut visiting,
+        &mut vec![None; task.numeric_variables().len()],
     )
 }
 
@@ -247,6 +248,7 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
             &assignment_lookup,
             &initial_numeric_values,
             &mut visiting,
+            &mut vec![None; task.numeric_variables().len()],
         )?;
         let affected_var_id = assignment_effect.affected_var_id();
         if affected_var_id.index() >= num_numeric_vars {
@@ -281,6 +283,7 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
     assignment_lookup: &[Option<AxiomIndex>],
     initial_numeric_values: &[NumericValue],
     visiting: &mut [bool],
+    memo: &mut [Option<LinearExpression>],
 ) -> Result<LinearExpression, LinearizationError> {
     let num_numeric_vars = task.numeric_variables().len();
     if numeric_var_id.index() >= num_numeric_vars {
@@ -288,6 +291,9 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
             numeric_var_id: numeric_var_id.index(),
             len: num_numeric_vars,
         });
+    }
+    if let Some(expression) = &memo[numeric_var_id.index()] {
+        return Ok(expression.clone());
     }
     if visiting[numeric_var_id.index()] {
         return Err(LinearizationError::CycleDetected {
@@ -297,8 +303,10 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
 
     let numeric_var = &task.numeric_variables()[numeric_var_id.index()];
     match numeric_var.get_type() {
-        NumericType::Regular => Ok(LinearExpression::variable(num_numeric_vars, numeric_var_id)),
-        NumericType::Constant | NumericType::Cost => {
+        NumericType::Regular | NumericType::Cost => {
+            Ok(LinearExpression::variable(num_numeric_vars, numeric_var_id))
+        }
+        NumericType::Constant => {
             let value = initial_numeric_values.get(numeric_var_id.index()).ok_or(
                 LinearizationError::InitialNumericStateTooShort {
                     numeric_var_id: numeric_var_id.index(),
@@ -319,33 +327,62 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
                 },
             )?;
             visiting[numeric_var_id.index()] = true;
-            let lhs = linearize_numeric_var_with_lookup(
-                task,
-                axiom.get_left_var_id(),
-                assignment_lookup,
-                initial_numeric_values,
-                visiting,
-            )?;
-            let rhs = linearize_numeric_var_with_lookup(
-                task,
-                axiom.get_right_var_id(),
-                assignment_lookup,
-                initial_numeric_values,
-                visiting,
-            )?;
+            let result = match &axiom.expression {
+                NumericExpression::Linear(terms) => {
+                    let mut result = LinearExpression::zero(num_numeric_vars);
+                    for &(variable, coefficient) in terms {
+                        let term = linearize_numeric_var_with_lookup(
+                            task,
+                            variable,
+                            assignment_lookup,
+                            initial_numeric_values,
+                            visiting,
+                            memo,
+                        )?;
+                        result = result.add(&term.scale(coefficient.value()));
+                    }
+                    Ok(result)
+                }
+                NumericExpression::Binary {
+                    operator,
+                    left,
+                    right,
+                } => {
+                    let lhs = linearize_numeric_var_with_lookup(
+                        task,
+                        *left,
+                        assignment_lookup,
+                        initial_numeric_values,
+                        visiting,
+                        memo,
+                    )?;
+                    let rhs = linearize_numeric_var_with_lookup(
+                        task,
+                        *right,
+                        assignment_lookup,
+                        initial_numeric_values,
+                        visiting,
+                        memo,
+                    )?;
+                    linearize_assignment_axiom_expr(numeric_var_id, operator, &lhs, &rhs)
+                }
+            };
             visiting[numeric_var_id.index()] = false;
-            linearize_assignment_axiom_expr(numeric_var_id, axiom, &lhs, &rhs)
+            if let Ok(expression) = &result {
+                memo[numeric_var_id.index()] = Some(expression.clone());
+            }
+            result
         }
     }
 }
 
 fn linearize_assignment_axiom_expr(
     numeric_var_id: VariableIndex,
-    axiom: &AssignmentAxiom,
+    operator: &CalOperator,
     lhs: &LinearExpression,
     rhs: &LinearExpression,
 ) -> Result<LinearExpression, LinearizationError> {
-    match axiom.get_operator() {
+    match operator {
         CalOperator::Sum => Ok(lhs.add(rhs)),
         CalOperator::Difference => Ok(lhs.subtract(rhs)),
         CalOperator::Product => {
@@ -367,7 +404,7 @@ fn linearize_assignment_axiom_expr(
                     operator: "/",
                 });
             }
-            if rhs.constant.abs() < float_tolerance::ABS_EPSILON {
+            if rhs.constant == 0.0 {
                 return Err(LinearizationError::DivisionByZeroConstant {
                     numeric_var_id: numeric_var_id.index(),
                 });
@@ -404,7 +441,7 @@ fn linearize_assignment_delta(
                     operator: "/",
                 });
             }
-            if source_expression.constant.abs() < float_tolerance::ABS_EPSILON {
+            if source_expression.constant == 0.0 {
                 return Err(LinearizationError::DivisionByZeroConstant {
                     numeric_var_id: affected_var_id.index(),
                 });
