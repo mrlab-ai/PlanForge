@@ -169,7 +169,7 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
             &mut numeric_values,
             &mut cost_values,
         )?;
-        cost += op_cost.value();
+        cost += op_cost;
         states.push(successor);
     }
 

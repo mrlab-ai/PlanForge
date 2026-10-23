@@ -18,7 +18,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{NumericValue, OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::{OperatorIndex, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -128,8 +128,8 @@ struct GoalDistanceOracle<'task> {
     task: TaskRef<'task>,
     registry: StateRegistry<'task>,
     expander: RegistryExpander,
-    operator_costs: Vec<NumericValue>,
-    min_action_cost: NumericValue,
+    operator_costs: Vec<f64>,
+    min_action_cost: f64,
 }
 
 impl<'task> GoalDistanceOracle<'task> {
@@ -212,7 +212,7 @@ impl<'task> GoalDistanceOracle<'task> {
         let mut best_g: HashMap<StateID, f64> = HashMap::new();
         let mut open: BinaryHeap<OpenEntry> = BinaryHeap::new();
         best_g.insert(start.get_id(), 0.0);
-        open.push(open_entry(min_action_cost.value(), 0.0, start.get_id())?);
+        open.push(open_entry(*min_action_cost, 0.0, start.get_id())?);
 
         while let Some((Reverse(_f_value), Reverse(g_value), state_id)) = open.pop() {
             let g_value = g_value.into_inner();
@@ -247,7 +247,7 @@ impl<'task> GoalDistanceOracle<'task> {
                         error.message
                     )
                 })?;
-                let successor_g = g_value + operator_costs[operator_id].value();
+                let successor_g = g_value + operator_costs[operator_id];
                 let successor_id = successor.get_id();
                 let successor_best = best_g.get(&successor_id).copied().unwrap_or(f64::INFINITY);
                 if successor_g + G_IMPROVEMENT_TOLERANCE >= successor_best {
@@ -260,7 +260,7 @@ impl<'task> GoalDistanceOracle<'task> {
                 let estimate = if is_goal(registry, &successor) {
                     0.0
                 } else {
-                    min_action_cost.value()
+                    *min_action_cost
                 };
                 open.push(open_entry(
                     successor_g + estimate,

@@ -51,19 +51,19 @@ impl std::fmt::Display for SExpr {
 }
 
 /// Reads a PDDL file and parses it into an S-expression.
-pub fn parse_nested_list(filepath: &Path) -> Result<SExpr, String> {
+pub fn parse_nested_list(filepath: &Path) -> anyhow::Result<SExpr> {
     let content = fs::read_to_string(filepath)
-        .map_err(|e| format!("Could not read file {}: {}", filepath.display(), e))?;
+        .map_err(|e| anyhow::anyhow!("Could not read file {}: {}", filepath.display(), e))?;
     parse_nested_list_string(&content)
 }
 
 /// Parse a string into an S-expression.
-pub fn parse_nested_list_string(input: &str) -> Result<SExpr, String> {
+pub fn parse_nested_list_string(input: &str) -> anyhow::Result<SExpr> {
     let tokens = tokenize(input);
     let mut iter = tokens.into_iter().peekable();
-    let result = parse_list_aux(&mut iter)?;
+    let result = parse_list_aux(&mut iter).map_err(anyhow::Error::msg)?;
     if iter.peek().is_some() {
-        return Err("Unexpected tokens after end of list".to_string());
+        anyhow::bail!("Unexpected tokens after end of list");
     }
     Ok(result)
 }

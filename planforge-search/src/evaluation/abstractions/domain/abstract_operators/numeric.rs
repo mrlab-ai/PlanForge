@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, ExplicitFact, NumericType, OperatorIndex, VariableIndex,
 };
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
 use super::OPERATOR_GENERATION;
@@ -77,7 +76,7 @@ pub(super) fn numeric_partition_transitions(
             let view = additive_numeric_views[v].as_ref().with_context(|| {
                 format!("refined derived numeric variable {v} has no additive-view semantics")
             })?;
-            view.operator_delta(concrete_op_id).value().abs() >= float_tolerance::ABS_EPSILON
+            view.operator_delta(concrete_op_id) != planforge_sas::numeric_task::ZERO_VALUE
         } else {
             assigned[v]
         };

@@ -311,64 +311,41 @@ fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTa
 }
 
 #[test]
-fn exact_affine_preimages_preserve_open_boundaries() {
-    let plus = affine_effect_task(AssignmentOperation::Plus, 1.0);
-    let plus_semantics =
-        CartesianSemantics::new(&plus, &CartesianAbstractionConfig::default()).unwrap();
-    assert_eq!(
-        plus_semantics
+fn canonical_preimages_respect_open_targets() {
+    for (operation, operand, lower, upper, source_bounds) in [
+        (AssignmentOperation::Plus, 1.0, 5.0, 10.0, [4.0, 9.0]),
+        (AssignmentOperation::Times, -2.0, -10.0, -4.0, [2.0, 5.0]),
+        (AssignmentOperation::Divide, -2.0, -5.0, -2.0, [4.0, 10.0]),
+    ] {
+        let task = affine_effect_task(operation.clone(), operand);
+        let semantics =
+            CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
+        let target = Interval::new(
+            NumericValue::new(lower),
+            NumericValue::new(upper),
+            false,
+            true,
+        );
+        let preimage = semantics
             .cegar()
             .coordinates()
-            .preimage(
-                Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
-                OperatorIndex::new(0),
-                VariableIndex::new(0)
-            )
-            .unwrap(),
-        Interval::new(NumericValue::new(4.0), NumericValue::new(9.0), false, true)
-    );
-
-    let times = affine_effect_task(AssignmentOperation::Times, -2.0);
-    let times_semantics =
-        CartesianSemantics::new(&times, &CartesianAbstractionConfig::default()).unwrap();
-    assert_eq!(
-        times_semantics
-            .cegar()
-            .coordinates()
-            .preimage(
-                Interval::new(
-                    NumericValue::new(-10.0),
-                    NumericValue::new(-4.0),
-                    false,
-                    true
-                ),
-                OperatorIndex::new(0),
-                VariableIndex::new(0)
-            )
-            .unwrap(),
-        Interval::new(NumericValue::new(2.0), NumericValue::new(5.0), true, false)
-    );
-
-    let divide = affine_effect_task(AssignmentOperation::Divide, -2.0);
-    let divide_semantics =
-        CartesianSemantics::new(&divide, &CartesianAbstractionConfig::default()).unwrap();
-    assert_eq!(
-        divide_semantics
-            .cegar()
-            .coordinates()
-            .preimage(
-                Interval::new(
-                    NumericValue::new(-5.0),
-                    NumericValue::new(-2.0),
-                    false,
-                    true
-                ),
-                OperatorIndex::new(0),
-                VariableIndex::new(0)
-            )
-            .unwrap(),
-        Interval::new(NumericValue::new(4.0), NumericValue::new(10.0), true, false)
-    );
+            .preimage(target, OperatorIndex::new(0), VariableIndex::new(0))
+            .unwrap();
+        for bound in source_bounds {
+            for offset in [-2e-12, -1e-12, 0.0, 1e-12, 2e-12] {
+                let source = NumericValue::new(bound + offset);
+                assert_eq!(
+                    preimage.contains(source),
+                    target.contains(AssignmentOperation::apply(
+                        source,
+                        &operation,
+                        NumericValue::new(operand)
+                    )),
+                    "{operation:?} {source}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

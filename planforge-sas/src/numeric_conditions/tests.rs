@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use crate::numeric_task::{NAN_VALUE, NumericType, NumericVariable, ONE_VALUE, ZERO_VALUE};
+use crate::numeric_task::{NumericType, NumericVariable, ONE_VALUE, ZERO_VALUE};
 use crate::utils::interval::Interval;
 
 fn numeric_var(name: &str, numeric_type: NumericType) -> NumericVariable {
@@ -136,7 +136,7 @@ fn point_evaluation_recomputes_derived_variables() {
     let condition = conditions.get(0).unwrap();
 
     // Stale derived slots are ignored: (1 + 2) * 2 = 6 > 1.
-    assert!(condition.evaluate_point(&[ONE_VALUE, NumericValue::new(2.0), NAN_VALUE, NAN_VALUE]));
+    assert!(condition.evaluate_point(&[ONE_VALUE, NumericValue::new(2.0), ZERO_VALUE, ZERO_VALUE]));
     // (1 + 0) * 0 = 0, not > 1.
     assert!(!condition.evaluate_point(&[ONE_VALUE, ZERO_VALUE, ZERO_VALUE, ZERO_VALUE]));
 }

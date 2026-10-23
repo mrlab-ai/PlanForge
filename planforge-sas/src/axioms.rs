@@ -10,7 +10,6 @@ use crate::numeric_task::{
     ZERO_VALUE,
 };
 use crate::utils::errors::{AssignmentAxiomError, AxiomEvalError, InvalidIndex, WrongAxiomLayer};
-use crate::utils::float_tolerance;
 use crate::utils::state_packer::StatePacker;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,13 +100,11 @@ impl NumericExpression {
             }
         }
         let value = match self {
-            Self::Linear(terms) => NumericValue::new(
+            Self::Linear(terms) => NumericValue::affine(
                 terms
                     .iter()
-                    .map(|(variable, coefficient)| {
-                        coefficient.value() * values[variable.index()].value()
-                    })
-                    .sum(),
+                    .map(|(variable, coefficient)| (coefficient.value(), values[variable.index()])),
+                0.0,
             ),
             Self::Binary {
                 operator,
@@ -130,7 +127,7 @@ impl NumericExpression {
                 }
             }
         };
-        Ok(float_tolerance::canonicalize(value))
+        Ok(value)
     }
 }
 

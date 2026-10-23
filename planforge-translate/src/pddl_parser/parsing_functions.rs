@@ -1,6 +1,8 @@
 /// Main PDDL parsing functions that convert S-expressions into PDDL AST.
 use std::collections::HashMap;
 
+mod numeric_literals;
+
 use super::lisp_parser::SExpr;
 use crate::pddl::actions::Action;
 use crate::pddl::axioms::Axiom;
@@ -661,10 +663,12 @@ pub fn parse_axiom(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
 }
 
 /// Combines parsed domain and problem S-expressions into a Task.
-pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> Task {
+pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> anyhow::Result<Task> {
+    numeric_literals::validate(domain_pddl, false)?;
+    numeric_literals::validate(task_pddl, false)?;
     let (domain, type_dict) = parse_domain_pddl(domain_pddl.as_list());
     let problem = parse_task_pddl(task_pddl.as_list(), &type_dict);
-    Task::new(domain, problem)
+    Ok(Task::new(domain, problem))
 }
 
 /// Parses a `(define (domain ...))` form, returning it together with the map

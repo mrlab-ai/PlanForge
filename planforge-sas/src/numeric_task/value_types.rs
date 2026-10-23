@@ -3,16 +3,9 @@ use std::{
     hash::Hash,
 };
 
-use crate::utils::float_tolerance;
+use super::value::{NumericValue, ZERO_VALUE};
 
 pub const ZERO_OP_COST: OperatorCost = OperatorCost(0);
-pub const ZERO_VALUE: NumericValue = NumericValue(0.0);
-pub const ONE_VALUE: NumericValue = NumericValue(1.0);
-pub const INF_VALUE: NumericValue = NumericValue(f64::INFINITY);
-pub const NEG_INF_VALUE: NumericValue = NumericValue(f64::NEG_INFINITY);
-pub const NAN_VALUE: NumericValue = NumericValue(f64::NAN);
-pub const MAX_VALUE: NumericValue = NumericValue(f64::MAX);
-pub const MIN_VALUE: NumericValue = NumericValue(f64::MIN);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Metric {
@@ -236,126 +229,6 @@ u32_index!(
     /// Index of an operator.
     OperatorIndex
 );
-
-/// Struct used to avoid confusions with other numeric values, representing
-/// a numeric value for numeric variables.
-/// Currently a `f64` but in the future smarter types could be used to avoid
-/// precision errors.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
-pub struct NumericValue(f64);
-
-impl NumericValue {
-    #[inline(always)]
-    pub fn new(value: f64) -> Self {
-        Self(value)
-    }
-
-    #[inline(always)]
-    pub fn value(&self) -> f64 {
-        self.0
-    }
-}
-
-/// The inherent helpers forward to the `f64` method of the same name,
-/// including its NaN handling.
-impl NumericValue {
-    #[inline(always)]
-    pub fn abs(self) -> Self {
-        Self(self.0.abs())
-    }
-
-    #[inline(always)]
-    pub fn min(self, other: Self) -> Self {
-        Self(self.0.min(other.0))
-    }
-
-    #[inline(always)]
-    pub fn max(self, other: Self) -> Self {
-        Self(self.0.max(other.0))
-    }
-
-    #[inline(always)]
-    pub fn round(self) -> Self {
-        Self(self.0.round())
-    }
-
-    #[inline(always)]
-    pub fn is_finite(self) -> bool {
-        self.0.is_finite()
-    }
-
-    #[inline(always)]
-    pub fn is_nan(self) -> bool {
-        self.0.is_nan()
-    }
-
-    #[inline(always)]
-    pub fn is_infinite(self) -> bool {
-        self.0.is_infinite()
-    }
-
-    #[inline(always)]
-    pub fn to_bits(self) -> u64 {
-        self.0.to_bits()
-    }
-
-    #[inline(always)]
-    pub fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.total_cmp(&other.0)
-    }
-}
-
-impl Display for NumericValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Arithmetic on [`NumericValue`] is exactly the `f64` arithmetic on the
-/// wrapped values: no checks and no canonicalisation, so writing `a + b`
-/// instead of `NumericValue::new(a.value() + b.value())` is bit-identical.
-macro_rules! numeric_value_binary_op {
-    ($trait:ident, $method:ident, $assign_trait:ident, $assign_method:ident, $op:tt) => {
-        impl std::ops::$trait for NumericValue {
-            type Output = NumericValue;
-
-            #[inline(always)]
-            fn $method(self, rhs: NumericValue) -> NumericValue {
-                NumericValue(self.0 $op rhs.0)
-            }
-        }
-
-        impl std::ops::$assign_trait for NumericValue {
-            #[inline(always)]
-            fn $assign_method(&mut self, rhs: NumericValue) {
-                self.0 = self.0 $op rhs.0;
-            }
-        }
-    };
-}
-
-numeric_value_binary_op!(Add, add, AddAssign, add_assign, +);
-numeric_value_binary_op!(Sub, sub, SubAssign, sub_assign, -);
-numeric_value_binary_op!(Mul, mul, MulAssign, mul_assign, *);
-numeric_value_binary_op!(Div, div, DivAssign, div_assign, /);
-
-impl std::ops::Neg for NumericValue {
-    type Output = NumericValue;
-
-    #[inline(always)]
-    fn neg(self) -> NumericValue {
-        NumericValue(-self.0)
-    }
-}
-
-/// Sums in iteration order through `f64`'s own [`Sum`](std::iter::Sum), so the
-/// result is bit-identical to summing the wrapped values.
-impl std::iter::Sum for NumericValue {
-    #[inline(always)]
-    fn sum<I: Iterator<Item = NumericValue>>(iter: I) -> NumericValue {
-        NumericValue(iter.map(|value| value.0).sum())
-    }
-}
 
 /// Variable/value pair, tagged with the variable's [`FactNamespace`].
 ///
@@ -791,12 +664,11 @@ impl Operator {
                 RepeatedTarget::First => numeric[affected],
                 RepeatedTarget::Additive => successor_numeric[affected],
             };
-            successor_numeric[affected] =
-                float_tolerance::canonicalize(AssignmentOperation::apply(
-                    left,
-                    effect.operation(),
-                    numeric[effect.var_id().index()],
-                ));
+            successor_numeric[affected] = AssignmentOperation::apply(
+                left,
+                effect.operation(),
+                numeric[effect.var_id().index()],
+            );
         }
     }
 

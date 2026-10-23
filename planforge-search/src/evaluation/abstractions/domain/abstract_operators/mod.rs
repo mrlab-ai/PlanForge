@@ -15,9 +15,8 @@ mod propositional;
 
 use anyhow::Result;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, OperatorIndex,
 };
-use planforge_sas::utils::float_tolerance;
 
 use super::function::DomainAbstractionFunction;
 use super::layout::StateLayout;
@@ -39,7 +38,7 @@ pub struct AbstractOperator {
     /// The labels: the concrete operators the operator stands for, ascending
     /// and unique.
     pub concrete_op_ids: Vec<OperatorIndex>,
-    pub cost: NumericValue,
+    pub cost: f64,
     /// The source state id minus the target state id of every transition
     /// the operator induces.
     pub regression_offset: isize,
@@ -97,7 +96,7 @@ impl AbstractOperator {
 #[derive(Debug, Clone, Default)]
 struct AbstractOperatorCandidate {
     concrete_op_id: OperatorIndex,
-    cost: NumericValue,
+    cost: f64,
     prev_pairs: Vec<ExplicitFact>,
     pre_pairs: Vec<ExplicitFact>,
     eff_pairs: Vec<ExplicitFact>,
@@ -117,7 +116,7 @@ impl AbstractOperatorCandidate {
     fn join(
         &mut self,
         concrete_op_id: OperatorIndex,
-        cost: NumericValue,
+        cost: f64,
         skeleton: &PropositionalSkeleton,
         transition: &NumericTransition,
     ) {
@@ -143,7 +142,7 @@ impl AbstractOperatorCandidate {
             .extend_from_slice(&transition.target_partition_facts);
         self.concrete_op_id = concrete_op_id;
         self.cost = cost;
-        self.cost_bits = float_tolerance::canonical_bits(cost);
+        self.cost_bits = cost.to_bits();
         self.signature_hash = signature_hash(
             &self.prev_pairs,
             &self.pre_pairs,

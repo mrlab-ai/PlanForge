@@ -13,9 +13,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use ordered_float::OrderedFloat;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, NumericValue, Operator, OperatorIndex,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, Operator, OperatorIndex};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use std::time::{Duration, Instant};
@@ -40,7 +38,7 @@ struct AppliedOperator<'a> {
     operator: &'a Operator,
     operator_id: usize,
     op_id: OperatorIndex,
-    metric_op_cost: NumericValue,
+    metric_op_cost: f64,
 }
 
 /// The values every successor of one expansion shares.
@@ -178,7 +176,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             next_insertion_order: 0,
             config: EngineSettings {
                 operator_costs,
-                min_action_cost: min_action_cost.value(),
+                min_action_cost,
                 use_metric,
                 time_limit,
                 max_memory_bytes,
@@ -710,9 +708,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
         } = applied;
         let succ_state_id = succ_state.get_id();
         let new_g_value = parent.g_value
-            + self
-                .operator_cost(OperatorIndex::from_usize(operator_id), metric_op_cost)
-                .value();
+            + self.operator_cost(OperatorIndex::from_usize(operator_id), metric_op_cost);
 
         // Count every successfully constructed successor state.
         self.stats.nodes_generated += 1;
@@ -795,11 +791,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
     /// Cost charged for applying `operator`: the task metric when the search
     /// optimises it, otherwise the configured (unit or per-operator) cost.
     #[inline]
-    fn operator_cost(
-        &self,
-        operator_id: OperatorIndex,
-        metric_op_cost: NumericValue,
-    ) -> NumericValue {
+    fn operator_cost(&self, operator_id: OperatorIndex, metric_op_cost: f64) -> f64 {
         if self.config.use_metric {
             metric_op_cost
         } else {

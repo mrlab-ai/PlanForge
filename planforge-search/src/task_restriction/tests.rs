@@ -290,13 +290,10 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
 
     assert!(build_restricted_task(&task).unwrap().is_none());
     let transformed = &task;
-    assert_eq!(
-        task.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(1.0)
-    );
+    assert_eq!(task.abstract_operator_cost(OperatorIndex::new(0)), 1.0);
     assert_eq!(
         transformed.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(1.0)
+        1.0
     );
     let metric_var_id = transformed.metric().var_id().unwrap();
     assert!(
@@ -399,17 +396,14 @@ fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
     );
     assert_eq!(
         transformed.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(2.0)
+        2.0
     );
 }
 
 #[test]
 fn restricted_task_preserves_derived_metric_cost() {
     let task = task_with_derived_metric();
-    assert_eq!(
-        task.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(2.0)
-    );
+    assert_eq!(task.abstract_operator_cost(OperatorIndex::new(0)), 2.0);
     let restricted = build_restricted_task(&task)
         .unwrap()
         .expect("task should be restricted");
@@ -527,4 +521,30 @@ fn restricted_task_reports_unsupported_effect_as_error() {
             .contains("does not support non-additive numeric effects"),
         "{error:#}"
     );
+}
+
+#[test]
+fn a_grid_unit_coefficient_is_not_a_zero_coefficient() {
+    let expression = AffineExpression {
+        coefficients: vec![NumericValue::new(1e-12)],
+        constant: ZERO_VALUE,
+    };
+    assert_eq!(expression.non_zero_vars(), vec![VariableIndex::new(0)]);
+    assert_eq!(
+        expression.evaluate(&[ONE_VALUE]).unwrap(),
+        NumericValue::new(1e-12)
+    );
+}
+
+#[test]
+fn substituted_affine_constants_are_rounded_once() {
+    let expression = AffineExpression {
+        coefficients: vec![NumericValue::new(0.25); 2],
+        constant: ZERO_VALUE,
+    };
+    let small = NumericValue::new(2e-12);
+    for (deltas, assignments) in [([small; 2], [None; 2]), ([ZERO_VALUE; 2], [Some(small); 2])] {
+        let substituted = expression.apply_effects(&deltas, &assignments);
+        assert_eq!(substituted.constant, NumericValue::new(1e-12));
+    }
 }

@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use planforge_sas::numeric_task::NumericValue;
+
 use super::conditions::{Atom, Condition};
 use super::f_expression::{
     FunctionalExpression, PrimitiveNumericExpression, instantiate_expression,
@@ -144,7 +146,7 @@ impl NumericAxiom {
         &self,
         var_mapping: &super::tasks::VarMapping,
         fluent_functions: &HashSet<PrimitiveNumericExpression>,
-        init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+        init_function_vals: &HashMap<PrimitiveNumericExpression, NumericValue>,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut OrderedSet<InstantiatedNumericAxiom>,
     ) -> InstantiatedNumericAxiom {

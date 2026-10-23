@@ -12,7 +12,6 @@ use planforge_sas::numeric_task::{
     ExplicitVariable, Metric, NumericTaskExt, NumericType, NumericValue, NumericVariable, Operator,
     OperatorCost, OperatorIndex, TaskRef, VariableIndex,
 };
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 
 use crate::evaluation::validate_abstractable_goal;
@@ -173,7 +172,7 @@ pub struct ProjectedTask<'task> {
     axioms: Vec<PropositionalAxiom>,
     metric: Metric,
     operators: Vec<Operator>,
-    operator_costs: Vec<NumericValue>,
+    operator_costs: Vec<f64>,
     base_operator_ids: Vec<OperatorIndex>,
     propositional_packer: Arc<StatePacker>,
     operator_effect_facts: Vec<Vec<ExplicitFact>>,
@@ -293,9 +292,9 @@ impl PatternLookupProjection {
         bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
         for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
         {
-            bins[numeric_index + 1] = float_tolerance::canonical_bits(
-                Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?,
-            );
+            bins[numeric_index + 1] =
+                (Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?)
+                    .to_bits();
         }
         Ok(())
     }
@@ -556,7 +555,7 @@ impl<'task> ProjectedTask<'task> {
             .collect();
 
         let mut operators: Vec<Operator> = Vec::new();
-        let mut operator_costs: Vec<NumericValue> = Vec::new();
+        let mut operator_costs: Vec<f64> = Vec::new();
         let mut base_operator_ids: Vec<OperatorIndex> = Vec::new();
         for (base_operator_id, operator) in base.get_operators().iter().enumerate() {
             let operator_cost =
@@ -778,7 +777,7 @@ impl<'task> ProjectedTask<'task> {
         let min_operator_cost = self
             .operator_costs
             .iter()
-            .map(NumericValue::value)
+            .copied()
             .fold(f64::INFINITY, f64::min);
         if min_operator_cost.is_finite() {
             min_operator_cost.max(0.0)
@@ -1053,7 +1052,7 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         ProjectedTask::evaluated_initial_state_values(self).map_err(|err| err.to_string())
     }
 
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64 {
         self.operator_costs[operator_id.index()]
     }
 }

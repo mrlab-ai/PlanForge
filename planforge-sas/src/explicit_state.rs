@@ -18,7 +18,6 @@ use crate::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, Operator, OperatorIndex,
 };
 use crate::utils::errors::AxiomEvalError;
-use crate::utils::float_tolerance;
 use crate::utils::state_packer::StatePacker;
 
 /// The propositional and numeric values of a state, closed under the axioms of
@@ -87,12 +86,7 @@ impl<'task> ExplicitStateSpace<'task> {
     pub fn initial_state(&self) -> Result<ExplicitState, AxiomEvalError> {
         let mut state = ExplicitState {
             propositional: self.task.get_initial_propositional_state_values().to_vec(),
-            numeric: self
-                .task
-                .get_initial_numeric_state_values()
-                .iter()
-                .map(|&value| float_tolerance::canonicalize(value))
-                .collect(),
+            numeric: self.task.get_initial_numeric_state_values().to_vec(),
         };
         self.close_under_axioms(&mut state)?;
         Ok(state)

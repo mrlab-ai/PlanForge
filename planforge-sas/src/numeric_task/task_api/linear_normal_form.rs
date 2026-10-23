@@ -1,6 +1,6 @@
 use super::*;
 use crate::axioms::{ComparisonOperator, NumericExpression};
-use crate::utils::{float_tolerance, linear_effects::LinearizationError};
+use crate::utils::linear_effects::LinearizationError;
 
 impl NumericRootTask {
     /// Hoffmann's linear normal form, established before any task consumer.
@@ -43,7 +43,7 @@ impl NumericRootTask {
             if let NumericExpression::Linear(terms) = &axiom.expression {
                 let key: Vec<_> = terms
                     .iter()
-                    .map(|(var, coefficient)| (*var, float_tolerance::canonical_bits(*coefficient)))
+                    .map(|(var, coefficient)| (*var, *coefficient))
                     .collect();
                 parts.entry(key).or_insert(axiom.affected_var_id);
             }
@@ -52,7 +52,7 @@ impl NumericRootTask {
         for (id, variable) in self.numeric_variables.iter().enumerate() {
             if variable.get_type() == &NumericType::Constant {
                 constants
-                    .entry(float_tolerance::canonical_bits(self.numeric_state[id]))
+                    .entry(self.numeric_state[id])
                     .or_insert(VariableIndex::from_usize(id));
             }
         }
@@ -115,14 +115,14 @@ impl NumericRootTask {
             };
             if terms.len() > 1
                 && terms.iter().any(|(_, coefficient)| {
-                    let normalized = float_tolerance::canonicalize(*coefficient / scale);
+                    let normalized = *coefficient / scale;
                     normalized == ZERO_VALUE || !normalized.is_finite()
                 })
             {
                 scale = terms
                     .iter()
                     .map(|(_, coefficient)| coefficient.abs())
-                    .min_by(NumericValue::total_cmp)
+                    .min()
                     .expect("a multivariate part has terms");
             }
             if scale < ZERO_VALUE {
@@ -137,14 +137,13 @@ impl NumericRootTask {
             // Multivariate parts preserve orientation and identify positive
             // scalar multiples. Unary coefficients are eliminated entirely.
             for (_, coefficient) in &mut terms {
-                *coefficient = float_tolerance::canonicalize(*coefficient / scale);
+                *coefficient /= scale;
                 assert!(
                     *coefficient != ZERO_VALUE && coefficient.is_finite(),
                     "normalizing comparison {id} loses a term"
                 );
             }
-            let threshold =
-                float_tolerance::canonicalize(NumericValue::new(-expression.constant) / scale);
+            let threshold = NumericValue::new(-expression.constant) / scale;
             assert!(
                 threshold.is_finite(),
                 "comparison {id} has non-finite threshold"
@@ -155,9 +154,7 @@ impl NumericRootTask {
                 _ => {
                     let key: Vec<_> = terms
                         .iter()
-                        .map(|(var, coefficient)| {
-                            (*var, float_tolerance::canonical_bits(*coefficient))
-                        })
+                        .map(|(var, coefficient)| (*var, *coefficient))
                         .collect();
                     *parts.entry(key).or_insert_with(|| {
                         let variable = VariableIndex::from_usize(self.numeric_variables.len());
@@ -242,20 +239,18 @@ impl NumericRootTask {
     fn normal_form_constant(
         &mut self,
         value: NumericValue,
-        constants: &mut std::collections::HashMap<u64, VariableIndex>,
+        constants: &mut std::collections::HashMap<NumericValue, VariableIndex>,
     ) -> VariableIndex {
-        *constants
-            .entry(float_tolerance::canonical_bits(value))
-            .or_insert_with(|| {
-                let variable = VariableIndex::from_usize(self.numeric_variables.len());
-                self.numeric_variables.push(NumericVariable::new(
-                    format!("constant-{value}"),
-                    NumericType::Constant,
-                    None,
-                ));
-                self.numeric_state.push(value);
-                variable
-            })
+        *constants.entry(value).or_insert_with(|| {
+            let variable = VariableIndex::from_usize(self.numeric_variables.len());
+            self.numeric_variables.push(NumericVariable::new(
+                format!("constant-{value}"),
+                NumericType::Constant,
+                None,
+            ));
+            self.numeric_state.push(value);
+            variable
+        })
     }
 
     fn remove_unused_arithmetic(&mut self, replaced: &[bool]) {

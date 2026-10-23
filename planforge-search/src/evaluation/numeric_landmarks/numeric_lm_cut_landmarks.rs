@@ -1806,7 +1806,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             operator_id.index() < self.task.get_operators().len(),
             "base operator cost is only defined for concrete operators"
         );
-        let mut operator_cost = self.task.abstract_operator_cost(operator_id).value();
+        let mut operator_cost = self.task.abstract_operator_cost(operator_id);
 
         if self.task.is_linear_cost_operator(operator_id) && self.use_bounds {
             let coefficients = self.task.operator_cost_coefficients(operator_id);

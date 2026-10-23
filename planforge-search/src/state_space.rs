@@ -9,9 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result as AnyResult, bail};
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{
-    ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef, ZERO_VALUE,
-};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::evaluation::abstractions::common::transition_system::{
@@ -317,7 +315,7 @@ pub fn enumerate_state_space(
                             operator.name()
                         ))
                     })?;
-            if !cost.is_finite() || cost < ZERO_VALUE {
+            if !cost.is_finite() || cost < 0.0 {
                 return Err(StateSpaceEnumerationError::Enumeration(format!(
                     "transition from state {state_id} via operator {operator_id} has invalid cost {cost}"
                 )));
@@ -334,7 +332,7 @@ pub fn enumerate_state_space(
                     successor.get_id()
                 ))
             })?);
-            transition_costs.push(cost.value());
+            transition_costs.push(cost);
             if registry.num_registered_states() > limits.max_states {
                 return Err(StateSpaceEnumerationError::StateLimit {
                     limit: limits.max_states,

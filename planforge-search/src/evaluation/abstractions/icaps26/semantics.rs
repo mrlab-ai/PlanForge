@@ -137,9 +137,8 @@ impl<'task> CartesianSemantics<'task> {
                     .copied()
                     .filter(|value| value.is_finite())
             })
-            .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
-        target_split_boundaries.sort_by(NumericValue::total_cmp);
+        target_split_boundaries.sort();
         target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
         let mut prop_split_dependent_operators = (0..task.get_num_variables())
             .map(|_| OperatorBitSet::empty(operator_count))

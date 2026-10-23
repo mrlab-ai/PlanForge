@@ -27,7 +27,9 @@ use crate::utils::linear_effects::{
 use std::{collections::HashSet, fmt, sync::Arc};
 
 mod task_api;
+mod value;
 pub(crate) mod value_types;
 
 pub use task_api::*;
+pub use value::*;
 pub use value_types::*;

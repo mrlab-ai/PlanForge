@@ -1,5 +1,6 @@
 use super::*;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use planforge_sas::utils::value_lattice::ValueLattice;
 
 #[test]
 fn operator_bitsets_preserve_exact_membership_and_intersections() {
@@ -55,7 +56,7 @@ fn whole_plan_candidates_deduplicate_identical_refinements() {
         boundary: NumericValue::new(2.0),
         lower_includes_boundary: true,
         witness_value: NumericValue::new(1.0),
-        integer_lattice: false,
+        lattice: ValueLattice::GRID,
     };
     let mut candidates = Vec::new();
     let mut identities = HashSet::new();
@@ -127,7 +128,7 @@ fn min_growth_uses_projected_transition_count() {
         boundary: NumericValue::new(0.0),
         lower_includes_boundary: true,
         witness_value: NumericValue::new(0.0),
-        integer_lattice: false,
+        lattice: ValueLattice::GRID,
     };
 
     let mut candidates = vec![split(VariableIndex::new(0)), split(VariableIndex::new(1))];

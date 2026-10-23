@@ -1,15 +1,15 @@
 //! The task as CEGAR refines its abstractions: its concrete states, region
-//! semantics, operator costs, which numeric dimensions live on an integer lattice, the constants
+//! semantics, operator costs, coordinate value lattices, the constants
 //! wanted splits split at, and how splits are chosen.
 
+use planforge_sas::utils::value_lattice::ValueLattice;
 use std::cell::RefCell;
 use std::sync::Arc;
 
 use anyhow::{Result, ensure};
 use planforge_sas::explicit_state::ExplicitStateSpace;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, NumericTaskExt, NumericType, NumericValue,
-    OperatorIndex,
+    AbstractNumericTask, NumericTaskExt, NumericType, NumericValue, OperatorIndex,
 };
 use planforge_sas::utils::float_tolerance;
 use rand::rngs::SmallRng;
@@ -17,7 +17,7 @@ use rand::{Rng, SeedableRng};
 
 use super::options::CegarOptions;
 use super::regression::ensure_regressable;
-use super::split::{Split, SplitDimension, approximately_equal};
+use super::split::{Split, SplitDimension};
 use super::{FlawKind, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
@@ -39,8 +39,8 @@ pub(crate) struct SplitOptions {
 pub(crate) struct CegarSemantics<'task> {
     states: ExplicitStateSpace<'task>,
     regions: RegionSemantics<'task>,
-    operator_costs: Arc<[NumericValue]>,
-    numeric_integer_lattice: Vec<bool>,
+    operator_costs: Arc<[f64]>,
+    numeric_lattices: Vec<ValueLattice>,
     /// Per numeric variable, the seed of its name that split choice keys
     /// mix in.
     numeric_name_seeds: Vec<u64>,
@@ -86,10 +86,10 @@ impl<'task> CegarSemantics<'task> {
             .map(|op_id| {
                 let cost = task.abstract_operator_cost(OperatorIndex::from_usize(op_id));
                 ensure!(
-                    cost.value() >= -float_tolerance::SEARCH_EPSILON,
+                    cost >= -float_tolerance::SEARCH_EPSILON,
                     "operator {op_id} has the negative cost {cost}"
                 );
-                Ok(NumericValue::new(cost.value().max(0.0)))
+                Ok(cost.max(0.0))
             })
             .collect::<Result<_>>()?;
         let mut wanted_split_boundaries = task
@@ -99,18 +99,15 @@ impl<'task> CegarSemantics<'task> {
             .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
             .map(|(numeric_var_id, _)| task.get_initial_numeric_state_values()[numeric_var_id])
             .filter(|value| value.is_finite())
-            .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
-        wanted_split_boundaries.sort_by(NumericValue::total_cmp);
-        wanted_split_boundaries.dedup_by(|left, right| {
-            float_tolerance::canonical_bits(*left) == float_tolerance::canonical_bits(*right)
-        });
+        wanted_split_boundaries.sort();
+        wanted_split_boundaries.dedup_by(|left, right| *left == *right);
         let random_split_rng = (split_options.selection == SplitSelection::Random).then(|| {
             RefCell::new(SmallRng::seed_from_u64(
                 split_options.random_seed.unwrap_or(RANDOM_SPLIT_SEED),
             ))
         });
-        let numeric_integer_lattice = numeric_integer_lattice(task, regions.coordinates());
+        let numeric_lattices = regions.coordinates().value_lattices();
         let numeric_name_seeds = task
             .numeric_variables()
             .iter()
@@ -120,7 +117,7 @@ impl<'task> CegarSemantics<'task> {
             states: ExplicitStateSpace::new(task),
             regions,
             operator_costs,
-            numeric_integer_lattice,
+            numeric_lattices,
             numeric_name_seeds,
             wanted_split_boundaries,
             split_options,
@@ -146,18 +143,18 @@ impl<'task> CegarSemantics<'task> {
     }
 
     /// The nonnegative cost of every operator.
-    pub(crate) fn operator_costs(&self) -> &[NumericValue] {
+    pub(crate) fn operator_costs(&self) -> &[f64] {
         &self.operator_costs
     }
 
     /// The costs, shared with an abstraction that outlives the task borrow.
-    pub(crate) fn shared_operator_costs(&self) -> Arc<[NumericValue]> {
+    pub(crate) fn shared_operator_costs(&self) -> Arc<[f64]> {
         Arc::clone(&self.operator_costs)
     }
 
-    /// Per numeric dimension, whether every reachable value is an integer.
-    pub(crate) fn numeric_integer_lattice(&self) -> &[bool] {
-        &self.numeric_integer_lattice
+    /// A lattice containing each numeric coordinate's reachable values.
+    pub(crate) fn numeric_lattices(&self) -> &[ValueLattice] {
+        &self.numeric_lattices
     }
 
     /// The task's finite constants, sorted: where wanted splits split.
@@ -255,45 +252,4 @@ pub(crate) fn numeric_split_choice_key(
     lower_closed: bool,
 ) -> u64 {
     mix_seed(name_seed ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
-}
-
-/// Per numeric dimension, whether the initial value and every effect keep it
-/// on the integers.
-fn numeric_integer_lattice(
-    task: &dyn AbstractNumericTask,
-    coordinates: &Coordinates<'_>,
-) -> Vec<bool> {
-    let initial_numeric = task.get_initial_numeric_state_values();
-    let mut lattice = initial_numeric
-        .iter()
-        .map(|&value| approximately_equal(value.value(), value.value().round()))
-        .collect::<Vec<_>>();
-    for op in task.get_operators() {
-        for effect in op.assignment_effects() {
-            let rhs = initial_numeric[effect.var_id().index()];
-            let preserves_integers = match effect.operation() {
-                AssignmentOperation::Plus
-                | AssignmentOperation::Minus
-                | AssignmentOperation::Assign
-                | AssignmentOperation::Times => {
-                    approximately_equal(rhs.value(), rhs.value().round())
-                }
-                AssignmentOperation::Divide => approximately_equal(rhs.value().abs(), 1.0),
-            };
-            lattice[effect.affected_var_id().index()] &= preserves_integers;
-        }
-    }
-    for (numeric_var_id, view) in coordinates.views().iter().enumerate() {
-        let Some(view) = view else {
-            continue;
-        };
-        let initial_value = view.evaluate(initial_numeric);
-        lattice[numeric_var_id] =
-            approximately_equal(initial_value.value(), initial_value.value().round())
-                && (0..task.get_operators().len()).all(|op_id| {
-                    let delta = view.operator_delta(OperatorIndex::from_usize(op_id));
-                    approximately_equal(delta.value(), delta.value().round())
-                });
-    }
-    lattice
 }

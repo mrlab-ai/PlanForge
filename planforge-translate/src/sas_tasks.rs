@@ -1,8 +1,9 @@
-/// SAS+ task representation for the planner output format.
-///
-/// The task is phrased in the shape the SAS+ format carries by
-/// [`crate::preprocess::sas_parts`], after the causal graph has reordered its
-/// variables; nothing here formats itself.
+//! SAS+ task representation for the planner output format.
+//!
+//! The task is phrased in the shape the SAS+ format carries by
+//! [`crate::preprocess::sas_parts`], after the causal graph has reordered its
+//! variables; nothing here formats itself.
+use planforge_sas::numeric_task::NumericValue;
 use tracing::debug;
 
 /// The comparator that holds exactly when `comp` does not.
@@ -14,6 +15,19 @@ pub fn inverted_comparator(comp: &str) -> &'static str {
         ">=" => "<",
         ">" => "<=",
         "!=" => "=",
+        other => panic!("unknown comparator: {other:?}"),
+    }
+}
+
+/// Whether `left comp right` holds.
+pub fn comparison_holds(comp: &str, left: NumericValue, right: NumericValue) -> bool {
+    match comp {
+        "<" => left < right,
+        "<=" => left <= right,
+        "=" => left == right,
+        ">=" => left >= right,
+        ">" => left > right,
+        "!=" => left != right,
         other => panic!("unknown comparator: {other:?}"),
     }
 }
@@ -220,11 +234,11 @@ impl SASMutexGroup {
 #[derive(Debug, Clone)]
 pub struct SASInit {
     pub values: Vec<i32>,
-    pub num_values: Vec<f64>,
+    pub num_values: Vec<NumericValue>,
 }
 
 impl SASInit {
-    pub fn new(values: Vec<i32>, num_values: Vec<f64>) -> Self {
+    pub fn new(values: Vec<i32>, num_values: Vec<NumericValue>) -> Self {
         SASInit { values, num_values }
     }
 

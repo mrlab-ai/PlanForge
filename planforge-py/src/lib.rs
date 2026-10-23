@@ -885,14 +885,21 @@ impl PySearchResult {
 struct State {
     #[pyo3(get)]
     values: Vec<u32>,
-    #[pyo3(get)]
-    numeric_values: Vec<f64>,
+    numeric_values: Vec<NumericValue>,
     registry_id: usize,
     state_id: usize,
 }
 
 #[pymethods]
 impl State {
+    #[getter]
+    fn numeric_values(&self) -> Vec<f64> {
+        self.numeric_values
+            .iter()
+            .map(NumericValue::value)
+            .collect()
+    }
+
     /// Read one finite-domain variable without copying the complete snapshot.
     fn value(&self, variable: usize) -> PyResult<u32> {
         self.values.get(variable).copied().ok_or_else(|| {
@@ -905,12 +912,15 @@ impl State {
 
     /// Read one numeric variable without copying the complete snapshot.
     fn numeric_value(&self, variable: usize) -> PyResult<f64> {
-        self.numeric_values.get(variable).copied().ok_or_else(|| {
-            PyIndexError::new_err(format!(
-                "numeric variable {variable} is out of bounds for {} values",
-                self.numeric_values.len()
-            ))
-        })
+        self.numeric_values
+            .get(variable)
+            .map(NumericValue::value)
+            .ok_or_else(|| {
+                PyIndexError::new_err(format!(
+                    "numeric variable {variable} is out of bounds for {} values",
+                    self.numeric_values.len()
+                ))
+            })
     }
 
     fn __hash__(&self) -> u64 {
@@ -918,26 +928,19 @@ impl State {
 
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.values.hash(&mut h);
-        for v in &self.numeric_values {
-            v.to_bits().hash(&mut h);
-        }
+        self.numeric_values.hash(&mut h);
         h.finish()
     }
 
     fn __eq__(&self, other: &State) -> bool {
-        self.values == other.values
-            && self.numeric_values.len() == other.numeric_values.len()
-            && self
-                .numeric_values
-                .iter()
-                .zip(&other.numeric_values)
-                .all(|(a, b)| a.to_bits() == b.to_bits())
+        self.values == other.values && self.numeric_values == other.numeric_values
     }
 
     fn __repr__(&self) -> String {
         format!(
             "State(values={:?}, numeric_values={:?})",
-            self.values, self.numeric_values
+            self.values,
+            self.numeric_values()
         )
     }
 }
@@ -950,11 +953,7 @@ impl State {
                 .iter()
                 .map(|v| v.index() as u32)
                 .collect(),
-            numeric_values: cstate
-                .get_numeric_state(reg)
-                .iter()
-                .map(NumericValue::value)
-                .collect(),
+            numeric_values: cstate.get_numeric_state(reg),
             registry_id: reg.id(),
             state_id: cstate.get_id(),
         }
@@ -1345,8 +1344,7 @@ impl Task {
                     Some(operator_id),
                     Some(task_id),
                     self.task
-                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                        .value(),
+                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
                 )
                 .expect("creating a Python Operator should not fail")
             })
@@ -1389,8 +1387,7 @@ impl Task {
                     Some(operator_id),
                     Some(task_id),
                     self.task
-                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                        .value(),
+                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
                 )
             })
             .collect()
@@ -1467,11 +1464,10 @@ impl Task {
                 Some(operator_id),
                 Some(task_id),
                 self.task
-                    .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                    .value(),
+                    .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
             )?;
             let snap = State::snapshot(&succ, &reg);
-            out.push((py_op, snap, cost.value()));
+            out.push((py_op, snap, cost));
         }
         Ok(out)
     }
@@ -1639,7 +1635,7 @@ impl Task {
                     rust_operator.name()
                 ))
             })?;
-        Ok((State::snapshot(&successor, &registry), cost.value()))
+        Ok((State::snapshot(&successor, &registry), cost))
     }
 }
 

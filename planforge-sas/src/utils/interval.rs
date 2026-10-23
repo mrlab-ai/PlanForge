@@ -7,7 +7,6 @@
 use crate::numeric_task::{
     AssignmentOperation, INF_VALUE, NEG_INF_VALUE, NumericValue, ONE_VALUE, ZERO_VALUE,
 };
-use crate::utils::float_tolerance;
 
 #[cfg(test)]
 mod tests;
@@ -75,23 +74,60 @@ impl Interval {
         UNBOUNDED_INTERVAL
     }
 
-    /// Align interval boundaries with the numeric state registry's canonical
-    /// lattice. Call this after state-transition arithmetic, not on queries.
-    #[inline]
-    pub fn canonicalized(self) -> Self {
-        Self::new(
-            float_tolerance::canonicalize(self.lower),
-            float_tolerance::canonicalize(self.upper),
-            self.lower_closed,
-            self.upper_closed,
-        )
+    /// Image of an affine expression, rounding each resulting endpoint once.
+    pub fn affine<I>(terms: I, constant: f64) -> Self
+    where
+        I: IntoIterator<Item = (f64, Self)>,
+        I::IntoIter: Clone,
+    {
+        let terms = terms
+            .into_iter()
+            .filter(|(coefficient, _)| *coefficient != 0.0);
+        let (mut lower_closed, mut upper_closed) = (true, true);
+        for (coefficient, interval) in terms.clone() {
+            assert!(!coefficient.is_nan(), "NaN affine coefficient");
+            if interval.is_empty() {
+                return EMPTY_INTERVAL;
+            }
+            let (lo_closed, hi_closed) = if coefficient > 0.0 {
+                (interval.lower_closed, interval.upper_closed)
+            } else {
+                (interval.upper_closed, interval.lower_closed)
+            };
+            lower_closed &= lo_closed;
+            upper_closed &= hi_closed;
+        }
+        let lower = NumericValue::affine(
+            terms.clone().map(|(coefficient, interval)| {
+                (
+                    coefficient,
+                    if coefficient > 0.0 {
+                        interval.lower
+                    } else {
+                        interval.upper
+                    },
+                )
+            }),
+            constant,
+        );
+        let upper = NumericValue::affine(
+            terms.map(|(coefficient, interval)| {
+                (
+                    coefficient,
+                    if coefficient > 0.0 {
+                        interval.upper
+                    } else {
+                        interval.lower
+                    },
+                )
+            }),
+            constant,
+        );
+        Self::new(lower, upper, lower_closed, upper_closed)
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        if self.lower.is_nan() || self.upper.is_nan() {
-            return true;
-        }
         if self.lower > self.upper {
             return true;
         }
@@ -118,7 +154,7 @@ impl Interval {
 
     #[inline]
     pub fn contains(&self, value: NumericValue) -> bool {
-        if value.is_nan() || self.is_empty() {
+        if self.is_empty() {
             return false;
         }
 
@@ -230,7 +266,7 @@ impl Interval {
 
     #[inline]
     pub fn can_split_at(&self, value: NumericValue, include_in_lower: bool) -> bool {
-        if self.is_empty() || value.is_nan() || value.is_infinite() {
+        if self.is_empty() || value.is_infinite() {
             return false;
         }
         if !self.contains(value) {
@@ -355,25 +391,49 @@ impl std::ops::Mul for Interval {
             return Interval::singleton(ZERO_VALUE);
         }
 
+        self.endpoint_image(
+            rhs,
+            extended_product,
+            self.contains_zero() || rhs.contains_zero(),
+        )
+    }
+}
+
+impl std::ops::Div for Interval {
+    type Output = Interval;
+
+    #[inline]
+    fn div(self, rhs: Interval) -> Interval {
+        debug_assert!(!self.is_empty() && !rhs.is_empty());
+        if rhs.contains_zero() {
+            return UNBOUNDED_INTERVAL;
+        }
+
+        self.endpoint_image(rhs, extended_quotient, self.contains_zero())
+    }
+}
+
+impl Interval {
+    fn endpoint_image(
+        self,
+        rhs: Self,
+        operation: impl Fn(NumericValue, NumericValue) -> NumericValue,
+        zero_attained: bool,
+    ) -> Self {
         let left = [
             (self.lower, self.lower_closed),
             (self.upper, self.upper_closed),
         ];
         let right = [(rhs.lower, rhs.lower_closed), (rhs.upper, rhs.upper_closed)];
-        let mut lower = INF_VALUE;
-        let mut upper = NEG_INF_VALUE;
-        let mut lower_closed = false;
-        let mut upper_closed = false;
-
+        let (mut lower, mut upper) = (INF_VALUE, NEG_INF_VALUE);
+        let (mut lower_closed, mut upper_closed) = (false, false);
         for (left_value, left_closed) in left {
             for (right_value, right_closed) in right {
-                let value = extended_product(left_value, right_value);
-                let attained = if value == ZERO_VALUE {
-                    (left_value == ZERO_VALUE && self.contains(ZERO_VALUE))
-                        || (right_value == ZERO_VALUE && rhs.contains(ZERO_VALUE))
-                } else {
-                    value.is_finite() && left_closed && right_closed
-                };
+                let value = operation(left_value, right_value);
+                // A finite attained corner remains attained if rounding makes
+                // its nonzero real image zero.
+                let attained = value.is_finite()
+                    && ((left_closed && right_closed) || (value == ZERO_VALUE && zero_attained));
                 if value < lower {
                     lower = value;
                     lower_closed = attained;
@@ -388,28 +448,18 @@ impl std::ops::Mul for Interval {
                 }
             }
         }
-
-        Interval::new(lower, upper, lower_closed, upper_closed)
+        Self::new(lower, upper, lower_closed, upper_closed)
     }
 }
 
-impl std::ops::Div for Interval {
-    type Output = Interval;
-
-    #[inline]
-    fn div(self, rhs: Interval) -> Interval {
-        debug_assert!(!self.is_empty() && !rhs.is_empty());
-        if rhs.contains_zero() {
-            return UNBOUNDED_INTERVAL;
-        }
-
-        let reciprocal = Interval::new(
-            ONE_VALUE / rhs.upper,
-            ONE_VALUE / rhs.lower,
-            rhs.upper_closed && rhs.upper.is_finite(),
-            rhs.lower_closed && rhs.lower.is_finite(),
-        );
-        self * reciprocal
+#[inline]
+fn extended_quotient(left: NumericValue, right: NumericValue) -> NumericValue {
+    // Indeterminate corners describe limits, not point computations. The
+    // other corners already bound every finite quotient in these rectangles.
+    if (left.is_infinite() && right.is_infinite()) || (left == ZERO_VALUE && right == ZERO_VALUE) {
+        ZERO_VALUE
+    } else {
+        left / right
     }
 }
 

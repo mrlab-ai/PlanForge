@@ -170,7 +170,7 @@ impl BackwardGraph for WorkingGraph<'_> {
             incoming.push((
                 transition.source,
                 *transition,
-                operator_costs[transition.concrete_op_id.index()].value(),
+                operator_costs[transition.concrete_op_id.index()],
             ));
         }
         Ok(())
@@ -265,7 +265,7 @@ pub(super) fn update_shortest_paths_after_split(
                 continue;
             }
             let candidate = target_distance
-                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()].value();
+                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()];
             if candidate + float_tolerance::SEARCH_EPSILON < shortest_paths.distances[source] {
                 shortest_paths.distances[source] = candidate;
                 shortest_paths.set_generating_transition(source, *transition);
@@ -284,8 +284,8 @@ pub(super) fn update_shortest_paths_after_split(
             if transition.source == target || !shortest_paths.invalid[transition.source] {
                 continue;
             }
-            let alternative = distance
-                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()].value();
+            let alternative =
+                distance + semantics.cegar().operator_costs()[transition.concrete_op_id.index()];
             if alternative + float_tolerance::SEARCH_EPSILON
                 < shortest_paths.distances[transition.source]
             {

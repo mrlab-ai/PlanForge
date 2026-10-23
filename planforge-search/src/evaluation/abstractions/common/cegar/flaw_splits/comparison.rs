@@ -4,7 +4,6 @@
 use anyhow::{Context, Result, bail, ensure};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
-use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstractions::common::cegar::selection::{
     COMPARISON_TAG, retain_min_growth_splits, select_split, select_tied_split,
@@ -67,20 +66,15 @@ pub(super) fn split_comparison(
             boundaries.extend_from_slice(semantics.wanted_split_boundaries());
         }
         boundaries.push(witness_value);
-        boundaries.sort_by(NumericValue::total_cmp);
-        boundaries.dedup_by(|left, right| {
-            float_tolerance::canonical_bits(*left) == float_tolerance::canonical_bits(*right)
-        });
+        boundaries.sort();
+        boundaries.dedup_by(|left, right| *left == *right);
 
-        let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
+        let lattice = semantics.numeric_lattices()[var_id.index()];
         for &boundary in &boundaries {
             for lower_includes_boundary in [true, false] {
-                let Some((lower, upper)) = numeric_split_intervals(
-                    parent,
-                    boundary,
-                    lower_includes_boundary,
-                    integer_lattice,
-                ) else {
+                let Some((lower, upper)) =
+                    numeric_split_intervals(parent, boundary, lower_includes_boundary, lattice)
+                else {
                     continue;
                 };
                 let (witness_child, other_child) = if lower.contains(witness_value) {
@@ -109,7 +103,7 @@ pub(super) fn split_comparison(
                         boundary,
                         lower_includes_boundary,
                         witness_value,
-                        integer_lattice,
+                        lattice,
                     },
                     decides_witness,
                     separates_truth: decides_witness && other_result == Some(!concrete_truth),

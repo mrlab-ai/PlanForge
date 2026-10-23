@@ -1,4 +1,4 @@
-use ordered_float::OrderedFloat;
+use planforge_sas::numeric_task::NumericValue;
 /// Functional expression hierarchy for numeric PDDL.
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -17,20 +17,20 @@ pub enum FunctionalExpression {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NumericConstant {
-    pub value: OrderedFloat<f64>,
+    pub value: NumericValue,
 }
 
 impl NumericConstant {
     pub fn new(value: f64) -> Self {
         NumericConstant {
-            value: OrderedFloat(value),
+            value: NumericValue::new(value),
         }
     }
 }
 
 impl fmt::Display for NumericConstant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = self.value.into_inner();
+        let value = self.value.value();
         if value.fract() == 0.0 {
             write!(f, "{:.1}", value)
         } else {
@@ -162,7 +162,7 @@ impl FunctionAssignment {
         &self,
         var_mapping: &super::tasks::VarMapping,
         fluent_functions: &HashSet<PrimitiveNumericExpression>,
-        init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+        init_function_vals: &HashMap<PrimitiveNumericExpression, NumericValue>,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
     ) -> FunctionAssignment {
@@ -330,13 +330,13 @@ impl fmt::Display for FunctionalExpression {
 /// The derived function that stands for the constant `value`, with its
 /// defining axiom grounded into `new_constant_axioms`.
 pub fn constant_function(
-    value: f64,
+    value: NumericValue,
     fluent_functions: &HashSet<PrimitiveNumericExpression>,
-    init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+    init_function_vals: &HashMap<PrimitiveNumericExpression, NumericValue>,
     task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
     new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
 ) -> PrimitiveNumericExpression {
-    let constant_expr = FunctionalExpression::NumericConstant(NumericConstant::new(value));
+    let constant_expr = FunctionalExpression::NumericConstant(NumericConstant { value });
     let derived = task_function_admin.get_derived_function(&constant_expr);
     let axiom = task_function_admin
         .axiom_named(&derived.symbol)
@@ -358,7 +358,7 @@ pub fn instantiate_expression(
     expr: &FunctionalExpression,
     var_mapping: &super::tasks::VarMapping,
     fluent_functions: &HashSet<PrimitiveNumericExpression>,
-    init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+    init_function_vals: &HashMap<PrimitiveNumericExpression, NumericValue>,
     task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
     new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
 ) -> FunctionalExpression {

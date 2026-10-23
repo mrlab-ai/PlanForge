@@ -2,7 +2,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, VariableIndex};
-use planforge_sas::utils::float_tolerance;
+use planforge_sas::utils::value_lattice::ValueLattice;
 
 use crate::evaluation::abstractions::common::cegar::split::numeric_split_intervals;
 
@@ -24,8 +24,8 @@ impl std::hash::Hash for NumericPartitions {
         for partitions in &self.partitions_by_numeric_var {
             partitions.len().hash(state);
             for interval in partitions {
-                float_tolerance::canonical_bits(interval.lower).hash(state);
-                float_tolerance::canonical_bits(interval.upper).hash(state);
+                interval.lower.hash(state);
+                interval.upper.hash(state);
                 (interval.lower_closed, interval.upper_closed).hash(state);
             }
         }
@@ -96,12 +96,8 @@ impl NumericPartitions {
         numeric_var_id: VariableIndex,
         value: NumericValue,
         include_in_lower: bool,
-        integer_lattice: bool,
+        lattice: ValueLattice,
     ) -> bool {
-        // Numeric states use the canonical ABS_EPSILON lattice. Storing an
-        // uncanonicalized flaw/regression value as a partition boundary makes
-        // forward image and inverse-image overlap tests disagree.
-        let value = float_tolerance::canonicalize(value);
         let parts = &mut self.partitions_by_numeric_var[numeric_var_id.index()];
         let Some(part_id) = partition_for_value(parts, value) else {
             return false;
@@ -110,8 +106,7 @@ impl NumericPartitions {
         if !iv.can_split_at(value, include_in_lower) {
             return false;
         }
-        let Some((lower, upper)) =
-            numeric_split_intervals(iv, value, include_in_lower, integer_lattice)
+        let Some((lower, upper)) = numeric_split_intervals(iv, value, include_in_lower, lattice)
         else {
             return false;
         };
@@ -132,19 +127,15 @@ impl NumericPartitions {
 /// constants, metric costs, derived linear views), so instead of comparing
 /// with a tolerance the value is first rounded to the canonical
 /// `float_tolerance::ABS_EPSILON` lattice that states and partition
-/// boundaries already live on (`split_at` and the state registry canonicalize
+/// boundaries already live on (NumericValue canonicalizes
 /// both), and then compared exactly against the boundaries, honoring their
 /// open/closed flags. The result is the same whatever the number of
 /// partitions.
 ///
 /// `partitions` are the disjoint, ascending intervals of one numeric variable.
 /// `None` means no partition contains the value, which happens only for a
-/// value outside a bounded layout (a constant that changed) or NaN.
+/// value outside a bounded layout (a constant that changed).
 pub(crate) fn partition_for_value(partitions: &[Interval], value: NumericValue) -> Option<usize> {
-    let value = float_tolerance::canonicalize(value);
-    if value.is_nan() {
-        return None;
-    }
     // The first partition that does not lie entirely below the value.
     let index = partitions
         .partition_point(|iv| iv.upper < value || (iv.upper == value && !iv.upper_closed));

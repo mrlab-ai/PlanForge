@@ -212,11 +212,11 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.evaluate_initial_state_values()
     }
 
-    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [NumericValue]> {
+    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
         self.base.effective_operator_costs()
     }
 
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64 {
         self.base.operator_cost_for_abstraction(operator_id)
     }
 }

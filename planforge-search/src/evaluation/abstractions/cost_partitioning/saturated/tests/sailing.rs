@@ -1,6 +1,7 @@
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
+use planforge_sas::utils::value_lattice::ValueLattice;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -370,7 +371,7 @@ fn build_handcrafted_abstraction(
             seed.numeric_var_id,
             seed.value,
             seed.include_in_lower,
-            false,
+            ValueLattice::GRID,
         );
     }
 

@@ -134,7 +134,7 @@ pub(in super::super) fn desired_comparison_interval(
     if !comparison_truth(desired_prop_value)? {
         operator = negate_comparison_operator(&operator)?;
     }
-    let threshold = float_tolerance::canonicalize(threshold);
+
     let interval = match operator {
         ComparisonOperator::LessThan => Interval::new(NEG_INF_VALUE, threshold, false, false),
         ComparisonOperator::LessThanOrEqual => Interval::new(NEG_INF_VALUE, threshold, false, true),

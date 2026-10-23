@@ -1,7 +1,7 @@
-/// Handles numeric axiom constant folding, layer computation, and equivalence detection.
+//! Handles numeric axiom constant folding, layer computation, and equivalence detection.
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use ordered_float::OrderedFloat;
+use planforge_sas::numeric_task::NumericValue;
 
 use super::pddl::axioms::InstantiatedNumericAxiom;
 use super::pddl::f_expression::{
@@ -91,7 +91,7 @@ fn axiom_by_pne(axioms: &[InstantiatedNumericAxiom]) -> HashMap<PrimitiveNumeric
 
 fn identify_constants(axioms: &mut [InstantiatedNumericAxiom]) {
     let axiom_index = axiom_by_pne(axioms);
-    let mut memo: HashMap<PrimitiveNumericExpression, Option<OrderedFloat<f64>>> = HashMap::new();
+    let mut memo: HashMap<PrimitiveNumericExpression, Option<NumericValue>> = HashMap::new();
     let mut visiting: HashSet<PrimitiveNumericExpression> = HashSet::new();
 
     for idx in 0..axioms.len() {
@@ -107,9 +107,9 @@ fn fold_axiom_if_constant(
     idx: usize,
     axioms: &mut [InstantiatedNumericAxiom],
     axiom_index: &HashMap<PrimitiveNumericExpression, usize>,
-    memo: &mut HashMap<PrimitiveNumericExpression, Option<OrderedFloat<f64>>>,
+    memo: &mut HashMap<PrimitiveNumericExpression, Option<NumericValue>>,
     visiting: &mut HashSet<PrimitiveNumericExpression>,
-) -> Option<OrderedFloat<f64>> {
+) -> Option<NumericValue> {
     let effect = axioms[idx].effect.clone();
     if let Some(cached) = memo.get(&effect) {
         return *cached;
@@ -146,7 +146,7 @@ fn fold_axiom_if_constant(
                 return None;
             }
         }
-        evaluate_constant_expression(&op, &values)
+        Some(evaluate_constant_expression(&op, &values))
     };
 
     if let Some(value) = result {
@@ -166,9 +166,9 @@ fn resolve_constant_part(
     part: &FunctionalExpression,
     axioms: &mut [InstantiatedNumericAxiom],
     axiom_index: &HashMap<PrimitiveNumericExpression, usize>,
-    memo: &mut HashMap<PrimitiveNumericExpression, Option<OrderedFloat<f64>>>,
+    memo: &mut HashMap<PrimitiveNumericExpression, Option<NumericValue>>,
     visiting: &mut HashSet<PrimitiveNumericExpression>,
-) -> Option<OrderedFloat<f64>> {
+) -> Option<NumericValue> {
     match part {
         FunctionalExpression::NumericConstant(nc) => Some(nc.value),
         FunctionalExpression::PrimitiveNumericExpression(pne) => {
@@ -183,36 +183,16 @@ fn resolve_constant_part(
     }
 }
 
-fn evaluate_constant_expression(
-    op: &str,
-    values: &[OrderedFloat<f64>],
-) -> Option<OrderedFloat<f64>> {
-    if values.is_empty() {
-        return None;
-    }
-
-    let numeric_values: Vec<f64> = values.iter().map(|value| value.into_inner()).collect();
-    let result = match op {
-        "+" => numeric_values.into_iter().sum(),
-        "*" => numeric_values.into_iter().product(),
-        "-" => {
-            if numeric_values.len() == 1 {
-                -numeric_values[0]
-            } else {
-                let mut iter = numeric_values.into_iter();
-                let first = iter.next()?;
-                iter.fold(first, |acc, value| acc - value)
-            }
-        }
-        "/" => {
-            let mut iter = numeric_values.into_iter();
-            let first = iter.next()?;
-            iter.fold(first, |acc, value| acc / value)
-        }
+fn evaluate_constant_expression(op: &str, values: &[NumericValue]) -> NumericValue {
+    let (&first, rest) = values.split_first().expect("a numeric axiom has operands");
+    match op {
+        "+" => NumericValue::affine(values.iter().map(|&value| (1.0, value)), 0.0),
+        "-" if rest.is_empty() => -first,
+        "-" => NumericValue::affine(rest.iter().map(|&value| (-1.0, value)), first.value()),
+        "*" => rest.iter().fold(first, |acc, &value| acc * value),
+        "/" => rest.iter().fold(first, |acc, &value| acc / value),
         unknown => panic!("unknown numeric axiom operator {unknown}"),
-    };
-
-    Some(OrderedFloat(result))
+    }
 }
 
 fn compute_axiom_layers(

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use planforge_sas::axioms::{CalOperator, ComparisonOperator, NumericExpression};
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
@@ -7,7 +8,7 @@ use planforge_sas::numeric_task::{
     NumericType, NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::state_registry::ConcreteStateView;
-use planforge_sas::utils::float_tolerance;
+use planforge_sas::utils::value_lattice::ValueLattice;
 
 use super::BoundsProvider;
 use crate::evaluation::numeric_landmarks::numeric_helper::{
@@ -170,7 +171,7 @@ impl PotentialTask {
         // all weights are fixed to zero because no numeric goal interval is
         // registered below.
         let features = build_cpp_numeric_features(task)?;
-        let mut feature_keys: BTreeMap<Vec<(VariableIndex, u64)>, usize> = BTreeMap::new();
+        let mut feature_keys: BTreeMap<Vec<(VariableIndex, NumericValue)>, usize> = BTreeMap::new();
         for (feature_id, feature) in features.iter().enumerate() {
             if !feature.affine || feature.coefficients.is_empty() {
                 continue;
@@ -183,21 +184,14 @@ impl PotentialTask {
         let mut feature_goal_bounds = vec![FeatureBounds::default(); features.len()];
         let mut goal_unsatisfiable = false;
         if !ignore_numeric_variables {
-            let integral = all_values_integral(
-                task,
-                &features,
-                &feature_keys,
-                &numeric_conditions,
-                precision,
-            )?;
+            let lattices = Coordinates::new(task).value_lattices();
             for condition in &numeric_conditions {
                 register_condition_bound(
                     condition,
                     &features,
                     &feature_keys,
                     &mut feature_goal_bounds,
-                    integral,
-                    epsilon,
+                    &lattices,
                     &mut goal_unsatisfiable,
                 )?;
             }
@@ -287,8 +281,14 @@ impl PotentialTask {
                 let rhs_coefficient = if identical { -1.0 } else { 1.0 };
                 let coefficients = vec![(lhs_id, 1.0), (rhs_id, rhs_coefficient)];
                 global_linear_equalities.push(LinearEquality {
-                    rhs: initial_numeric[lhs].value()
-                        + rhs_coefficient * initial_numeric[rhs].value(),
+                    rhs: NumericValue::affine(
+                        [
+                            (1.0, initial_numeric[lhs]),
+                            (rhs_coefficient, initial_numeric[rhs]),
+                        ],
+                        0.0,
+                    )
+                    .value(),
                     coefficients,
                 });
             }
@@ -337,9 +337,7 @@ impl PotentialTask {
                         })
                         .collect(),
                     numeric_precondition_bounds: sparse_bounds(numeric_precondition_bounds),
-                    cost: task
-                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                        .value(),
+                    cost: task.abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
                     reachable: true,
                 })
             })
@@ -400,7 +398,14 @@ impl PotentialTask {
                     .iter()
                     .all(|deltas| dot_sparse(&feature.coefficients, deltas) <= 0.0);
                 let initial_value = if feature.affine {
-                    dot_sparse_dense(&feature.coefficients, initial) + feature.constant
+                    NumericValue::affine(
+                        feature
+                            .coefficients
+                            .iter()
+                            .map(|&(var, coefficient)| (coefficient, initial[var.index()])),
+                        feature.constant,
+                    )
+                    .value()
                 } else {
                     initial[feature.source_numeric_var.index()].value()
                 };
@@ -498,7 +503,14 @@ impl PotentialTask {
             .iter()
             .map(|feature| {
                 if feature.affine {
-                    dot_sparse_dense(&feature.coefficients, numeric_scratch) + feature.constant
+                    NumericValue::affine(
+                        feature
+                            .coefficients
+                            .iter()
+                            .map(|&(var, coefficient)| (coefficient, numeric_scratch[var.index()])),
+                        feature.constant,
+                    )
+                    .value()
                 } else {
                     numeric_scratch[feature.source_numeric_var.index()].value()
                 }
@@ -977,7 +989,7 @@ fn map_primitive_bounds_to_features(
 fn register_closed_condition_bound(
     condition: &LinearNumericCondition,
     features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
+    feature_keys: &BTreeMap<Vec<(VariableIndex, NumericValue)>, usize>,
     bounds: &mut [FeatureBounds],
 ) -> Result<(), String> {
     if condition
@@ -1011,10 +1023,9 @@ fn register_closed_condition_bound(
 fn register_condition_bound(
     condition: &LinearNumericCondition,
     features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
+    feature_keys: &BTreeMap<Vec<(VariableIndex, NumericValue)>, usize>,
     bounds: &mut [FeatureBounds],
-    integral: bool,
-    epsilon: f64,
+    lattices: &[ValueLattice],
     goal_unsatisfiable: &mut bool,
 ) -> Result<(), String> {
     if condition
@@ -1022,12 +1033,12 @@ fn register_condition_bound(
         .iter()
         .all(|coefficient| *coefficient == 0.0)
     {
-        let required = if condition.is_strictly_greater {
-            epsilon
+        let constant = NumericValue::new(condition.constant);
+        *goal_unsatisfiable |= if condition.is_strictly_greater {
+            constant <= ZERO_VALUE
         } else {
-            0.0
+            constant < ZERO_VALUE
         };
-        *goal_unsatisfiable |= condition.constant < required;
         return Ok(());
     }
     let (canonical, condition_scale) = canonical_dense_feature(&condition.coefficients)
@@ -1045,20 +1056,24 @@ fn register_condition_bound(
     let mut threshold = features[feature_id].constant - condition.constant / ratio;
     if ratio > 0.0 {
         if condition.is_strictly_greater {
-            threshold = if integral {
-                threshold.floor() + 1.0
-            } else {
-                threshold + epsilon / ratio
-            };
+            threshold = lattices[features[feature_id].source_numeric_var.index()]
+                .split_bounds(NumericValue::new(threshold), true)
+                .ok_or_else(|| {
+                    format!("non-finite strict numeric potential threshold: {threshold}")
+                })?
+                .1
+                .value();
         }
         bounds[feature_id].lower = bounds[feature_id].lower.max(threshold);
     } else {
         if condition.is_strictly_greater {
-            threshold = if integral {
-                threshold.ceil() - 1.0
-            } else {
-                threshold - epsilon / -ratio
-            };
+            threshold = lattices[features[feature_id].source_numeric_var.index()]
+                .split_bounds(NumericValue::new(threshold), false)
+                .ok_or_else(|| {
+                    format!("non-finite strict numeric potential threshold: {threshold}")
+                })?
+                .0
+                .value();
         }
         bounds[feature_id].upper = bounds[feature_id].upper.min(threshold);
     }
@@ -1096,92 +1111,11 @@ fn canonical_dense_feature(coefficients: &[f64]) -> Option<(Vec<(VariableIndex, 
     canonical_feature(&sparse)
 }
 
-fn feature_key(coefficients: &[(VariableIndex, f64)]) -> Vec<(VariableIndex, u64)> {
+fn feature_key(coefficients: &[(VariableIndex, f64)]) -> Vec<(VariableIndex, NumericValue)> {
     coefficients
         .iter()
-        .map(|&(variable_id, value)| {
-            (
-                variable_id,
-                float_tolerance::canonical_bits(NumericValue::new(value)),
-            )
-        })
+        .map(|&(variable_id, value)| (variable_id, NumericValue::new(value)))
         .collect()
-}
-
-fn all_values_integral(
-    task: &dyn AbstractNumericTask,
-    features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
-    goal_conditions: &[LinearNumericCondition],
-    precision: f64,
-) -> Result<bool, String> {
-    let integral = |value: f64| (value - value.round()).abs() <= precision;
-    let initial = task.get_initial_numeric_state_values();
-    if !task
-        .numeric_variables()
-        .iter()
-        .enumerate()
-        .filter(|(_, variable)| {
-            matches!(
-                variable.get_type(),
-                NumericType::Regular | NumericType::Constant
-            )
-        })
-        .all(|(variable_id, _)| integral(initial[variable_id].value()))
-        || !features.iter().all(|feature| {
-            integral(dot_sparse_dense(&feature.coefficients, initial) + feature.constant)
-        })
-    {
-        return Ok(false);
-    }
-    for operator_id in 0..task.get_num_operators() {
-        let effects = task
-            .linearized_assignment_effects(OperatorIndex::from_usize(operator_id))
-            .map_err(|error| error.to_string())?;
-        let mut primitive_delta = vec![ZERO_VALUE; task.numeric_variables().len()];
-        for effect in effects {
-            if effect.operation != AssignmentOperation::Assign && !effect.delta.is_constant() {
-                return Ok(false);
-            }
-            if matches!(
-                effect.operation,
-                AssignmentOperation::Plus | AssignmentOperation::Minus
-            ) {
-                primitive_delta[effect.affected_var_id.index()] +=
-                    NumericValue::new(effect.delta.constant);
-            }
-        }
-        if features
-            .iter()
-            .any(|feature| !integral(dot_sparse_dense(&feature.coefficients, &primitive_delta)))
-        {
-            return Ok(false);
-        }
-    }
-    for condition in goal_conditions {
-        let Some((canonical, condition_scale)) = canonical_dense_feature(&condition.coefficients)
-        else {
-            continue;
-        };
-        let Some(&feature_id) = feature_keys.get(&feature_key(&canonical)) else {
-            continue;
-        };
-        let (_, feature_scale) = canonical_feature(&features[feature_id].coefficients)
-            .expect("matched feature must be nonconstant");
-        let ratio = condition_scale / feature_scale;
-        let threshold = features[feature_id].constant - condition.constant / ratio;
-        if !integral(threshold) {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn dot_sparse_dense(sparse: &[(VariableIndex, f64)], dense: &[NumericValue]) -> f64 {
-    sparse
-        .iter()
-        .map(|&(variable_id, value)| dense[variable_id.index()].value() * value)
-        .sum()
 }
 
 fn dot_sparse(left: &[(VariableIndex, f64)], right: &[(VariableIndex, f64)]) -> f64 {

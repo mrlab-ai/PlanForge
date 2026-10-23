@@ -1,10 +1,12 @@
 use super::*;
+use planforge_sas::utils::float_tolerance;
+use planforge_sas::utils::value_lattice::ValueLattice;
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitValueIndex, ExplicitVariable, INF_VALUE, Metric, NAN_VALUE,
-    NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, ZERO_VALUE,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, ZERO_VALUE,
 };
 
 /// The propositional variable a comparison axiom writes: true or false,
@@ -117,18 +119,16 @@ fn reachable_partitions_overlaps_result_interval() {
     // From partition 0: (-inf,9) + 7 -> (-inf,16) overlaps both partitions.
     let targets = partitions.intersecting(
         VariableIndex::from_usize(0),
-        (partitions.partition_interval(VariableIndex::from_usize(0), 0)
-            + Interval::singleton(NumericValue::new(7.0)))
-        .canonicalized(),
+        partitions.partition_interval(VariableIndex::from_usize(0), 0)
+            + Interval::singleton(NumericValue::new(7.0)),
     );
     assert_eq!(targets.collect::<Vec<_>>(), vec![0, 1]);
 
     // From partition 1: [9,inf) + 7 -> [16,inf) overlaps only partition 1.
     let targets = partitions.intersecting(
         VariableIndex::from_usize(0),
-        (partitions.partition_interval(VariableIndex::from_usize(0), 1)
-            + Interval::singleton(NumericValue::new(7.0)))
-        .canonicalized(),
+        partitions.partition_interval(VariableIndex::from_usize(0), 1)
+            + Interval::singleton(NumericValue::new(7.0)),
     );
     assert_eq!(targets.collect::<Vec<_>>(), vec![1]);
 
@@ -142,19 +142,19 @@ fn partition_images_use_the_numeric_state_lattice() {
         VariableIndex::from_usize(0),
         NumericValue::new(-5.9999999999999964),
         true,
-        false
+        ValueLattice::GRID
     ));
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
         NumericValue::new(-5.799999999999997),
         true,
-        false
+        ValueLattice::GRID
     ));
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
         NumericValue::new(-5.6999999999999975),
         true,
-        false
+        ValueLattice::GRID
     ));
 
     assert_eq!(
@@ -162,18 +162,18 @@ fn partition_images_use_the_numeric_state_lattice() {
         &[
             Interval::new(NEG_INF_VALUE, NumericValue::new(-6.0), false, true),
             Interval::new(
-                NumericValue::new(-6.0),
+                NumericValue::new(-6.0 + 1e-12),
                 NumericValue::new(-5.8),
-                false,
+                true,
                 true
             ),
             Interval::new(
-                NumericValue::new(-5.8),
+                NumericValue::new(-5.8 + 1e-12),
                 NumericValue::new(-5.7),
-                false,
+                true,
                 true
             ),
-            Interval::new(NumericValue::new(-5.7), INF_VALUE, false, false),
+            Interval::new(NumericValue::new(-5.7 + 1e-12), INF_VALUE, true, false),
         ]
     );
 
@@ -183,9 +183,8 @@ fn partition_images_use_the_numeric_state_lattice() {
         partitions
             .intersecting(
                 VariableIndex::from_usize(0),
-                (partitions.partition_interval(VariableIndex::from_usize(0), 2)
-                    + Interval::singleton(NumericValue::new(-0.2)))
-                .canonicalized(),
+                partitions.partition_interval(VariableIndex::from_usize(0), 2)
+                    + Interval::singleton(NumericValue::new(-0.2)),
             )
             .collect::<Vec<_>>(),
         vec![1]
@@ -416,10 +415,8 @@ fn values_are_compared_on_the_canonical_lattice_without_tolerance() {
 }
 
 #[test]
-fn values_outside_a_bounded_layout_and_nan_have_no_partition() {
+fn values_outside_a_bounded_layout_have_no_partition() {
     let partitions = vec![Interval::singleton(nv(2.0))];
     assert_eq!(partition_for_value(&partitions, nv(2.0)), Some(0));
     assert_eq!(partition_for_value(&partitions, nv(3.0)), None);
-    assert_eq!(partition_for_value(&partitions, NAN_VALUE), None);
-    assert_eq!(partition_for_value(&layout(9), NAN_VALUE), None);
 }

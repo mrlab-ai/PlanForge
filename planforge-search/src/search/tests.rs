@@ -89,17 +89,17 @@ fn test_compute_effective_operator_costs_plus_constants() {
     let d1 = state_registry
         .metric_delta_applying_operator(&initial_state, &task.get_operators()[1])
         .unwrap();
-    assert!((d0.value() - 0.5).abs() < 1e-12);
-    assert!((d1.value() - 0.002).abs() < 1e-12);
+    assert!((d0 - 0.5).abs() < 1e-12);
+    assert!((d1 - 0.002).abs() < 1e-12);
 
     let operator_costs = task.effective_operator_costs();
     assert_eq!(operator_costs.len(), 2);
-    assert!((operator_costs[0].value() - 0.5).abs() < 1e-12);
-    assert!((operator_costs[1].value() - 0.002).abs() < 1e-12);
+    assert!((operator_costs[0] - 0.5).abs() < 1e-12);
+    assert!((operator_costs[1] - 0.002).abs() < 1e-12);
     let min_cost = operator_costs
         .iter()
         .copied()
-        .fold(f64::INFINITY, |left, right| left.min(right.value()));
+        .fold(f64::INFINITY, |left, right| left.min(right));
     assert!((min_cost - 0.002).abs() < 1e-12);
 }
 

@@ -326,10 +326,7 @@ impl SortedUsageIndex {
                 let mut bounds = HashSet::with_capacity(cells.len());
                 for cell in cells {
                     let interval = cell.region.numeric[dimension];
-                    bounds.insert((
-                        float_tolerance::canonical_bits(interval.lower),
-                        float_tolerance::canonical_bits(interval.upper),
-                    ));
+                    bounds.insert((interval.lower, interval.upper));
                 }
                 bounds.len()
             })
@@ -344,8 +341,8 @@ impl SortedUsageIndex {
             let left = cells[left].region.numeric[primary_dim];
             let right = cells[right].region.numeric[primary_dim];
             left.lower
-                .total_cmp(&right.lower)
-                .then_with(|| left.upper.total_cmp(&right.upper))
+                .cmp(&right.lower)
+                .then_with(|| left.upper.cmp(&right.upper))
         });
         let blocks = sorted_cell_ids
             .chunks(USAGE_INDEX_BLOCK_SIZE)

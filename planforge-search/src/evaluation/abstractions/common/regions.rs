@@ -20,7 +20,6 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericType, OperatorIndex,
     VariableIndex,
 };
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
 use super::cartesian_set::{CartesianSet, cartesian_set_is_nonempty, sorted_value_sets_overlap};
@@ -34,8 +33,7 @@ pub(crate) fn trivial_interval(task: &dyn AbstractNumericTask, var_id: VariableI
     if variable.get_type() != &NumericType::Constant {
         return Interval::unbounded();
     }
-    let value =
-        float_tolerance::canonicalize(task.get_initial_numeric_state_values()[var_id.index()]);
+    let value = task.get_initial_numeric_state_values()[var_id.index()];
     assert!(
         value.is_finite(),
         "constant numeric variable {} has the non-finite value {value}",

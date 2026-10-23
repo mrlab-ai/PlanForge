@@ -90,7 +90,7 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
                 &mut cost_values,
             )
             .expect("an optimal plan's operators apply in sequence");
-        prefix_costs.push(prefix_costs.last().unwrap() + cost.value());
+        prefix_costs.push(prefix_costs.last().unwrap() + cost);
         states.push(successor.clone());
         state = successor;
     }

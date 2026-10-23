@@ -1,7 +1,7 @@
 //! Base trait for heuristic evaluators.
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, OperatorIndex, ZERO_VALUE};
+use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 /// Base trait for heuristic functions.
 ///
@@ -71,7 +71,7 @@ pub trait Heuristic {
 pub struct BlindHeuristic {
     name: String,
     // Cost to return for non-goal states (minimum action cost).
-    min_action_cost: NumericValue,
+    min_action_cost: f64,
 }
 
 impl BlindHeuristic {
@@ -93,7 +93,7 @@ impl Heuristic for BlindHeuristic {
         Ok(if eval_state.is_goal() {
             0.0
         } else {
-            self.min_action_cost.value()
+            self.min_action_cost
         })
     }
 
@@ -105,18 +105,18 @@ impl Heuristic for BlindHeuristic {
 /// The cheapest operator cost: a lower bound on the remaining cost of every
 /// non-goal state, and zero for a task without operators. Tasks reject
 /// negative costs when they are constructed.
-pub(crate) fn minimum_action_cost(operator_costs: &[NumericValue]) -> NumericValue {
+pub(crate) fn minimum_action_cost(operator_costs: &[f64]) -> f64 {
     operator_costs
         .iter()
         .copied()
         .inspect(|&cost| {
             assert!(
-                cost.is_finite() && cost >= ZERO_VALUE,
+                cost.is_finite() && cost >= 0.0,
                 "operator costs are finite and non-negative, got {cost}"
             );
         })
-        .reduce(NumericValue::min)
-        .unwrap_or(ZERO_VALUE)
+        .reduce(f64::min)
+        .unwrap_or(0.0)
 }
 
 /// Registry feature for the blind heuristic.

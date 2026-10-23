@@ -33,8 +33,8 @@ fn pack_and_unpack_doubles() {
 
         packer.set(buffer, double_var_id, packed);
 
-        let unpacked = packer.get_double(buffer, double_var_id);
-        assert!(crate::utils::float_tolerance::equal(unpacked, double_value));
+        let unpacked = NumericValue::new(f64::from_bits(packer.get(buffer, double_var_id)));
+        assert_eq!(unpacked, double_value);
     }
 }
 

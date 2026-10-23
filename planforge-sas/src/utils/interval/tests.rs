@@ -1,9 +1,6 @@
 use super::*;
 
-use crate::{
-    numeric_conditions::{ArithOp, CompOp},
-    numeric_task::NAN_VALUE,
-};
+use crate::numeric_conditions::{ArithOp, CompOp};
 
 #[test]
 fn interval_add_preserves_exact_bounds() {
@@ -210,8 +207,7 @@ fn canonicalized_interval_preserves_open_transition_boundaries() {
         target.upper + NumericValue::new(7.35),
         target.lower_closed,
         target.upper_closed,
-    )
-    .canonicalized();
+    );
 
     assert_eq!(preimage.lower, NumericValue::new(-67.35));
     assert!(!preimage.lower_closed);
@@ -263,16 +259,24 @@ fn upper_endpoint_ordering_is_decided_by_closedness_at_equal_bounds() {
 }
 
 #[test]
-fn endpoint_ordering_rejects_nan_bounds() {
-    let nan = Interval::closed(NAN_VALUE, NAN_VALUE);
-    let unit = Interval::closed(ZERO_VALUE, ONE_VALUE);
+fn point_division_rounds_the_quotient_once() {
+    let numerator = NumericValue::new(3.0);
+    let denominator = NumericValue::new(0.3);
+    let image = Interval::singleton(numerator) / Interval::singleton(denominator);
+    assert_eq!(image, Interval::singleton(numerator / denominator));
+}
 
-    assert!(!nan.lower_is_lower(&unit));
-    assert!(!unit.lower_is_lower(&nan));
-    assert!(!nan.lower_is_lower_or_equal(&unit));
-    assert!(!unit.lower_is_lower_or_equal(&nan));
-    assert!(!nan.upper_is_higher(&unit));
-    assert!(!unit.upper_is_higher(&nan));
-    assert!(!nan.upper_is_higher_or_equal(&unit));
-    assert!(!unit.upper_is_higher_or_equal(&nan));
+#[test]
+fn attained_corners_stay_closed_when_their_product_rounds_to_zero() {
+    let small = Interval::singleton(NumericValue::new(1e-12));
+    assert_eq!(small * small, Interval::singleton(ZERO_VALUE));
+}
+
+#[test]
+fn division_of_positive_unbounded_intervals_has_finite_point_images() {
+    let positive = Interval::new(ONE_VALUE, INF_VALUE, true, false);
+    let image = positive / positive;
+    assert!(image.contains(ONE_VALUE));
+    assert_eq!(image.lower, ZERO_VALUE);
+    assert_eq!(image.upper, INF_VALUE);
 }

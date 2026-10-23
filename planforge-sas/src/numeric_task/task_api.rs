@@ -105,14 +105,14 @@ pub trait AbstractNumericTask: Send + Sync {
 
     /// Effective operator costs in task order. Root tasks compute these once
     /// when closing the initial state; views can expose the same stored table.
-    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [NumericValue]> {
+    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
         (0..self.get_operators().len())
             .map(|id| self.operator_cost_for_abstraction(OperatorIndex::from_usize(id)))
             .collect()
     }
 
     /// Customization hook used by [`NumericTaskExt::abstract_operator_cost`].
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue;
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64;
 }
 
 /// Derived task operations shared by every [`AbstractNumericTask`].
@@ -135,18 +135,18 @@ pub trait NumericTaskExt: AbstractNumericTask {
         self.evaluate_initial_state_values()
     }
 
-    fn abstract_operator_cost(&self, operator_id: OperatorIndex) -> NumericValue {
+    fn abstract_operator_cost(&self, operator_id: OperatorIndex) -> f64 {
         self.operator_cost_for_abstraction(operator_id)
     }
 
-    fn min_abstract_operator_cost(&self) -> NumericValue {
+    fn min_abstract_operator_cost(&self) -> f64 {
         let min_operator_cost = (0..self.get_operators().len())
             .map(|operator_id| self.abstract_operator_cost(OperatorIndex::from_usize(operator_id)))
-            .fold(INF_VALUE, NumericValue::min);
+            .fold(f64::INFINITY, f64::min);
         if min_operator_cost.is_finite() {
-            min_operator_cost.max(ZERO_VALUE)
+            min_operator_cost.max(0.0)
         } else {
-            ZERO_VALUE
+            0.0
         }
     }
 
@@ -273,12 +273,12 @@ pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
 /// as search charges it there: the effects apply simultaneously, conditional
 /// ones where their conditions hold, and the successor is closed under the
 /// axioms. Without a metric, every operator's own cost.
-pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<NumericValue> {
+pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
     if !task.metric().use_metric() {
         return task
             .get_operators()
             .iter()
-            .map(|operator| NumericValue::new(operator.cost().value() as f64))
+            .map(|operator| operator.cost().value() as f64)
             .collect();
     }
     let states = ExplicitStateSpace::new(task);
@@ -300,12 +300,12 @@ pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<NumericValue
                 });
             let metric = evaluate_metric_from_values(task, &successor.numeric);
             let cost = if task.metric().is_min() {
-                metric - initial_metric
+                metric.value() - initial_metric.value()
             } else {
-                initial_metric - metric
+                initial_metric.value() - metric.value()
             };
             assert!(
-                cost >= ZERO_VALUE,
+                cost >= 0.0,
                 "operator {} has negative metric cost {cost}, which search does not support",
                 operator.name()
             );
@@ -539,10 +539,10 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         (**self).evaluate_initial_state_values()
     }
-    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [NumericValue]> {
+    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
         (**self).effective_operator_costs()
     }
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64 {
         (**self).operator_cost_for_abstraction(operator_id)
     }
 }
@@ -627,7 +627,7 @@ pub struct NumericRootTask {
     state: Vec<ExplicitValueIndex>,
     numeric_state: Vec<NumericValue>,
     operators: Vec<Operator>,
-    operator_costs: Vec<NumericValue>,
+    operator_costs: Vec<f64>,
     axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
@@ -1071,11 +1071,11 @@ impl AbstractNumericTask for NumericRootTask {
         self.mutex_pairs.contains(&pair)
     }
 
-    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [NumericValue]> {
+    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
         std::borrow::Cow::Borrowed(&self.operator_costs)
     }
 
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64 {
         self.operator_costs[operator_id.index()]
     }
 
@@ -1229,7 +1229,7 @@ impl AbstractNumericTask for NumericRootTask {
     fn evaluate_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        // Closed as given: the initial values are not canonicalized, unlike
+        // Initial values are canonical by construction, as are
         // `ExplicitStateSpace::initial_state`.
         let mut state = ExplicitState {
             propositional: self.get_initial_propositional_state_values().to_vec(),
@@ -1354,12 +1354,9 @@ mod root_task_invariants {
     }
 
     #[test]
-    fn closing_the_initial_state_keeps_numeric_values_as_given() {
+    fn closing_the_initial_state_preserves_canonical_values() {
         let off_lattice = NumericValue::new(0.1 + 0.2);
-        assert_ne!(
-            crate::utils::float_tolerance::canonicalize(off_lattice).to_bits(),
-            off_lattice.to_bits()
-        );
+        assert_eq!(off_lattice, NumericValue::new(0.3));
         let mut parts = valid_parts();
         parts.numeric_state = vec![off_lattice];
         let task = NumericRootTask::new(parts);

@@ -28,7 +28,6 @@ use crate::numeric_task::{
 use crate::utils::errors::{
     AssignmentAxiomError, AxiomEvalError, InvalidIndex, StateInsertError, StateNotFoundError,
 };
-use crate::utils::float_tolerance;
 use crate::utils::segmented_vector::SegmentedArrayVector;
 use crate::{numeric_task::NumericType, utils::state_packer::StatePacker};
 use hashbrown::HashTable;
@@ -136,7 +135,7 @@ impl DenseCostInformation {
             self.values.resize(end, NumericValue::new(0.0));
         }
         for (target, &value) in self.values[start..end].iter_mut().zip(values) {
-            *target = float_tolerance::canonicalize(value);
+            *target = value;
         }
     }
 }
@@ -568,7 +567,7 @@ pub struct StateRegistry<'a> {
 
 #[derive(Debug, Default)]
 struct CompactNumericValues {
-    ids_by_bits: HashMap<u64, u32, MixedHasherBuilder>,
+    ids_by_value: HashMap<NumericValue, u32, MixedHasherBuilder>,
     values: Vec<NumericValue>,
 }
 
@@ -644,8 +643,7 @@ impl<'a> StateRegistry<'a> {
         for (numeric_var_id, &ty) in numeric_var_types.iter().enumerate() {
             match ty {
                 NumericType::Constant => {
-                    numeric_template[numeric_var_id] =
-                        float_tolerance::canonicalize(initial_numeric_values[numeric_var_id]);
+                    numeric_template[numeric_var_id] = initial_numeric_values[numeric_var_id];
                 }
                 NumericType::Regular => {
                     regular_numeric_slots.push((numeric_var_id, next_regular_slot));
@@ -733,16 +731,14 @@ impl<'a> StateRegistry<'a> {
     }
 
     fn pack_regular_numeric(&self, value: NumericValue) -> u64 {
-        let canonical = float_tolerance::canonicalize(value);
-        let bits = canonical.to_bits();
         let mut interner = self.compact_numeric_values.borrow_mut();
-        if let Some(&id) = interner.ids_by_bits.get(&bits) {
+        if let Some(&id) = interner.ids_by_value.get(&value) {
             return id as u64;
         }
         let id = u32::try_from(interner.values.len())
             .expect("compact numeric state value table exceeds 32-bit ID capacity");
-        interner.values.push(canonical);
-        let previous = interner.ids_by_bits.insert(bits, id);
+        interner.values.push(value);
+        let previous = interner.ids_by_value.insert(value, id);
         assert!(
             previous.is_none(),
             "duplicate compact numeric value insertion"
@@ -957,12 +953,11 @@ impl<'a> StateRegistry<'a> {
             match numeric_var.get_type() {
                 NumericType::Cost => {
                     self.numeric_indices[i] = Some(cost_variables.len());
-                    cost_variables.push(float_tolerance::canonicalize(value));
+                    cost_variables.push(value);
                 }
                 NumericType::Constant => {
                     self.numeric_indices[i] = Some(constant_index);
-                    self.numeric_constants
-                        .push(float_tolerance::canonicalize(value));
+                    self.numeric_constants.push(value);
                     constant_index += 1;
                 }
                 NumericType::Derived => {
@@ -987,7 +982,6 @@ impl<'a> StateRegistry<'a> {
         buffer: &mut [u64],
         numeric_state: &mut [NumericValue],
     ) -> Result<(), StateInsertError> {
-        canonicalize_numeric_values(numeric_state);
         self.axiom_evaluator
             .evaluate(buffer, numeric_state)
             .map_err(|e| StateInsertError {
@@ -1131,7 +1125,7 @@ impl<'a> StateRegistry<'a> {
                     if self.numeric_indices[i].is_none() {
                         self.numeric_indices[i] = Some(cost_variables.len());
                     }
-                    cost_variables.push(float_tolerance::canonicalize(value));
+                    cost_variables.push(value);
                 }
                 NumericType::Regular => {
                     // Initialize the index if not set.
@@ -1161,7 +1155,7 @@ impl<'a> StateRegistry<'a> {
                             ),
                         }
                     })?;
-                    if !float_tolerance::equal(registered, value) {
+                    if registered != value {
                         return Err(StateInsertError {
                             message: format!(
                                 "Constant numeric variable {i} is {registered} in this registry, but the state to register has {value}"
@@ -1213,7 +1207,7 @@ impl<'a> StateRegistry<'a> {
         operator: &Operator,
         successor_values: &mut Vec<NumericValue>,
         cost_values: &mut Vec<NumericValue>,
-    ) -> Result<(ConcreteState, NumericValue), StateInsertError> {
+    ) -> Result<(ConcreteState, f64), StateInsertError> {
         let mut ctx = ExpansionContext::default();
         self.build_expansion_context(current_state, &mut ctx)?;
         self.apply_operator_in_context(current_state, operator, &ctx, successor_values, cost_values)
@@ -1261,7 +1255,7 @@ impl<'a> StateRegistry<'a> {
         ctx: &ExpansionContext,
         successor_values: &mut Vec<NumericValue>,
         cost_values: &mut Vec<NumericValue>,
-    ) -> Result<(ConcreteState, NumericValue), StateInsertError> {
+    ) -> Result<(ConcreteState, f64), StateInsertError> {
         // Seed successor scratch from the cached parent values; the numeric
         // and cost effects below will mutate them in place.
         successor_values.clear();
@@ -1316,9 +1310,9 @@ impl<'a> StateRegistry<'a> {
             NumericValue::new(0.0)
         };
         let op_cost = if self.metric_use_metric {
-            new_metric - ctx.parent_metric
+            new_metric.value() - ctx.parent_metric.value()
         } else {
-            NumericValue::new(1.0)
+            1.0
         };
 
         let (id, is_new_state) = self.insert_id_or_pop_state();
@@ -1585,11 +1579,8 @@ impl<'a> StateRegistry<'a> {
                 RepeatedTarget::Additive => current_values[affected_var_id.index()],
             };
 
-            let result = float_tolerance::canonicalize(AssignmentOperation::apply(
-                left_value,
-                effect.operation(),
-                assignment_value,
-            ));
+            let result =
+                AssignmentOperation::apply(left_value, effect.operation(), assignment_value);
 
             match self.numeric_var_types[affected_var_id.index()] {
                 NumericType::Cost => {
@@ -1671,10 +1662,10 @@ impl<'a> StateRegistry<'a> {
         &self,
         state: &ConcreteState,
         operator: &Operator,
-    ) -> Result<NumericValue, StateInsertError> {
+    ) -> Result<f64, StateInsertError> {
         if !self.task.metric().use_metric() {
             // Numeric-FD treats non-metric tasks as unit-cost.
-            return Ok(NumericValue::new(1.0));
+            return Ok(1.0);
         }
 
         let old_metric = self
@@ -1721,7 +1712,7 @@ impl<'a> StateRegistry<'a> {
                 message: format!("Failed to evaluate metric after applying operator: {e:?}"),
             })?;
 
-        Ok(new_metric - old_metric)
+        Ok(new_metric.value() - old_metric.value())
     }
 
     fn metric_value_for_state(
@@ -1806,11 +1797,5 @@ impl<'a> StateRegistry<'a> {
     /// It uses `RefCell` for interior mutability to resolve borrowing conflicts.
     fn set_cost_information(&self, state: &ConcreteState, values: &[NumericValue]) {
         self.cost_info.borrow_mut().set(state.get_id(), values);
-    }
-}
-
-fn canonicalize_numeric_values(values: &mut [NumericValue]) {
-    for value in values {
-        *value = float_tolerance::canonicalize(*value);
     }
 }

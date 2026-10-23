@@ -10,7 +10,6 @@ use planforge_sas::numeric_task::{
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType,
     NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
-use planforge_sas::utils::float_tolerance;
 use tracing::info;
 
 #[derive(Debug)]
@@ -138,7 +137,7 @@ impl AffineExpression {
             .iter()
             .enumerate()
             .filter_map(|(var_id, &coefficient)| {
-                (!approx_eq(coefficient, ZERO_VALUE)).then_some(VariableIndex::from_usize(var_id))
+                (coefficient != ZERO_VALUE).then_some(VariableIndex::from_usize(var_id))
             })
             .collect()
     }
@@ -150,13 +149,14 @@ impl AffineExpression {
             numeric_values.len(),
             self.coefficients.len()
         );
-        let mut value = self.constant;
-        for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
-            if !approx_eq(coefficient, ZERO_VALUE) {
-                value += coefficient * numeric_values[var_id];
-            }
-        }
-        Ok(value)
+        Ok(NumericValue::affine(
+            self.coefficients
+                .iter()
+                .zip(numeric_values)
+                .filter(|(coefficient, _)| **coefficient != ZERO_VALUE)
+                .map(|(coefficient, value)| (coefficient.value(), *value)),
+            self.constant.value(),
+        ))
     }
 
     fn apply_effects(
@@ -164,18 +164,26 @@ impl AffineExpression {
         additive_deltas: &[NumericValue],
         assigned_constants: &[Option<NumericValue>],
     ) -> Self {
-        let mut out = Self::constant(self.constant, self.coefficients.len());
-        for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
-            if approx_eq(coefficient, ZERO_VALUE) {
-                continue;
-            }
-            if let Some(value) = assigned_constants[var_id] {
-                out.constant += coefficient * value;
-            } else {
-                out.coefficients[var_id] += coefficient;
-                out.constant += coefficient * additive_deltas[var_id];
-            }
-        }
+        let mut out = self.clone();
+        out.constant = NumericValue::affine(
+            self.coefficients
+                .iter()
+                .enumerate()
+                .filter_map(|(var_id, &coefficient)| {
+                    if coefficient == ZERO_VALUE {
+                        return None;
+                    }
+                    let value = match assigned_constants[var_id] {
+                        Some(value) => {
+                            out.coefficients[var_id] = ZERO_VALUE;
+                            value
+                        }
+                        None => additive_deltas[var_id],
+                    };
+                    Some((coefficient.value(), value))
+                }),
+            self.constant.value(),
+        );
         out
     }
 }
@@ -298,10 +306,9 @@ pub fn build_icaps26_restricted_task(
         let variable = task.numeric_variables()[original_id.index()].clone();
         let value = initial_numeric[original_id.index()];
         if matches!(variable.get_type(), NumericType::Constant) {
-            constants.by_bits.insert(
-                float_tolerance::canonical_bits(value),
-                VariableIndex::from_usize(transformed_id),
-            );
+            constants
+                .by_value
+                .insert(value, VariableIndex::from_usize(transformed_id));
             transformed_to_expr.push(AffineExpression::constant(value, num_original_numeric));
         } else {
             transformed_to_expr.push(AffineExpression::var(original_id, num_original_numeric));
@@ -340,13 +347,13 @@ pub fn build_icaps26_restricted_task(
             );
             let coefficient = difference.coefficients[original_var_id.index()];
             ensure!(
-                coefficient.is_finite() && !approx_eq(coefficient, ZERO_VALUE),
+                coefficient.is_finite() && (coefficient != ZERO_VALUE),
                 "ICAPS 2026 comparison axiom {comparison_axiom_id} has invalid coefficient {coefficient}"
             );
             (
                 original_to_transformed[original_var_id.index()]
                     .expect("retained ICAPS regular variable has no transformed id"),
-                float_tolerance::canonicalize(-difference.constant / coefficient),
+                -difference.constant / coefficient,
                 if coefficient > ZERO_VALUE {
                     comparison_axiom.get_operator().clone()
                 } else {
@@ -617,7 +624,9 @@ fn ensure_operator_costs_unchanged(
         let source_cost = source_task.abstract_operator_cost(operator_index);
         let transformed_cost = transformed_task.abstract_operator_cost(operator_index);
         ensure!(
-            approx_eq(source_cost, transformed_cost),
+            (source_cost - transformed_cost).abs()
+                <= planforge_sas::utils::float_tolerance::AGREEMENT_EPSILON
+                    * source_cost.abs().max(transformed_cost.abs()).max(1.0),
             "restricted task changed metric cost of operator {operator_id} ({}): {source_cost} -> {transformed_cost}",
             source.name()
         );
@@ -736,11 +745,13 @@ fn transform_operator(
                     let delta = root_exprs
                         .get(&VariableIndex::from_usize(original_id))
                         .map(|expr| {
-                            expr.coefficients
-                                .iter()
-                                .zip(deltas.iter())
-                                .map(|(&coefficient, &delta)| coefficient * delta)
-                                .sum()
+                            NumericValue::affine(
+                                expr.coefficients
+                                    .iter()
+                                    .zip(&deltas)
+                                    .map(|(coefficient, delta)| (coefficient.value(), *delta)),
+                                0.0,
+                            )
                         })
                         .unwrap_or(deltas[original_id]);
                     (transformed_id, delta)
@@ -752,19 +763,20 @@ fn transform_operator(
             .iter()
             .enumerate()
             .map(|(transformed_id, expr)| {
-                let delta = expr
-                    .coefficients
-                    .iter()
-                    .zip(deltas.iter())
-                    .map(|(&coefficient, &delta)| coefficient * delta)
-                    .sum();
+                let delta = NumericValue::affine(
+                    expr.coefficients
+                        .iter()
+                        .zip(&deltas)
+                        .map(|(coefficient, delta)| (coefficient.value(), *delta)),
+                    0.0,
+                );
                 (VariableIndex::from_usize(transformed_id), delta)
             })
             .collect(),
     };
     let mut assignment_effects = Vec::new();
     for (transformed_id, delta) in transformed_deltas {
-        if approx_eq(delta, ZERO_VALUE) {
+        if delta == ZERO_VALUE {
             continue;
         }
         let const_id = numerics.intern_constant(delta, task.numeric_variables().len());
@@ -828,10 +840,8 @@ fn transform_operator_with_assignment(
             }
             AssignmentOperation::Assign => {
                 ensure!(
-                    approx_eq(
-                        additive_deltas[effect.affected_var_id().index()],
-                        ZERO_VALUE
-                    ) && assigned_constants[effect.affected_var_id().index()].is_none(),
+                    (additive_deltas[effect.affected_var_id().index()] == ZERO_VALUE)
+                        && assigned_constants[effect.affected_var_id().index()].is_none(),
                     "restricted task does not support multiple numeric effects on an assigned variable in operator {}",
                     operator.name()
                 );
@@ -866,7 +876,7 @@ fn transform_operator_with_assignment(
     for (transformed_id, successor_expr, delta_expr) in transformed_effects {
         if delta_expr.non_zero_vars().is_empty() {
             let delta = delta_expr.constant;
-            if approx_eq(delta, ZERO_VALUE) {
+            if delta == ZERO_VALUE {
                 continue;
             }
             let const_id = numerics.intern_constant(delta, task.numeric_variables().len());
@@ -906,7 +916,7 @@ fn transform_operator_with_assignment(
 
 #[derive(Default)]
 struct ConstantPool {
-    by_bits: HashMap<u64, VariableIndex>,
+    by_value: HashMap<NumericValue, VariableIndex>,
 }
 
 /// The numeric side of the task under construction.
@@ -949,9 +959,7 @@ impl ConstantPool {
         transformed_to_expr: &mut Vec<AffineExpression>,
         num_original_numeric: usize,
     ) -> VariableIndex {
-        let value = float_tolerance::canonicalize(value);
-        let bits = float_tolerance::canonical_bits(value);
-        if let Some(&id) = self.by_bits.get(&bits) {
+        if let Some(&id) = self.by_value.get(&value) {
             return id;
         }
         let id = VariableIndex::from_usize(numeric_variables.len());
@@ -962,7 +970,7 @@ impl ConstantPool {
         ));
         numeric_initial.push(value);
         transformed_to_expr.push(AffineExpression::constant(value, num_original_numeric));
-        self.by_bits.insert(bits, id);
+        self.by_value.insert(value, id);
         id
     }
 }
@@ -984,18 +992,14 @@ fn affine_expression(
     })
 }
 
-fn approx_eq(lhs: NumericValue, rhs: NumericValue) -> bool {
-    (lhs - rhs).abs().value() <= float_tolerance::ABS_EPSILON
-}
-
 fn restricted_shape_prefix(expr: &AffineExpression) -> String {
     let mut coefficients = expr
         .coefficients
         .iter()
         .copied()
-        .filter(|&coefficient| !approx_eq(coefficient, ZERO_VALUE))
+        .filter(|&coefficient| coefficient != ZERO_VALUE)
         .collect::<Vec<_>>();
-    coefficients.sort_by(NumericValue::total_cmp);
+    coefficients.sort();
     let shape = coefficients
         .iter()
         .map(|coefficient| coefficient.to_string())
