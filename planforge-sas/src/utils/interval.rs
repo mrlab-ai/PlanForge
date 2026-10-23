@@ -75,45 +75,55 @@ impl Interval {
     }
 
     /// Image of an affine expression, rounding each resulting endpoint once.
-    pub fn affine(terms: impl IntoIterator<Item = (f64, Self)>, constant: f64) -> Self {
-        let mut lower = Vec::new();
-        let mut upper = Vec::new();
-        let mut lower_closed = true;
-        let mut upper_closed = true;
-        for (coefficient, interval) in terms {
+    pub fn affine<I>(terms: I, constant: f64) -> Self
+    where
+        I: IntoIterator<Item = (f64, Self)>,
+        I::IntoIter: Clone,
+    {
+        let terms = terms
+            .into_iter()
+            .filter(|(coefficient, _)| *coefficient != 0.0);
+        let (mut lower_closed, mut upper_closed) = (true, true);
+        for (coefficient, interval) in terms.clone() {
             assert!(!coefficient.is_nan(), "NaN affine coefficient");
-            if coefficient == 0.0 {
-                continue;
-            }
             if interval.is_empty() {
                 return EMPTY_INTERVAL;
             }
-            let (lo, hi, lo_closed, hi_closed) = if coefficient > 0.0 {
-                (
-                    interval.lower,
-                    interval.upper,
-                    interval.lower_closed,
-                    interval.upper_closed,
-                )
+            let (lo_closed, hi_closed) = if coefficient > 0.0 {
+                (interval.lower_closed, interval.upper_closed)
             } else {
-                (
-                    interval.upper,
-                    interval.lower,
-                    interval.upper_closed,
-                    interval.lower_closed,
-                )
+                (interval.upper_closed, interval.lower_closed)
             };
-            lower.push((coefficient, lo));
-            upper.push((coefficient, hi));
             lower_closed &= lo_closed;
             upper_closed &= hi_closed;
         }
-        Self::new(
-            NumericValue::affine(lower, constant),
-            NumericValue::affine(upper, constant),
-            lower_closed,
-            upper_closed,
-        )
+        let lower = NumericValue::affine(
+            terms.clone().map(|(coefficient, interval)| {
+                (
+                    coefficient,
+                    if coefficient > 0.0 {
+                        interval.lower
+                    } else {
+                        interval.upper
+                    },
+                )
+            }),
+            constant,
+        );
+        let upper = NumericValue::affine(
+            terms.map(|(coefficient, interval)| {
+                (
+                    coefficient,
+                    if coefficient > 0.0 {
+                        interval.upper
+                    } else {
+                        interval.lower
+                    },
+                )
+            }),
+            constant,
+        );
+        Self::new(lower, upper, lower_closed, upper_closed)
     }
 
     #[inline]

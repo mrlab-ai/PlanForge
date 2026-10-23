@@ -66,7 +66,7 @@ pub(super) fn split_comparison(
             boundaries.extend_from_slice(semantics.wanted_split_boundaries());
         }
         boundaries.push(witness_value);
-        boundaries.sort_by(NumericValue::total_cmp);
+        boundaries.sort();
         boundaries.dedup_by(|left, right| *left == *right);
 
         let lattice = semantics.numeric_lattices()[var_id.index()];

@@ -299,7 +299,7 @@ fn comparison_refinement(
         let mut boundaries = Vec::new();
         boundaries.extend(semantics.target_split_boundaries().iter().copied());
         boundaries.push(witness_value);
-        boundaries.sort_by(NumericValue::total_cmp);
+        boundaries.sort();
         boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
 
         let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];

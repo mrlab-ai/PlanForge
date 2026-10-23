@@ -122,7 +122,7 @@ impl NumericRootTask {
                 scale = terms
                     .iter()
                     .map(|(_, coefficient)| coefficient.abs())
-                    .min_by(NumericValue::total_cmp)
+                    .min()
                     .expect("a multivariate part has terms");
             }
             if scale < ZERO_VALUE {

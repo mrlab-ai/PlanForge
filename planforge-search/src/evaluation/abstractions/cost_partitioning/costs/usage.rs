@@ -341,8 +341,8 @@ impl SortedUsageIndex {
             let left = cells[left].region.numeric[primary_dim];
             let right = cells[right].region.numeric[primary_dim];
             left.lower
-                .total_cmp(&right.lower)
-                .then_with(|| left.upper.total_cmp(&right.upper))
+                .cmp(&right.lower)
+                .then_with(|| left.upper.cmp(&right.upper))
         });
         let blocks = sorted_cell_ids
             .chunks(USAGE_INDEX_BLOCK_SIZE)

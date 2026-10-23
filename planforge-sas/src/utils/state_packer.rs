@@ -236,15 +236,6 @@ impl StatePacker {
         (value).to_bits()
     }
 
-    pub fn unpack_double(&self, packed_double: u64) -> NumericValue {
-        NumericValue::from_canonical_bits(packed_double)
-    }
-
-    pub fn get_double(&self, buffer: &[u64], var: usize) -> NumericValue {
-        let packed_double = self.var_infos[var].get(buffer);
-        self.unpack_double(packed_double)
-    }
-
     pub fn get(&self, buffer: &[u64], var: usize) -> u64 {
         self.var_infos[var].get(buffer)
     }

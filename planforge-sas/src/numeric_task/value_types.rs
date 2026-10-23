@@ -318,18 +318,6 @@ impl NumericValue {
             .then(|| float_tolerance::rounded_grid_units(self.0) as i64)
     }
 
-    /// Decode the representation emitted by the state packer.
-    #[inline]
-    pub(crate) fn from_canonical_bits(bits: u64) -> Self {
-        let value = f64::from_bits(bits);
-        debug_assert_eq!(
-            Self::new(value).to_bits(),
-            bits,
-            "noncanonical packed numeric value"
-        );
-        Self(value)
-    }
-
     #[inline(always)]
     pub fn value(&self) -> f64 {
         self.0
@@ -341,21 +329,6 @@ impl NumericValue {
     #[inline(always)]
     pub fn abs(self) -> Self {
         Self(self.0.abs())
-    }
-
-    #[inline(always)]
-    pub fn min(self, other: Self) -> Self {
-        Self(self.0.min(other.0))
-    }
-
-    #[inline(always)]
-    pub fn max(self, other: Self) -> Self {
-        Self(self.0.max(other.0))
-    }
-
-    #[inline(always)]
-    pub fn round(self) -> Self {
-        Self::new(self.0.round())
     }
 
     #[inline(always)]
@@ -371,11 +344,6 @@ impl NumericValue {
     #[inline(always)]
     pub fn to_bits(self) -> u64 {
         self.0.to_bits()
-    }
-
-    #[inline(always)]
-    pub fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.total_cmp(&other.0)
     }
 }
 

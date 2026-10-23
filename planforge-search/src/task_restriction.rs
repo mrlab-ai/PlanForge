@@ -10,7 +10,6 @@ use planforge_sas::numeric_task::{
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType,
     NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
-use planforge_sas::utils::float_tolerance;
 use tracing::info;
 
 #[derive(Debug)]
@@ -138,7 +137,7 @@ impl AffineExpression {
             .iter()
             .enumerate()
             .filter_map(|(var_id, &coefficient)| {
-                (!approx_eq(coefficient, ZERO_VALUE)).then_some(VariableIndex::from_usize(var_id))
+                (coefficient != ZERO_VALUE).then_some(VariableIndex::from_usize(var_id))
             })
             .collect()
     }
@@ -154,7 +153,7 @@ impl AffineExpression {
             self.coefficients
                 .iter()
                 .zip(numeric_values)
-                .filter(|(coefficient, _)| !approx_eq(**coefficient, ZERO_VALUE))
+                .filter(|(coefficient, _)| **coefficient != ZERO_VALUE)
                 .map(|(coefficient, value)| (coefficient.value(), *value)),
             self.constant.value(),
         ))
@@ -167,7 +166,7 @@ impl AffineExpression {
     ) -> Self {
         let mut out = Self::constant(self.constant, self.coefficients.len());
         for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
-            if approx_eq(coefficient, ZERO_VALUE) {
+            if coefficient == ZERO_VALUE {
                 continue;
             }
             if let Some(value) = assigned_constants[var_id] {
@@ -340,7 +339,7 @@ pub fn build_icaps26_restricted_task(
             );
             let coefficient = difference.coefficients[original_var_id.index()];
             ensure!(
-                coefficient.is_finite() && !approx_eq(coefficient, ZERO_VALUE),
+                coefficient.is_finite() && (coefficient != ZERO_VALUE),
                 "ICAPS 2026 comparison axiom {comparison_axiom_id} has invalid coefficient {coefficient}"
             );
             (
@@ -769,7 +768,7 @@ fn transform_operator(
     };
     let mut assignment_effects = Vec::new();
     for (transformed_id, delta) in transformed_deltas {
-        if approx_eq(delta, ZERO_VALUE) {
+        if delta == ZERO_VALUE {
             continue;
         }
         let const_id = numerics.intern_constant(delta, task.numeric_variables().len());
@@ -833,10 +832,8 @@ fn transform_operator_with_assignment(
             }
             AssignmentOperation::Assign => {
                 ensure!(
-                    approx_eq(
-                        additive_deltas[effect.affected_var_id().index()],
-                        ZERO_VALUE
-                    ) && assigned_constants[effect.affected_var_id().index()].is_none(),
+                    (additive_deltas[effect.affected_var_id().index()] == ZERO_VALUE)
+                        && assigned_constants[effect.affected_var_id().index()].is_none(),
                     "restricted task does not support multiple numeric effects on an assigned variable in operator {}",
                     operator.name()
                 );
@@ -871,7 +868,7 @@ fn transform_operator_with_assignment(
     for (transformed_id, successor_expr, delta_expr) in transformed_effects {
         if delta_expr.non_zero_vars().is_empty() {
             let delta = delta_expr.constant;
-            if approx_eq(delta, ZERO_VALUE) {
+            if delta == ZERO_VALUE {
                 continue;
             }
             let const_id = numerics.intern_constant(delta, task.numeric_variables().len());
@@ -987,18 +984,14 @@ fn affine_expression(
     })
 }
 
-fn approx_eq(lhs: NumericValue, rhs: NumericValue) -> bool {
-    (lhs - rhs).abs().value() <= float_tolerance::ABS_EPSILON
-}
-
 fn restricted_shape_prefix(expr: &AffineExpression) -> String {
     let mut coefficients = expr
         .coefficients
         .iter()
         .copied()
-        .filter(|&coefficient| !approx_eq(coefficient, ZERO_VALUE))
+        .filter(|&coefficient| coefficient != ZERO_VALUE)
         .collect::<Vec<_>>();
-    coefficients.sort_by(NumericValue::total_cmp);
+    coefficients.sort();
     let shape = coefficients
         .iter()
         .map(|coefficient| coefficient.to_string())

@@ -75,6 +75,10 @@ impl LinearExpression {
 
     /// The expression's value on the canonical lattice.
     pub fn evaluate(&self, numeric_values: &[NumericValue]) -> NumericValue {
+        assert!(
+            numeric_values.len() >= self.coefficients.len(),
+            "numeric state too short for affine expression"
+        );
         NumericValue::affine(
             self.coefficients
                 .iter()
