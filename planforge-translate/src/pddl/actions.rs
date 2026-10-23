@@ -299,9 +299,7 @@ fn fold_additive_constant_effects(
         .into_iter()
         .filter(|(_, deltas)| deltas.len() > 1)
         .map(|(fluent, deltas)| {
-            let sum = planforge_sas::utils::float_tolerance::canonicalize(
-                planforge_sas::numeric_task::NumericValue::new(deltas.iter().sum()),
-            );
+            let sum = planforge_sas::numeric_task::NumericValue::new(deltas.iter().sum());
             (fluent.clone(), sum.value())
         })
         .collect();

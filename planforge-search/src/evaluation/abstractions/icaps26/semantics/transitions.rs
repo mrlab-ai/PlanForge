@@ -266,7 +266,7 @@ impl CartesianSemantics<'_> {
     ) -> Result<Option<Interval>> {
         let mut preimage = target;
         if let Some(view) = self.coordinates.views()[numeric_var_id.index()].as_ref() {
-            let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
+            let delta = view.operator_delta(op_id);
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(Some(preimage));
         }
@@ -277,9 +277,7 @@ impl CartesianSemantics<'_> {
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
             .rev()
         {
-            let rhs = float_tolerance::canonicalize(
-                self.task.get_initial_numeric_state_values()[effect.var_id().index()],
-            );
+            let rhs = self.task.get_initial_numeric_state_values()[effect.var_id().index()];
             match effect.operation() {
                 AssignmentOperation::Assign => {
                     if !preimage.contains(rhs) {
@@ -313,7 +311,6 @@ impl CartesianSemantics<'_> {
                         .apply_reverse_op(&AssignmentOperation::Divide, &Interval::singleton(rhs));
                 }
             }
-            preimage = preimage.canonicalized();
         }
         Ok(Some(preimage))
     }

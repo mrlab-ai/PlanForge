@@ -99,12 +99,9 @@ impl<'task> CegarSemantics<'task> {
             .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
             .map(|(numeric_var_id, _)| task.get_initial_numeric_state_values()[numeric_var_id])
             .filter(|value| value.is_finite())
-            .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
         wanted_split_boundaries.sort_by(NumericValue::total_cmp);
-        wanted_split_boundaries.dedup_by(|left, right| {
-            float_tolerance::canonical_bits(*left) == float_tolerance::canonical_bits(*right)
-        });
+        wanted_split_boundaries.dedup_by(|left, right| *left == *right);
         let random_split_rng = (split_options.selection == SplitSelection::Random).then(|| {
             RefCell::new(SmallRng::seed_from_u64(
                 split_options.random_seed.unwrap_or(RANDOM_SPLIT_SEED),

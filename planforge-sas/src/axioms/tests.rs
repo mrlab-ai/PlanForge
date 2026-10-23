@@ -353,7 +353,7 @@ fn assignment_axioms_put_derived_values_on_the_canonical_lattice() {
         NumericValue::new(0.3),
         NumericValue::new(99.0),
     ];
-    assert_ne!(values[0], values[1]);
+    assert_eq!(values[0], values[1]);
 
     assert_eq!(axiom.update_values(&mut values).unwrap(), ZERO_VALUE);
     assert_eq!(values[2], ZERO_VALUE);

@@ -7,7 +7,6 @@
 use crate::numeric_task::{
     AssignmentOperation, INF_VALUE, NEG_INF_VALUE, NumericValue, ONE_VALUE, ZERO_VALUE,
 };
-use crate::utils::float_tolerance;
 
 #[cfg(test)]
 mod tests;
@@ -75,23 +74,50 @@ impl Interval {
         UNBOUNDED_INTERVAL
     }
 
-    /// Align interval boundaries with the numeric state registry's canonical
-    /// lattice. Call this after state-transition arithmetic, not on queries.
-    #[inline]
-    pub fn canonicalized(self) -> Self {
+    /// Image of an affine expression, rounding each resulting endpoint once.
+    pub fn affine(terms: impl IntoIterator<Item = (f64, Self)>, constant: f64) -> Self {
+        let mut lower = Vec::new();
+        let mut upper = Vec::new();
+        let mut lower_closed = true;
+        let mut upper_closed = true;
+        for (coefficient, interval) in terms {
+            assert!(!coefficient.is_nan(), "NaN affine coefficient");
+            if coefficient == 0.0 {
+                continue;
+            }
+            if interval.is_empty() {
+                return EMPTY_INTERVAL;
+            }
+            let (lo, hi, lo_closed, hi_closed) = if coefficient > 0.0 {
+                (
+                    interval.lower,
+                    interval.upper,
+                    interval.lower_closed,
+                    interval.upper_closed,
+                )
+            } else {
+                (
+                    interval.upper,
+                    interval.lower,
+                    interval.upper_closed,
+                    interval.lower_closed,
+                )
+            };
+            lower.push((coefficient, lo));
+            upper.push((coefficient, hi));
+            lower_closed &= lo_closed;
+            upper_closed &= hi_closed;
+        }
         Self::new(
-            float_tolerance::canonicalize(self.lower),
-            float_tolerance::canonicalize(self.upper),
-            self.lower_closed,
-            self.upper_closed,
+            NumericValue::affine(lower, constant),
+            NumericValue::affine(upper, constant),
+            lower_closed,
+            upper_closed,
         )
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        if self.lower.is_nan() || self.upper.is_nan() {
-            return true;
-        }
         if self.lower > self.upper {
             return true;
         }
@@ -118,7 +144,7 @@ impl Interval {
 
     #[inline]
     pub fn contains(&self, value: NumericValue) -> bool {
-        if value.is_nan() || self.is_empty() {
+        if self.is_empty() {
             return false;
         }
 
@@ -230,7 +256,7 @@ impl Interval {
 
     #[inline]
     pub fn can_split_at(&self, value: NumericValue, include_in_lower: bool) -> bool {
-        if self.is_empty() || value.is_nan() || value.is_infinite() {
+        if self.is_empty() || value.is_infinite() {
             return false;
         }
         if !self.contains(value) {

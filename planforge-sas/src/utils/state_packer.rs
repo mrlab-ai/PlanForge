@@ -1,5 +1,4 @@
 use crate::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType, NumericValue};
-use crate::utils::float_tolerance;
 
 #[cfg(test)]
 mod tests;
@@ -234,11 +233,11 @@ impl StatePacker {
     }
 
     pub fn pack_double(&self, value: NumericValue) -> u64 {
-        float_tolerance::canonical_bits(value)
+        (value).to_bits()
     }
 
     pub fn unpack_double(&self, packed_double: u64) -> NumericValue {
-        NumericValue::new(f64::from_bits(packed_double))
+        NumericValue::from_canonical_bits(packed_double)
     }
 
     pub fn get_double(&self, buffer: &[u64], var: usize) -> NumericValue {

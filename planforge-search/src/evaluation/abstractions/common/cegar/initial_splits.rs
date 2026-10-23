@@ -10,7 +10,6 @@
 use std::collections::HashSet;
 
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};
-use planforge_sas::utils::float_tolerance;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -145,7 +144,7 @@ pub(crate) fn initial_splits(
         }
         splits.push(InitialSplit::Numeric {
             var_id: numeric_var,
-            boundary: float_tolerance::canonicalize(initial_values[numeric_var.index()]),
+            boundary: initial_values[numeric_var.index()],
             lower_includes_boundary: rng.gen_range(0..2) == 0,
             integer_lattice: semantics.numeric_integer_lattice()[numeric_var.index()],
         });

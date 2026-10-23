@@ -178,7 +178,7 @@ fn init_function_values(
     let mut result = HashMap::new();
     for assign in num_init {
         if let FunctionalExpression::NumericConstant(nc) = &assign.expression {
-            result.insert(assign.fluent.clone(), nc.value.into_inner());
+            result.insert(assign.fluent.clone(), nc.value.value());
         }
     }
     result

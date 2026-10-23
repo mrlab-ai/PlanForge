@@ -24,7 +24,6 @@ use crate::axioms::{
 };
 use crate::numeric_task::value_types::{ExplicitFact, FactNamespace, NumericType, NumericVariable};
 use crate::numeric_task::{AxiomIndex, NumericValue, VariableIndex};
-use crate::utils::float_tolerance;
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
 /// The two values a propositional variable carrying a numeric condition's
@@ -115,12 +114,12 @@ impl ArithOp {
     /// `lhs op rhs` on the canonical lattice, so that comparing it is exact.
     #[inline]
     pub fn apply(self, lhs: NumericValue, rhs: NumericValue) -> NumericValue {
-        float_tolerance::canonicalize(match self {
+        match self {
             ArithOp::Add => lhs + rhs,
             ArithOp::Sub => lhs - rhs,
             ArithOp::Mul => lhs * rhs,
             ArithOp::Div => lhs / rhs,
-        })
+        }
     }
 
     /// [`Self::apply`] over intervals. Canonicalization is monotone, so the
@@ -136,7 +135,6 @@ impl ArithOp {
             ArithOp::Mul => lhs * rhs,
             ArithOp::Div => lhs / rhs,
         }
-        .canonicalized()
     }
 }
 
@@ -349,12 +347,12 @@ impl ConditionDomain for NumericValue {
     }
 
     fn linear(terms: &[(VariableIndex, NumericValue)], _: VariableIndex, inputs: &[Self]) -> Self {
-        float_tolerance::canonicalize(NumericValue::new(
+        NumericValue::affine(
             terms
                 .iter()
-                .map(|(var, coefficient)| coefficient.value() * inputs[var.index()].value())
-                .sum(),
-        ))
+                .map(|(var, coefficient)| (coefficient.value(), inputs[var.index()])),
+            0.0,
+        )
     }
 
     #[inline]
@@ -391,15 +389,12 @@ impl ConditionDomain for Interval {
         result: VariableIndex,
         inputs: &[Self],
     ) -> Self {
-        let computed = terms
-            .iter()
-            .fold(
-                Interval::singleton(NumericValue::new(0.0)),
-                |sum, (var, coefficient)| {
-                    sum + inputs[var.index()] * Interval::singleton(*coefficient)
-                },
-            )
-            .canonicalized();
+        let computed = Interval::affine(
+            terms
+                .iter()
+                .map(|(var, coefficient)| (coefficient.value(), inputs[var.index()])),
+            0.0,
+        );
         let supplied = inputs[result.index()];
         if supplied.is_empty() {
             computed

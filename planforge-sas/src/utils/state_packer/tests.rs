@@ -34,7 +34,7 @@ fn pack_and_unpack_doubles() {
         packer.set(buffer, double_var_id, packed);
 
         let unpacked = packer.get_double(buffer, double_var_id);
-        assert!(crate::utils::float_tolerance::equal(unpacked, double_value));
+        assert_eq!(unpacked, double_value);
     }
 }
 

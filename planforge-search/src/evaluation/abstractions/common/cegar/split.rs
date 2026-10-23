@@ -105,11 +105,9 @@ impl PartialEq for Split {
             ) => {
                 state_id == other_state_id
                     && var_id == other_var_id
-                    && float_tolerance::canonical_bits(*boundary)
-                        == float_tolerance::canonical_bits(*other_boundary)
+                    && *boundary == *other_boundary
                     && lower_includes_boundary == other_lower_includes_boundary
-                    && float_tolerance::canonical_bits(*witness_value)
-                        == float_tolerance::canonical_bits(*other_witness_value)
+                    && *witness_value == *other_witness_value
                     && integer_lattice == other_integer_lattice
             }
             _ => false,
@@ -139,9 +137,9 @@ impl std::hash::Hash for Split {
             } => (
                 state_id,
                 var_id,
-                float_tolerance::canonical_bits(*boundary),
+                *boundary,
                 lower_includes_boundary,
-                float_tolerance::canonical_bits(*witness_value),
+                *witness_value,
                 integer_lattice,
             )
                 .hash(state),

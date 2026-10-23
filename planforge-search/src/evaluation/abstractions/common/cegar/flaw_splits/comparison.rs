@@ -4,7 +4,6 @@
 use anyhow::{Context, Result, bail, ensure};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
-use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstractions::common::cegar::selection::{
     COMPARISON_TAG, retain_min_growth_splits, select_split, select_tied_split,
@@ -68,9 +67,7 @@ pub(super) fn split_comparison(
         }
         boundaries.push(witness_value);
         boundaries.sort_by(NumericValue::total_cmp);
-        boundaries.dedup_by(|left, right| {
-            float_tolerance::canonical_bits(*left) == float_tolerance::canonical_bits(*right)
-        });
+        boundaries.dedup_by(|left, right| *left == *right);
 
         let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
         for &boundary in &boundaries {

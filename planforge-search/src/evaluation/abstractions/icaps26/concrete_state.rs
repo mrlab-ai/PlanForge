@@ -32,9 +32,6 @@ pub(super) fn get_initial_state(
         state_packer.set(&mut buffer, var_id, val.index() as u64);
     }
     let mut numeric_state: Vec<NumericValue> = task.get_initial_numeric_state_values().to_vec();
-    for value in &mut numeric_state {
-        *value = float_tolerance::canonicalize(*value);
-    }
 
     axiom_evaluator
         .evaluate(&mut buffer, &mut numeric_state)
@@ -82,12 +79,11 @@ pub(super) fn progress_concrete_state(
             op.name(),
             numeric_state.len()
         );
-        numeric_state[affected_var.index()] =
-            float_tolerance::canonicalize(AssignmentOperation::apply(
-                numeric_state[affected_var.index()],
-                effect.operation(),
-                numeric_state[source_var.index()],
-            ));
+        numeric_state[affected_var.index()] = AssignmentOperation::apply(
+            numeric_state[affected_var.index()],
+            effect.operation(),
+            numeric_state[source_var.index()],
+        );
     }
 
     axiom_evaluator

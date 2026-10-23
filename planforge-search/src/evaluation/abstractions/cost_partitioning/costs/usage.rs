@@ -326,10 +326,7 @@ impl SortedUsageIndex {
                 let mut bounds = HashSet::with_capacity(cells.len());
                 for cell in cells {
                     let interval = cell.region.numeric[dimension];
-                    bounds.insert((
-                        float_tolerance::canonical_bits(interval.lower),
-                        float_tolerance::canonical_bits(interval.upper),
-                    ));
+                    bounds.insert((interval.lower, interval.upper));
                 }
                 bounds.len()
             })

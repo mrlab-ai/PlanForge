@@ -12,7 +12,6 @@ use planforge_sas::numeric_task::{
     ExplicitVariable, Metric, NumericTaskExt, NumericType, NumericValue, NumericVariable, Operator,
     OperatorCost, OperatorIndex, TaskRef, VariableIndex,
 };
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 
 use crate::evaluation::validate_abstractable_goal;
@@ -293,9 +292,9 @@ impl PatternLookupProjection {
         bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
         for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
         {
-            bins[numeric_index + 1] = float_tolerance::canonical_bits(
-                Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?,
-            );
+            bins[numeric_index + 1] =
+                (Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?)
+                    .to_bits();
         }
         Ok(())
     }

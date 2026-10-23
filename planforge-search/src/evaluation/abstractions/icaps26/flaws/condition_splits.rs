@@ -285,11 +285,9 @@ fn comparison_refinement(
         .with_context(|| format!("missing Cartesian state {state_id}"))?;
     let mut candidates = Vec::new();
     for var_id in tree.regular_numeric_var_dependencies().iter().copied() {
-        let witness_value = float_tolerance::canonicalize(
-            *numeric_values
-                .get(var_id.index())
-                .with_context(|| format!("missing concrete numeric var {var_id}"))?,
-        );
+        let witness_value = *numeric_values
+            .get(var_id.index())
+            .with_context(|| format!("missing concrete numeric var {var_id}"))?;
         ensure!(
             witness_value.is_finite(),
             "comparison split witness for numeric var {var_id} is non-finite: {witness_value}"

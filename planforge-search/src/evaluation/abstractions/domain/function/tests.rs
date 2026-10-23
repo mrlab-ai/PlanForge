@@ -55,9 +55,6 @@ fn constant_leaf_values(
             continue;
         }
         let value = initial_numeric_values[numeric_var_id.index()];
-        if value.is_nan() {
-            continue;
-        }
         out.insert(value.to_bits());
     }
     out.into_iter().map(f64::from_bits).collect()
@@ -67,7 +64,7 @@ fn partitions_from_cutpoints(cutpoints: &[NumericValue]) -> Vec<Interval> {
     let mut cuts: Vec<NumericValue> = cutpoints
         .iter()
         .copied()
-        .filter(|v| v.is_finite() && !v.is_nan())
+        .filter(|v| v.is_finite())
         .collect();
     cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
     cuts.dedup_by(|a, b| a.to_bits() == b.to_bits());

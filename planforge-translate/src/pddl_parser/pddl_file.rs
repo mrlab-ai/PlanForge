@@ -14,7 +14,7 @@ pub struct PddlTask {
 
 impl PddlTask {
     /// Parse domain and problem PDDL files.
-    pub fn from_files(domain_path: &Path, problem_path: &Path) -> Result<PddlTask, String> {
+    pub fn from_files(domain_path: &Path, problem_path: &Path) -> anyhow::Result<PddlTask> {
         let domain_forms = lisp_parser::parse_nested_list(domain_path)?;
         let problem_forms = lisp_parser::parse_nested_list(problem_path)?;
         Ok(PddlTask {

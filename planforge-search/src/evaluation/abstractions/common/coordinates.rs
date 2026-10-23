@@ -10,7 +10,6 @@ use planforge_sas::numeric_task::{
     INF_VALUE, NEG_INF_VALUE, NumericTaskExt, NumericType, NumericValue, Operator, OperatorIndex,
     VariableIndex, ZERO_VALUE,
 };
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
 /// A derived affine expression whose value changes by a deterministic constant
@@ -44,10 +43,10 @@ pub(crate) fn coordinate_value(
     numeric: &[NumericValue],
     var_id: VariableIndex,
 ) -> NumericValue {
-    float_tolerance::canonicalize(match &views[var_id.index()] {
+    match &views[var_id.index()] {
         Some(view) => view.evaluate(numeric),
         None => numeric[var_id.index()],
-    })
+    }
 }
 
 /// A normalized linear part is an additive view when every operator changes
@@ -112,12 +111,17 @@ fn additive_view_delta_for_operator(
     terms: &[(VariableIndex, NumericValue)],
     operator: &Operator,
 ) -> Option<NumericValue> {
-    let mut delta: f64 = 0.0;
-    for &(numeric_var_id, coefficient) in terms {
-        delta += coefficient.value()
-            * regular_additive_delta_for_operator(task, numeric_var_id, operator)?.value();
-    }
-    delta.is_finite().then_some(NumericValue::new(delta))
+    let deltas = terms
+        .iter()
+        .map(|&(variable, coefficient)| {
+            Some((
+                coefficient.value(),
+                regular_additive_delta_for_operator(task, variable, operator)?,
+            ))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let delta = NumericValue::affine(deltas, 0.0);
+    delta.is_finite().then_some(delta)
 }
 
 fn regular_additive_delta_for_operator(
@@ -276,9 +280,9 @@ impl<'task> Coordinates<'task> {
     ) -> Option<Interval> {
         let mut preimage = target;
         if let Some(view) = &self.views[coordinate.index()] {
-            let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
+            let delta = view.operator_delta(op_id);
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
-            return Some(preimage.canonicalized());
+            return Some(preimage);
         }
         let initial = self.task.get_initial_numeric_state_values();
         for effect in self.task.get_operators()[op_id.index()]
@@ -287,7 +291,7 @@ impl<'task> Coordinates<'task> {
             .filter(|effect| effect.affected_var_id() == coordinate)
             .rev()
         {
-            let rhs = float_tolerance::canonicalize(initial[effect.var_id().index()]);
+            let rhs = initial[effect.var_id().index()];
             match effect.operation() {
                 AssignmentOperation::Assign => {
                     if !preimage.contains(rhs) {
@@ -303,7 +307,6 @@ impl<'task> Coordinates<'task> {
                 }
                 operation => preimage.apply_reverse_op(operation, &Interval::singleton(rhs)),
             }
-            preimage = preimage.canonicalized();
         }
         Some(preimage)
     }
@@ -332,9 +335,9 @@ pub(crate) fn coordinate_image(
 ) -> Interval {
     let mut image = source;
     if let Some(view) = &views[coordinate.index()] {
-        let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
+        let delta = view.operator_delta(op_id);
         image.apply_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
-        return image.canonicalized();
+        return image;
     }
     let initial = task.get_initial_numeric_state_values();
     for effect in task.get_operators()[op_id.index()]
@@ -342,11 +345,8 @@ pub(crate) fn coordinate_image(
         .iter()
         .filter(|effect| effect.affected_var_id() == coordinate)
     {
-        let rhs = Interval::singleton(float_tolerance::canonicalize(
-            initial[effect.var_id().index()],
-        ));
+        let rhs = Interval::singleton(initial[effect.var_id().index()]);
         image.apply_op(effect.operation(), &rhs);
-        image = image.canonicalized();
     }
     image
 }

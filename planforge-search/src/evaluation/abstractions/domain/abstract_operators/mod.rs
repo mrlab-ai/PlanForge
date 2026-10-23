@@ -17,7 +17,6 @@ use anyhow::Result;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
 };
-use planforge_sas::utils::float_tolerance;
 
 use super::function::DomainAbstractionFunction;
 use super::layout::StateLayout;
@@ -143,7 +142,7 @@ impl AbstractOperatorCandidate {
             .extend_from_slice(&transition.target_partition_facts);
         self.concrete_op_id = concrete_op_id;
         self.cost = cost;
-        self.cost_bits = float_tolerance::canonical_bits(cost);
+        self.cost_bits = (cost).to_bits();
         self.signature_hash = signature_hash(
             &self.prev_pairs,
             &self.pre_pairs,

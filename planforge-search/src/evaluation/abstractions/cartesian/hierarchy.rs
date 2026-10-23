@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};
-use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstractions::common::cegar::split::{ChildSide, Split};
 
@@ -71,8 +70,7 @@ impl PartialEq for RefinementNode {
                 },
             ) => {
                 var_id == other_var_id
-                    && float_tolerance::canonical_bits(*boundary)
-                        == float_tolerance::canonical_bits(*other_boundary)
+                    && *boundary == *other_boundary
                     && lower_includes_boundary == other_lower_includes_boundary
                     && lower_child == other_lower_child
                     && upper_child == other_upper_child
@@ -103,7 +101,7 @@ impl std::hash::Hash for RefinementNode {
                 upper_child,
             } => (
                 var_id,
-                float_tolerance::canonical_bits(*boundary),
+                *boundary,
                 lower_includes_boundary,
                 lower_child,
                 upper_child,

@@ -150,13 +150,14 @@ impl AffineExpression {
             numeric_values.len(),
             self.coefficients.len()
         );
-        let mut value = self.constant;
-        for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
-            if !approx_eq(coefficient, ZERO_VALUE) {
-                value += coefficient * numeric_values[var_id];
-            }
-        }
-        Ok(value)
+        Ok(NumericValue::affine(
+            self.coefficients
+                .iter()
+                .zip(numeric_values)
+                .filter(|(coefficient, _)| !approx_eq(**coefficient, ZERO_VALUE))
+                .map(|(coefficient, value)| (coefficient.value(), *value)),
+            self.constant.value(),
+        ))
     }
 
     fn apply_effects(
@@ -298,10 +299,9 @@ pub fn build_icaps26_restricted_task(
         let variable = task.numeric_variables()[original_id.index()].clone();
         let value = initial_numeric[original_id.index()];
         if matches!(variable.get_type(), NumericType::Constant) {
-            constants.by_bits.insert(
-                float_tolerance::canonical_bits(value),
-                VariableIndex::from_usize(transformed_id),
-            );
+            constants
+                .by_value
+                .insert(value, VariableIndex::from_usize(transformed_id));
             transformed_to_expr.push(AffineExpression::constant(value, num_original_numeric));
         } else {
             transformed_to_expr.push(AffineExpression::var(original_id, num_original_numeric));
@@ -346,7 +346,7 @@ pub fn build_icaps26_restricted_task(
             (
                 original_to_transformed[original_var_id.index()]
                     .expect("retained ICAPS regular variable has no transformed id"),
-                float_tolerance::canonicalize(-difference.constant / coefficient),
+                -difference.constant / coefficient,
                 if coefficient > ZERO_VALUE {
                     comparison_axiom.get_operator().clone()
                 } else {
@@ -736,11 +736,13 @@ fn transform_operator(
                     let delta = root_exprs
                         .get(&VariableIndex::from_usize(original_id))
                         .map(|expr| {
-                            expr.coefficients
-                                .iter()
-                                .zip(deltas.iter())
-                                .map(|(&coefficient, &delta)| coefficient * delta)
-                                .sum()
+                            NumericValue::affine(
+                                expr.coefficients
+                                    .iter()
+                                    .zip(&deltas)
+                                    .map(|(coefficient, delta)| (coefficient.value(), *delta)),
+                                0.0,
+                            )
                         })
                         .unwrap_or(deltas[original_id]);
                     (transformed_id, delta)
@@ -752,12 +754,13 @@ fn transform_operator(
             .iter()
             .enumerate()
             .map(|(transformed_id, expr)| {
-                let delta = expr
-                    .coefficients
-                    .iter()
-                    .zip(deltas.iter())
-                    .map(|(&coefficient, &delta)| coefficient * delta)
-                    .sum();
+                let delta = NumericValue::affine(
+                    expr.coefficients
+                        .iter()
+                        .zip(&deltas)
+                        .map(|(coefficient, delta)| (coefficient.value(), *delta)),
+                    0.0,
+                );
                 (VariableIndex::from_usize(transformed_id), delta)
             })
             .collect(),
@@ -906,7 +909,7 @@ fn transform_operator_with_assignment(
 
 #[derive(Default)]
 struct ConstantPool {
-    by_bits: HashMap<u64, VariableIndex>,
+    by_value: HashMap<NumericValue, VariableIndex>,
 }
 
 /// The numeric side of the task under construction.
@@ -949,9 +952,7 @@ impl ConstantPool {
         transformed_to_expr: &mut Vec<AffineExpression>,
         num_original_numeric: usize,
     ) -> VariableIndex {
-        let value = float_tolerance::canonicalize(value);
-        let bits = float_tolerance::canonical_bits(value);
-        if let Some(&id) = self.by_bits.get(&bits) {
+        if let Some(&id) = self.by_value.get(&value) {
             return id;
         }
         let id = VariableIndex::from_usize(numeric_variables.len());
@@ -962,7 +963,7 @@ impl ConstantPool {
         ));
         numeric_initial.push(value);
         transformed_to_expr.push(AffineExpression::constant(value, num_original_numeric));
-        self.by_bits.insert(bits, id);
+        self.by_value.insert(value, id);
         id
     }
 }

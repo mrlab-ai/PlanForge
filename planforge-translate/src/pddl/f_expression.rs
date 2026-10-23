@@ -1,4 +1,4 @@
-use ordered_float::OrderedFloat;
+use planforge_sas::numeric_task::NumericValue;
 /// Functional expression hierarchy for numeric PDDL.
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -17,20 +17,20 @@ pub enum FunctionalExpression {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NumericConstant {
-    pub value: OrderedFloat<f64>,
+    pub value: NumericValue,
 }
 
 impl NumericConstant {
     pub fn new(value: f64) -> Self {
         NumericConstant {
-            value: OrderedFloat(value),
+            value: NumericValue::new(value),
         }
     }
 }
 
 impl fmt::Display for NumericConstant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = self.value.into_inner();
+        let value = self.value.value();
         if value.fract() == 0.0 {
             write!(f, "{:.1}", value)
         } else {

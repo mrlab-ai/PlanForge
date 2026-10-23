@@ -7,7 +7,6 @@ use planforge_sas::numeric_task::{
     NumericType, NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::state_registry::ConcreteStateView;
-use planforge_sas::utils::float_tolerance;
 
 use super::BoundsProvider;
 use crate::evaluation::numeric_landmarks::numeric_helper::{
@@ -170,7 +169,7 @@ impl PotentialTask {
         // all weights are fixed to zero because no numeric goal interval is
         // registered below.
         let features = build_cpp_numeric_features(task)?;
-        let mut feature_keys: BTreeMap<Vec<(VariableIndex, u64)>, usize> = BTreeMap::new();
+        let mut feature_keys: BTreeMap<Vec<(VariableIndex, NumericValue)>, usize> = BTreeMap::new();
         for (feature_id, feature) in features.iter().enumerate() {
             if !feature.affine || feature.coefficients.is_empty() {
                 continue;
@@ -977,7 +976,7 @@ fn map_primitive_bounds_to_features(
 fn register_closed_condition_bound(
     condition: &LinearNumericCondition,
     features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
+    feature_keys: &BTreeMap<Vec<(VariableIndex, NumericValue)>, usize>,
     bounds: &mut [FeatureBounds],
 ) -> Result<(), String> {
     if condition
@@ -1011,7 +1010,7 @@ fn register_closed_condition_bound(
 fn register_condition_bound(
     condition: &LinearNumericCondition,
     features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
+    feature_keys: &BTreeMap<Vec<(VariableIndex, NumericValue)>, usize>,
     bounds: &mut [FeatureBounds],
     integral: bool,
     epsilon: f64,
@@ -1096,22 +1095,17 @@ fn canonical_dense_feature(coefficients: &[f64]) -> Option<(Vec<(VariableIndex, 
     canonical_feature(&sparse)
 }
 
-fn feature_key(coefficients: &[(VariableIndex, f64)]) -> Vec<(VariableIndex, u64)> {
+fn feature_key(coefficients: &[(VariableIndex, f64)]) -> Vec<(VariableIndex, NumericValue)> {
     coefficients
         .iter()
-        .map(|&(variable_id, value)| {
-            (
-                variable_id,
-                float_tolerance::canonical_bits(NumericValue::new(value)),
-            )
-        })
+        .map(|&(variable_id, value)| (variable_id, NumericValue::new(value)))
         .collect()
 }
 
 fn all_values_integral(
     task: &dyn AbstractNumericTask,
     features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
+    feature_keys: &BTreeMap<Vec<(VariableIndex, NumericValue)>, usize>,
     goal_conditions: &[LinearNumericCondition],
     precision: f64,
 ) -> Result<bool, String> {

@@ -259,10 +259,10 @@ fn linear_sum_canonicalizes_once_in_both_concrete_evaluators() {
 }
 
 #[test]
-fn small_nonzero_coefficients_are_scaled_before_canonicalization() {
+fn grid_unit_coefficients_are_scaled_before_comparison() {
     let task = task(
         &[4.0],
-        &[1e-15, 4e-15],
+        &[1e-12, 4e-12],
         &[(CalOperator::Product, 0, 1)],
         &[(3, 2, ComparisonOperator::GreaterThanOrEqual)],
     );

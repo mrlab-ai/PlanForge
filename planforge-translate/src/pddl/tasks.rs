@@ -326,7 +326,7 @@ impl DerivedFunctionAdministrator {
         let axiom = self.axiom_named(&function.symbol)?;
         match axiom.parts.as_slice() {
             [FunctionalExpression::NumericConstant(constant)] if axiom.op.is_empty() => {
-                Some(constant.value.into_inner())
+                Some(constant.value.value())
             }
             _ => None,
         }

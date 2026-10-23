@@ -758,7 +758,7 @@ fn sas_operator_cost(
         return 1.0;
     };
     match &cost.expression {
-        FunctionalExpression::NumericConstant(nc) => nc.value.into_inner(),
+        FunctionalExpression::NumericConstant(nc) => nc.value.value(),
         FunctionalExpression::PrimitiveNumericExpression(pne) => {
             let &var = numeric_dictionary.get(pne).unwrap_or_else(|| {
                 panic!("cost expression {pne} of action {action_name} has no numeric variable")
@@ -1196,7 +1196,7 @@ fn translate_task(
                 fact.fluent, fact.expression
             ));
         };
-        num_init_values[var] = nc.value.into_inner();
+        num_init_values[var] = nc.value.value();
         if fact.fluent.ntype == 'R' {
             relevant_numeric.push(var);
         }
@@ -1216,7 +1216,7 @@ fn translate_task(
                     axiom.name
                 );
             };
-            num_init_values[var] = nc.value.into_inner();
+            num_init_values[var] = nc.value.value();
         }
     }
 

@@ -185,11 +185,13 @@ fn parse_state(input: &str) -> IResult<&str, Vec<ExplicitValueIndex>> {
 fn parse_numeric_state(input: &str) -> IResult<&str, Vec<NumericValue>> {
     delimited(
         pair(tag("begin_numeric_state"), line_ending),
-        many0(terminated(double, line_ending)),
+        many0(terminated(
+            map_res(double, NumericValue::try_new),
+            line_ending,
+        )),
         pair(tag("end_numeric_state"), line_ending),
     )
     .parse(input)
-    .map(|(i, v)| (i, v.into_iter().map(NumericValue::new).collect()))
 }
 
 fn parse_goal(input: &str) -> IResult<&str, Vec<ExplicitFact>> {
@@ -370,7 +372,11 @@ fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
     let (input, _) = space1(input)?;
     if let Some(input) = input.strip_prefix("linear ") {
         let (input, length) = usize(input)?;
-        let (input, terms) = count((space1, u32, space1, double), length).parse(input)?;
+        let (input, terms) = count(
+            (space1, u32, space1, map_res(double, NumericValue::try_new)),
+            length,
+        )
+        .parse(input)?;
         let (input, _) = line_ending(input)?;
         return Ok((
             input,
@@ -379,7 +385,7 @@ fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
                 terms
                     .into_iter()
                     .map(|(_, variable, _, coefficient)| {
-                        (VariableIndex::new(variable), NumericValue::new(coefficient))
+                        (VariableIndex::new(variable), coefficient)
                     })
                     .collect(),
             ),

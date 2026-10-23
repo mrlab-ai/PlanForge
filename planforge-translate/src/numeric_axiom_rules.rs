@@ -1,7 +1,7 @@
 /// Handles numeric axiom constant folding, layer computation, and equivalence detection.
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use ordered_float::OrderedFloat;
+use planforge_sas::numeric_task::NumericValue;
 
 use super::pddl::axioms::InstantiatedNumericAxiom;
 use super::pddl::f_expression::{
@@ -91,7 +91,7 @@ fn axiom_by_pne(axioms: &[InstantiatedNumericAxiom]) -> HashMap<PrimitiveNumeric
 
 fn identify_constants(axioms: &mut [InstantiatedNumericAxiom]) {
     let axiom_index = axiom_by_pne(axioms);
-    let mut memo: HashMap<PrimitiveNumericExpression, Option<OrderedFloat<f64>>> = HashMap::new();
+    let mut memo: HashMap<PrimitiveNumericExpression, Option<NumericValue>> = HashMap::new();
     let mut visiting: HashSet<PrimitiveNumericExpression> = HashSet::new();
 
     for idx in 0..axioms.len() {
@@ -107,9 +107,9 @@ fn fold_axiom_if_constant(
     idx: usize,
     axioms: &mut [InstantiatedNumericAxiom],
     axiom_index: &HashMap<PrimitiveNumericExpression, usize>,
-    memo: &mut HashMap<PrimitiveNumericExpression, Option<OrderedFloat<f64>>>,
+    memo: &mut HashMap<PrimitiveNumericExpression, Option<NumericValue>>,
     visiting: &mut HashSet<PrimitiveNumericExpression>,
-) -> Option<OrderedFloat<f64>> {
+) -> Option<NumericValue> {
     let effect = axioms[idx].effect.clone();
     if let Some(cached) = memo.get(&effect) {
         return *cached;
@@ -166,9 +166,9 @@ fn resolve_constant_part(
     part: &FunctionalExpression,
     axioms: &mut [InstantiatedNumericAxiom],
     axiom_index: &HashMap<PrimitiveNumericExpression, usize>,
-    memo: &mut HashMap<PrimitiveNumericExpression, Option<OrderedFloat<f64>>>,
+    memo: &mut HashMap<PrimitiveNumericExpression, Option<NumericValue>>,
     visiting: &mut HashSet<PrimitiveNumericExpression>,
-) -> Option<OrderedFloat<f64>> {
+) -> Option<NumericValue> {
     match part {
         FunctionalExpression::NumericConstant(nc) => Some(nc.value),
         FunctionalExpression::PrimitiveNumericExpression(pne) => {
@@ -183,15 +183,12 @@ fn resolve_constant_part(
     }
 }
 
-fn evaluate_constant_expression(
-    op: &str,
-    values: &[OrderedFloat<f64>],
-) -> Option<OrderedFloat<f64>> {
+fn evaluate_constant_expression(op: &str, values: &[NumericValue]) -> Option<NumericValue> {
     if values.is_empty() {
         return None;
     }
 
-    let numeric_values: Vec<f64> = values.iter().map(|value| value.into_inner()).collect();
+    let numeric_values: Vec<f64> = values.iter().map(|value| value.value()).collect();
     let result = match op {
         "+" => numeric_values.into_iter().sum(),
         "*" => numeric_values.into_iter().product(),
@@ -212,7 +209,7 @@ fn evaluate_constant_expression(
         unknown => panic!("unknown numeric axiom operator {unknown}"),
     };
 
-    Some(OrderedFloat(result))
+    Some(NumericValue::new(result))
 }
 
 fn compute_axiom_layers(

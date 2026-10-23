@@ -1229,7 +1229,7 @@ impl AbstractNumericTask for NumericRootTask {
     fn evaluate_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        // Closed as given: the initial values are not canonicalized, unlike
+        // Initial values are canonical by construction, as are
         // `ExplicitStateSpace::initial_state`.
         let mut state = ExplicitState {
             propositional: self.get_initial_propositional_state_values().to_vec(),
@@ -1354,12 +1354,9 @@ mod root_task_invariants {
     }
 
     #[test]
-    fn closing_the_initial_state_keeps_numeric_values_as_given() {
+    fn closing_the_initial_state_preserves_canonical_values() {
         let off_lattice = NumericValue::new(0.1 + 0.2);
-        assert_ne!(
-            crate::utils::float_tolerance::canonicalize(off_lattice).to_bits(),
-            off_lattice.to_bits()
-        );
+        assert_eq!(off_lattice, NumericValue::new(0.3));
         let mut parts = valid_parts();
         parts.numeric_state = vec![off_lattice];
         let task = NumericRootTask::new(parts);

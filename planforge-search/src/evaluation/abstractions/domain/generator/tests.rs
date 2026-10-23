@@ -3,8 +3,6 @@ use planforge_sas::explicit_state::ExplicitState;
 
 use planforge_sas::numeric_conditions::ConditionValue;
 
-use planforge_sas::utils::float_tolerance;
-
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
@@ -354,9 +352,7 @@ fn backward_splits_build_goal_side_partitions() {
             .filter(|value| value.is_finite())
             .collect::<Vec<_>>();
         points.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        points.dedup_by(|a, b| {
-            float_tolerance::canonical_bits(*a) == float_tolerance::canonical_bits(*b)
-        });
+        points.dedup_by(|a, b| (*a).to_bits() == (*b).to_bits());
         points
     }
 

@@ -1,9 +1,6 @@
 use super::*;
 
-use crate::{
-    numeric_conditions::{ArithOp, CompOp},
-    numeric_task::NAN_VALUE,
-};
+use crate::numeric_conditions::{ArithOp, CompOp};
 
 #[test]
 fn interval_add_preserves_exact_bounds() {
@@ -210,8 +207,7 @@ fn canonicalized_interval_preserves_open_transition_boundaries() {
         target.upper + NumericValue::new(7.35),
         target.lower_closed,
         target.upper_closed,
-    )
-    .canonicalized();
+    );
 
     assert_eq!(preimage.lower, NumericValue::new(-67.35));
     assert!(!preimage.lower_closed);
@@ -260,19 +256,4 @@ fn upper_endpoint_ordering_is_decided_by_closedness_at_equal_bounds() {
     assert!(!open.upper_is_higher_or_equal(&closed));
     assert!(closed.upper_is_higher_or_equal(&closed));
     assert!(open.upper_is_higher_or_equal(&open));
-}
-
-#[test]
-fn endpoint_ordering_rejects_nan_bounds() {
-    let nan = Interval::closed(NAN_VALUE, NAN_VALUE);
-    let unit = Interval::closed(ZERO_VALUE, ONE_VALUE);
-
-    assert!(!nan.lower_is_lower(&unit));
-    assert!(!unit.lower_is_lower(&nan));
-    assert!(!nan.lower_is_lower_or_equal(&unit));
-    assert!(!unit.lower_is_lower_or_equal(&nan));
-    assert!(!nan.upper_is_higher(&unit));
-    assert!(!unit.upper_is_higher(&nan));
-    assert!(!nan.upper_is_higher_or_equal(&unit));
-    assert!(!unit.upper_is_higher_or_equal(&nan));
 }

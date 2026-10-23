@@ -26,7 +26,7 @@ impl CartesianSemantics<'_> {
             .enumerate()
             .map(|(var_id, var)| {
                 if matches!(var.get_type(), NumericType::Constant) {
-                    Interval::singleton(float_tolerance::canonicalize(initial_numeric[var_id]))
+                    Interval::singleton(initial_numeric[var_id])
                 } else {
                     Interval::unbounded()
                 }
