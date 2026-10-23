@@ -356,3 +356,11 @@ fn a_metric_index_beyond_u32_is_rejected() {
     assert_eq!(metric.var_id(), Some(VariableIndex::new(u32::MAX)));
     assert!(parse_metric("begin_metric\n< 4294967296\nend_metric\n").is_err());
 }
+
+#[test]
+fn nan_numeric_input_is_a_committed_parse_error() {
+    let result = parse_numeric_state("begin_numeric_state\nNaN\nend_numeric_state\n");
+    assert!(
+        matches!(result, Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::MapRes)
+    );
+}

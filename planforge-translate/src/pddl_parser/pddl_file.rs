@@ -24,7 +24,7 @@ impl PddlTask {
     }
 
     /// Parse the task from the already-parsed S-expressions.
-    pub fn to_task(&self) -> Task {
+    pub fn to_task(&self) -> anyhow::Result<Task> {
         parsing_functions::parse_task(&self.domain_forms, &self.problem_forms)
     }
 }

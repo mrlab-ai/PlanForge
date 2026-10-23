@@ -60,11 +60,6 @@ pub fn parse_nested_list(filepath: &Path) -> anyhow::Result<SExpr> {
 /// Parse a string into an S-expression.
 pub fn parse_nested_list_string(input: &str) -> anyhow::Result<SExpr> {
     let tokens = tokenize(input);
-    for token in &tokens {
-        if let Ok(value) = token.parse::<f64>() {
-            planforge_sas::numeric_task::NumericValue::try_new(value)?;
-        }
-    }
     let mut iter = tokens.into_iter().peekable();
     let result = parse_list_aux(&mut iter).map_err(anyhow::Error::msg)?;
     if iter.peek().is_some() {
@@ -116,14 +111,5 @@ fn parse_list_aux(
         Err("Unexpected closing parenthesis".to_string())
     } else {
         Ok(SExpr::Atom(token))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn rejects_nan_as_a_typed_input_error() {
-        let error = super::parse_nested_list_string("(= (x) NaN)").unwrap_err();
-        assert!(error.is::<planforge_sas::numeric_task::InvalidNumericValue>());
     }
 }

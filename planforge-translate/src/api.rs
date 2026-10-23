@@ -142,7 +142,7 @@ pub(crate) fn translate_to_sas_task(
     limits: GroundingLimits,
 ) -> anyhow::Result<SASTask> {
     let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))?;
-    let parsed_task = task.to_task();
+    let parsed_task = task.to_task()?;
 
     let mut norm_task = normalize::NormalizableTask::from_task(parsed_task);
     norm_task.add_global_constraints();

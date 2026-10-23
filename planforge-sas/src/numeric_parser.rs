@@ -182,13 +182,19 @@ fn parse_state(input: &str) -> IResult<&str, Vec<ExplicitValueIndex>> {
     .map(|(i, v)| (i, v.into_iter().map(ExplicitValueIndex::new).collect()))
 }
 
+fn parse_numeric_value(input: &str) -> IResult<&str, NumericValue> {
+    let (remaining, value) = double(input)?;
+    NumericValue::try_new(value)
+        .map(|value| (remaining, value))
+        .map_err(|_| {
+            nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::MapRes))
+        })
+}
+
 fn parse_numeric_state(input: &str) -> IResult<&str, Vec<NumericValue>> {
     delimited(
         pair(tag("begin_numeric_state"), line_ending),
-        many0(terminated(
-            map_res(double, NumericValue::try_new),
-            line_ending,
-        )),
+        many0(terminated(parse_numeric_value, line_ending)),
         pair(tag("end_numeric_state"), line_ending),
     )
     .parse(input)
@@ -372,11 +378,8 @@ fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
     let (input, _) = space1(input)?;
     if let Some(input) = input.strip_prefix("linear ") {
         let (input, length) = usize(input)?;
-        let (input, terms) = count(
-            (space1, u32, space1, map_res(double, NumericValue::try_new)),
-            length,
-        )
-        .parse(input)?;
+        let (input, terms) =
+            count((space1, u32, space1, parse_numeric_value), length).parse(input)?;
         let (input, _) = line_ending(input)?;
         return Ok((
             input,
