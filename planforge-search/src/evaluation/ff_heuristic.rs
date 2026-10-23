@@ -70,6 +70,7 @@ use planforge_sas::numeric_task::{
     ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericTaskExt, NumericType, NumericValue,
     Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
+use planforge_sas::utils::interval::Interval;
 
 type FactId = usize;
 type OpId = OperatorIndex;
@@ -1060,54 +1061,17 @@ impl FfHeuristic {
                     } => {
                         let l = numeric[left.index()];
                         let r = numeric[right.index()];
-                        match operator {
-                            CalOperator::Sum => NumericRange {
-                                max: l.max + r.max,
-                                min: l.min + r.min,
-                            },
-                            CalOperator::Difference => NumericRange {
-                                max: l.max - r.min,
-                                min: l.min - r.max,
-                            },
-                            // Sign-aware interval multiplication for `d := l * r`.
-                            // With l ∈ [l.min, l.max] and r ∈ [r.min, r.max], the
-                            // resulting range is bracketed by the four corner
-                            // products. Each product is `extreme * extreme`, so
-                            // any value of l*r lies in the [min, max] of those
-                            // four. The monotonic-relaxation join is a union with
-                            // the existing envelope, so widening is admissible.
-                            CalOperator::Product => {
-                                let p1 = l.min * r.min;
-                                let p2 = l.min * r.max;
-                                let p3 = l.max * r.min;
-                                let p4 = l.max * r.max;
-                                NumericRange {
-                                    max: p1.max(p2).max(p3).max(p4),
-                                    min: p1.min(p2).min(p3).min(p4),
-                                }
-                            }
-                            // Sign-aware interval division for `d := l / r`. If
-                            // r's interval contains zero, the quotient is
-                            // unbounded — yield `[-∞, +∞]` (still admissible).
-                            // Otherwise the four corner quotients bracket the
-                            // result the same way Product does.
-                            CalOperator::Division => {
-                                if r.min <= ZERO_VALUE && ZERO_VALUE <= r.max {
-                                    NumericRange {
-                                        max: INF_VALUE,
-                                        min: NEG_INF_VALUE,
-                                    }
-                                } else {
-                                    let q1 = l.min / r.min;
-                                    let q2 = l.min / r.max;
-                                    let q3 = l.max / r.min;
-                                    let q4 = l.max / r.max;
-                                    NumericRange {
-                                        max: q1.max(q2).max(q3).max(q4),
-                                        min: q1.min(q2).min(q3).min(q4),
-                                    }
-                                }
-                            }
+                        let lhs = Interval::closed(l.min, l.max);
+                        let rhs = Interval::closed(r.min, r.max);
+                        let image = match operator {
+                            CalOperator::Sum => lhs + rhs,
+                            CalOperator::Difference => lhs - rhs,
+                            CalOperator::Product => lhs * rhs,
+                            CalOperator::Division => lhs / rhs,
+                        };
+                        NumericRange {
+                            min: image.lower,
+                            max: image.upper,
                         }
                     }
                 };

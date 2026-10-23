@@ -42,8 +42,8 @@ mod tests;
 use anyhow::{Context, Result, ensure};
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, ONE_VALUE, OperatorIndex,
-    VariableIndex, ZERO_VALUE,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
+    VariableIndex,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -676,14 +676,15 @@ fn abstract_plan(view: &impl AbstractionView, initial_state: usize) -> Result<Ve
     Ok(plan)
 }
 
-/// A value of the non-empty interval `interval`.
+/// A lattice split child has an attained finite endpoint for its witness.
 fn interior_value(interval: Interval) -> NumericValue {
-    match (interval.lower.is_finite(), interval.upper.is_finite()) {
-        (true, _) if interval.lower_closed => interval.lower,
-        (_, true) if interval.upper_closed => interval.upper,
-        (true, true) => NumericValue::new((interval.lower.value() + interval.upper.value()) / 2.0),
-        (true, false) => interval.lower + ONE_VALUE,
-        (false, true) => interval.upper - ONE_VALUE,
-        (false, false) => ZERO_VALUE,
+    if interval.lower.is_finite() && interval.lower_closed {
+        interval.lower
+    } else {
+        assert!(
+            interval.upper.is_finite() && interval.upper_closed,
+            "a lattice split child has a closed finite bound"
+        );
+        interval.upper
     }
 }

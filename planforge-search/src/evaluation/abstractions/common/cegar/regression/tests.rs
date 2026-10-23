@@ -1,4 +1,5 @@
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex};
+use planforge_sas::numeric_task::{ONE_VALUE, ZERO_VALUE};
 use planforge_sas::utils::interval::Interval;
 
 use super::test_tasks::{blocked_task, diagonal_task, jump_task};

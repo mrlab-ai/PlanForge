@@ -257,3 +257,26 @@ fn upper_endpoint_ordering_is_decided_by_closedness_at_equal_bounds() {
     assert!(closed.upper_is_higher_or_equal(&closed));
     assert!(open.upper_is_higher_or_equal(&open));
 }
+
+#[test]
+fn point_division_rounds_the_quotient_once() {
+    let numerator = NumericValue::new(3.0);
+    let denominator = NumericValue::new(0.3);
+    let image = Interval::singleton(numerator) / Interval::singleton(denominator);
+    assert_eq!(image, Interval::singleton(numerator / denominator));
+}
+
+#[test]
+fn attained_corners_stay_closed_when_their_product_rounds_to_zero() {
+    let small = Interval::singleton(NumericValue::new(1e-12));
+    assert_eq!(small * small, Interval::singleton(ZERO_VALUE));
+}
+
+#[test]
+fn division_of_positive_unbounded_intervals_has_finite_point_images() {
+    let positive = Interval::new(ONE_VALUE, INF_VALUE, true, false);
+    let image = positive / positive;
+    assert!(image.contains(ONE_VALUE));
+    assert_eq!(image.lower, ZERO_VALUE);
+    assert_eq!(image.upper, INF_VALUE);
+}
