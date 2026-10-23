@@ -408,3 +408,66 @@ fn an_unbounded_decimal_linear_part_does_not_claim_constant_floating_deltas() {
             .map(|units| units + 1)
     );
 }
+
+#[test]
+fn unbounded_sailing_views_cannot_assume_integer_correlations() {
+    let mut parts = derived_parts(
+        AssignmentOperation::Plus,
+        3.0,
+        CalOperator::Sum,
+        VariableIndex::new(1),
+    );
+    parts.numeric_variables.push(NumericVariable::new(
+        "half-step".into(),
+        NumericType::Constant,
+        None,
+    ));
+    parts.numeric_state.push(NumericValue::new(1.5));
+    for (name, operation, targets, operand) in [
+        ("west", AssignmentOperation::Minus, vec![0], 3),
+        ("north-east", AssignmentOperation::Plus, vec![0, 1], 4),
+    ] {
+        parts.operators.push(Operator::new(
+            name.into(),
+            vec![],
+            vec![],
+            targets
+                .into_iter()
+                .map(|target| {
+                    AssignmentEffect::new(
+                        VariableIndex::new(target),
+                        operation.clone(),
+                        VariableIndex::new(operand),
+                        false,
+                        vec![],
+                    )
+                })
+                .collect(),
+            OperatorCost::new(1),
+        ));
+    }
+    let task = NumericRootTask::new(parts);
+    let coordinate = task.comparison_axioms()[0].get_left_var_id().index();
+    assert_eq!(
+        Coordinates::new(&task).value_lattices()[coordinate].step(),
+        NumericValue::new(0.5)
+    );
+
+    // This multiple of three is reached by exact east moves from zero. The
+    // next move rounds at 2^53; north-east then loses the x/y integer phase.
+    let mut x = NumericValue::new(((1u64 << 53) - 2) as f64);
+    let mut y = ZERO_VALUE;
+    x += NumericValue::new(3.0);
+    x += NumericValue::new(1.5);
+    y += NumericValue::new(1.5);
+    x -= NumericValue::new(3.0);
+    // Every remaining west move subtracts three from an exactly represented
+    // integer below 2^53, so this batch is exact and avoids a huge test loop.
+    let west_moves = ((1u64 << 53) - 1) / 3;
+    x -= NumericValue::new((3 * west_moves) as f64);
+    assert_eq!(x, ONE_VALUE);
+    assert_eq!(
+        NumericValue::affine([(1.0, x), (1.0, y)], 0.0),
+        NumericValue::new(2.5)
+    );
+}

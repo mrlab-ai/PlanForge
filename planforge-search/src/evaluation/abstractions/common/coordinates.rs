@@ -1,4 +1,7 @@
 mod lattices;
+mod preimage;
+
+use preimage::scalar_preimage;
 
 #[cfg(test)]
 mod tests;
@@ -271,21 +274,23 @@ impl<'task> Coordinates<'task> {
     }
 
     /// The states whose coordinate `coordinate` `op_id` maps into `target`,
-    /// or `None` if there are none: the inverse of the operator's effects on
-    /// it, composed in reverse order. An assignment's preimage is everything
-    /// if `target` contains the assigned value and nothing otherwise.
+    /// composed in reverse effect order. Constant assignments that miss the
+    /// target have no preimage. A rounded scalar jump can leave an empty
+    /// interval whose crossed bounds retain a separating refinement cut.
     pub(crate) fn preimage(
         &self,
         target: Interval,
         op_id: OperatorIndex,
         coordinate: VariableIndex,
     ) -> Option<Interval> {
-        let mut preimage = target;
         if let Some(view) = &self.views[coordinate.index()] {
-            let delta = view.operator_delta(op_id);
-            preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
-            return Some(preimage);
+            return scalar_preimage(
+                target,
+                &AssignmentOperation::Plus,
+                view.operator_delta(op_id),
+            );
         }
+        let mut preimage = target;
         let initial = self.task.get_initial_numeric_state_values();
         for effect in self.task.get_operators()[op_id.index()]
             .assignment_effects()
@@ -293,22 +298,11 @@ impl<'task> Coordinates<'task> {
             .filter(|effect| effect.affected_var_id() == coordinate)
             .rev()
         {
-            let rhs = initial[effect.var_id().index()];
-            match effect.operation() {
-                AssignmentOperation::Assign => {
-                    if !preimage.contains(rhs) {
-                        return None;
-                    }
-                    preimage = Interval::unbounded();
-                }
-                AssignmentOperation::Times if rhs == ZERO_VALUE => {
-                    if !preimage.contains(ZERO_VALUE) {
-                        return None;
-                    }
-                    preimage = Interval::unbounded();
-                }
-                operation => preimage.apply_reverse_op(operation, &Interval::singleton(rhs)),
-            }
+            preimage = scalar_preimage(
+                preimage,
+                effect.operation(),
+                initial[effect.var_id().index()],
+            )?;
         }
         Some(preimage)
     }

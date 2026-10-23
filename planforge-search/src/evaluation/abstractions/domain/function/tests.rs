@@ -984,7 +984,7 @@ fn abstract_source_set_tightens_source_by_inverse_target_image() {
     assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
     assert_eq!(
         concrete.source.numeric[0],
-        Interval::new(NumericValue::new(4.0), NumericValue::new(5.0), false, true)
+        Interval::closed(NumericValue::new(4.000000000001), NumericValue::new(5.0))
     );
 }
 
@@ -1010,7 +1010,7 @@ fn source_set_active_preimage_allows_boundary_charge() {
 
     assert_eq!(
         concrete.source.numeric[0],
-        Interval::new(NumericValue::new(4.0), NumericValue::new(5.0), false, true)
+        Interval::closed(NumericValue::new(4.000000000001), NumericValue::new(5.0))
     );
 }
 
@@ -1219,7 +1219,7 @@ fn abstract_source_set_allows_one_finite_changed_source() {
 
     assert_eq!(
         concrete.source.numeric[0],
-        Interval::new(NumericValue::new(0.0), NumericValue::new(1.0), false, true)
+        Interval::closed(NumericValue::new(1e-12), NumericValue::new(1.0))
     );
     assert_eq!(
         concrete.source.numeric[1],
@@ -1453,7 +1453,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
 
     assert_eq!(
         concrete.source.numeric[0],
-        Interval::new(NumericValue::new(0.0), NumericValue::new(1.0), false, true)
+        Interval::closed(NumericValue::new(1e-12), NumericValue::new(1.0))
     );
     // y has a zero-delta additive effect, so it is not in the affected-var loop
     // that intersects with the inverse target. But y *is* pinned by the
@@ -1470,7 +1470,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
 #[test]
 fn source_set_width_does_not_change_valid_preimage() {
     // Same fixture as `abstract_source_set_tightens_source_by_inverse_target_image`:
-    // the preimage source for the operator is `(4.0, 5.0]`, width 1.0.
+    // the canonical preimage source is `[4.0 + grid, 5.0]`.
     let (task, function) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
@@ -1489,7 +1489,7 @@ fn source_set_width_does_not_change_valid_preimage() {
         .unwrap();
     assert_eq!(
         source_sets[0].labels[0].source.numeric[0],
-        Interval::new(NumericValue::new(4.0), NumericValue::new(5.0), false, true)
+        Interval::closed(NumericValue::new(4.000000000001), NumericValue::new(5.0))
     );
 }
 
