@@ -1,8 +1,9 @@
-/// Main translation from STRIPS/PDDL ground representation to SAS+ finite-domain representation.
+//! Main translation from STRIPS/PDDL ground representation to SAS+ finite-domain representation.
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use planforge_sas::numeric_conditions::ConditionValue;
+use planforge_sas::numeric_task::{NumericValue, ZERO_VALUE};
 
 use tracing::info;
 
@@ -128,7 +129,7 @@ struct Translation {
     mutex_key: Vec<Vec<SasFact>>,
     implied_facts: HashMap<SasFact, Vec<SasFact>>,
     /// The initial value of every numeric variable, for static costs.
-    num_vals: Vec<f64>,
+    num_vals: Vec<NumericValue>,
     relevant_numeric: Vec<usize>,
     simplified_effect_conditions: usize,
     added_implied_preconditions: usize,
@@ -763,7 +764,7 @@ fn sas_operator_cost(
             let &var = numeric_dictionary.get(pne).unwrap_or_else(|| {
                 panic!("cost expression {pne} of action {action_name} has no numeric variable")
             });
-            num_vals[var]
+            num_vals[var].value()
         }
         other => panic!("action {action_name} has an unsupported cost expression {other}"),
     }
@@ -1183,7 +1184,7 @@ fn translate_task(
     // A fluent without a SAS numeric variable is skipped: it holds a constant,
     // which every expression mentioning it was folded against, so there is no
     // variable left for its initial value to name.
-    let mut num_init_values: Vec<f64> = vec![0.0; translation.numeric_names.len()];
+    let mut num_init_values = vec![ZERO_VALUE; translation.numeric_names.len()];
 
     let mut relevant_numeric: Vec<usize> = vec![];
     for fact in task.num_init {
@@ -1196,7 +1197,7 @@ fn translate_task(
                 fact.fluent, fact.expression
             ));
         };
-        num_init_values[var] = nc.value.value();
+        num_init_values[var] = nc.value;
         if fact.fluent.ntype == 'R' {
             relevant_numeric.push(var);
         }
@@ -1216,7 +1217,7 @@ fn translate_task(
                     axiom.name
                 );
             };
-            num_init_values[var] = nc.value.value();
+            num_init_values[var] = nc.value;
         }
     }
 
@@ -1746,7 +1747,7 @@ mod tests {
             translation_key: vec![],
             mutex_key: vec![],
             implied_facts: HashMap::new(),
-            num_vals: vec![0.0; numeric_count],
+            num_vals: vec![ZERO_VALUE; numeric_count],
             relevant_numeric: (0..numeric_count).collect(),
             simplified_effect_conditions: 0,
             added_implied_preconditions: 0,

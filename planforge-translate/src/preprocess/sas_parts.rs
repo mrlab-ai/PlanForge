@@ -18,7 +18,7 @@ use planforge_sas::axioms::{
 };
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, Metric,
-    NumericValue, NumericVariable, OperatorCost, VariableIndex,
+    NumericVariable, OperatorCost, VariableIndex,
 };
 use planforge_sas::sas_format::{
     SAS_FILE_VERSION, SasOperator, SasTaskParts, SasVariable, axiom_layer_from_sas,
@@ -82,7 +82,7 @@ pub fn build(reordered: &ReorderedTask) -> SasTaskParts {
             .collect();
     let numeric_state = numeric_order
         .iter()
-        .map(|&var| NumericValue::new(sas.init.num_values[var]))
+        .map(|&var| sas.init.num_values[var])
         .collect();
 
     let operators = sas

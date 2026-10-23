@@ -1,6 +1,8 @@
-/// Instantiates the PDDL task using the logic program model.
+//! Instantiates the PDDL task using the logic program model.
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
+
+use planforge_sas::numeric_task::NumericValue;
 
 use super::build_model;
 use super::grounding::{GroundingLimitError, GroundingLimits, GroundingMonitor};
@@ -174,11 +176,11 @@ fn get_objects_by_type(
 
 fn init_function_values(
     num_init: &[FunctionAssignment],
-) -> HashMap<PrimitiveNumericExpression, f64> {
+) -> HashMap<PrimitiveNumericExpression, NumericValue> {
     let mut result = HashMap::new();
     for assign in num_init {
         if let FunctionalExpression::NumericConstant(nc) = &assign.expression {
-            result.insert(assign.fluent.clone(), nc.value.value());
+            result.insert(assign.fluent.clone(), nc.value);
         }
     }
     result

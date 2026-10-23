@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use planforge_sas::numeric_task::NumericValue;
+
 use super::actions::Action;
 use super::axioms::{Axiom, NumericAxiom};
 use super::conditions::{Atom, Condition, Conjunction};
@@ -118,7 +120,7 @@ pub struct GroundingTables<'a> {
     /// unsupported axiom into an unconditional one.
     pub fluent_facts: &'a HashSet<Atom>,
     pub fluent_functions: &'a HashSet<PrimitiveNumericExpression>,
-    pub init_function_vals: &'a HashMap<PrimitiveNumericExpression, f64>,
+    pub init_function_vals: &'a HashMap<PrimitiveNumericExpression, NumericValue>,
     /// The objects of each type, including by every supertype they inherit.
     ///
     /// Needed because a universally quantified effect is grounded here rather
@@ -322,11 +324,11 @@ impl DerivedFunctionAdministrator {
     }
 
     /// The value of `function` if it is the derived function of a constant.
-    pub fn constant_value(&self, function: &PrimitiveNumericExpression) -> Option<f64> {
+    pub fn constant_value(&self, function: &PrimitiveNumericExpression) -> Option<NumericValue> {
         let axiom = self.axiom_named(&function.symbol)?;
         match axiom.parts.as_slice() {
             [FunctionalExpression::NumericConstant(constant)] if axiom.op.is_empty() => {
-                Some(constant.value.value())
+                Some(constant.value)
             }
             _ => None,
         }

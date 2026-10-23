@@ -1,6 +1,7 @@
-/// Simplification of SAS+ tasks by removing unreachable propositions.
+//! Simplification of SAS+ tasks by removing unreachable propositions.
 use std::collections::{HashMap, HashSet};
 
+use planforge_sas::numeric_task::ZERO_VALUE;
 use tracing::{Level, debug, info};
 
 use super::sas_tasks::*;
@@ -650,7 +651,7 @@ pub fn trivial_task(solvable: bool) -> SASTask {
         vec!["I".to_string()],
     );
     let mutexes = vec![];
-    let init = SASInit::new(vec![0], vec![0.0]);
+    let init = SASInit::new(vec![0], vec![ZERO_VALUE]);
     let goal_fact = if solvable { (0, 0) } else { (0, 1) };
     let goal = SASGoal::new(vec![goal_fact]);
     let operators = vec![];

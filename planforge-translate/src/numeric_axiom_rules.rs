@@ -1,4 +1,4 @@
-/// Handles numeric axiom constant folding, layer computation, and equivalence detection.
+//! Handles numeric axiom constant folding, layer computation, and equivalence detection.
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use planforge_sas::numeric_task::NumericValue;
@@ -146,7 +146,7 @@ fn fold_axiom_if_constant(
                 return None;
             }
         }
-        evaluate_constant_expression(&op, &values)
+        Some(evaluate_constant_expression(&op, &values))
     };
 
     if let Some(value) = result {
@@ -183,33 +183,16 @@ fn resolve_constant_part(
     }
 }
 
-fn evaluate_constant_expression(op: &str, values: &[NumericValue]) -> Option<NumericValue> {
-    if values.is_empty() {
-        return None;
-    }
-
-    let numeric_values: Vec<f64> = values.iter().map(|value| value.value()).collect();
-    let result = match op {
-        "+" => numeric_values.into_iter().sum(),
-        "*" => numeric_values.into_iter().product(),
-        "-" => {
-            if numeric_values.len() == 1 {
-                -numeric_values[0]
-            } else {
-                let mut iter = numeric_values.into_iter();
-                let first = iter.next()?;
-                iter.fold(first, |acc, value| acc - value)
-            }
-        }
-        "/" => {
-            let mut iter = numeric_values.into_iter();
-            let first = iter.next()?;
-            iter.fold(first, |acc, value| acc / value)
-        }
+fn evaluate_constant_expression(op: &str, values: &[NumericValue]) -> NumericValue {
+    let (&first, rest) = values.split_first().expect("a numeric axiom has operands");
+    match op {
+        "+" => NumericValue::affine(values.iter().map(|&value| (1.0, value)), 0.0),
+        "-" if rest.is_empty() => -first,
+        "-" => NumericValue::affine(rest.iter().map(|&value| (-1.0, value)), first.value()),
+        "*" => rest.iter().fold(first, |acc, &value| acc * value),
+        "/" => rest.iter().fold(first, |acc, &value| acc / value),
         unknown => panic!("unknown numeric axiom operator {unknown}"),
-    };
-
-    Some(NumericValue::new(result))
+    }
 }
 
 fn compute_axiom_layers(

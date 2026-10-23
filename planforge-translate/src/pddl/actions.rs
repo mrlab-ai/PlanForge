@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use planforge_sas::numeric_task::{NumericValue, ONE_VALUE, ZERO_VALUE};
+
 use super::conditions::{Atom, Condition};
 use super::effects::Effect;
 use super::f_expression::{
@@ -230,7 +232,7 @@ impl Action {
         } else {
             // Default cost: increase(total-cost, 1)
             let derived = constant_function(
-                1.0,
+                ONE_VALUE,
                 fluent_functions,
                 init_function_vals,
                 task_function_admin,
@@ -266,27 +268,31 @@ impl Action {
 fn fold_additive_constant_effects(
     assign_effects: Vec<(Vec<Condition>, FunctionAssignment)>,
     fluent_functions: &std::collections::HashSet<PrimitiveNumericExpression>,
-    init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+    init_function_vals: &HashMap<PrimitiveNumericExpression, NumericValue>,
     task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
     new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
 ) -> Vec<(Vec<Condition>, FunctionAssignment)> {
     // The signed constant each effect adds, for the foldable ones.
-    let deltas: Vec<Option<f64>> = assign_effects
+    let deltas: Vec<Option<NumericValue>> = assign_effects
         .iter()
         .map(|(conditions, assignment)| {
-            let sign = match assignment.symbol.as_str() {
-                "+" => 1.0,
-                "-" => -1.0,
-                _ => return None,
-            };
+            if !matches!(assignment.symbol.as_str(), "+" | "-") {
+                return None;
+            }
             if !conditions.is_empty() {
                 return None;
             }
             let argument = assignment.expression.as_pne()?;
-            Some(sign * task_function_admin.constant_value(argument)?)
+            let value = task_function_admin.constant_value(argument)?;
+            Some(if assignment.symbol == "+" {
+                value
+            } else {
+                -value
+            })
         })
         .collect();
-    let mut foldable_by_fluent: HashMap<&PrimitiveNumericExpression, Vec<f64>> = HashMap::new();
+    let mut foldable_by_fluent: HashMap<&PrimitiveNumericExpression, Vec<NumericValue>> =
+        HashMap::new();
     for ((_, assignment), delta) in assign_effects.iter().zip(&deltas) {
         if let Some(delta) = delta {
             foldable_by_fluent
@@ -295,12 +301,12 @@ fn fold_additive_constant_effects(
                 .push(*delta);
         }
     }
-    let sums: HashMap<PrimitiveNumericExpression, f64> = foldable_by_fluent
+    let sums: HashMap<PrimitiveNumericExpression, NumericValue> = foldable_by_fluent
         .into_iter()
         .filter(|(_, deltas)| deltas.len() > 1)
         .map(|(fluent, deltas)| {
-            let sum = planforge_sas::numeric_task::NumericValue::new(deltas.iter().sum());
-            (fluent.clone(), sum.value())
+            let sum = NumericValue::affine(deltas.into_iter().map(|value| (1.0, value)), 0.0);
+            (fluent.clone(), sum)
         })
         .collect();
     if sums.is_empty() {
@@ -316,10 +322,10 @@ fn fold_additive_constant_effects(
                 continue;
             }
         };
-        if sum == 0.0 || !emitted.insert(assignment.fluent.clone()) {
+        if sum == ZERO_VALUE || !emitted.insert(assignment.fluent.clone()) {
             continue;
         }
-        let symbol = if sum > 0.0 { "+" } else { "-" };
+        let symbol = if sum > ZERO_VALUE { "+" } else { "-" };
         let argument = constant_function(
             sum.abs(),
             fluent_functions,
