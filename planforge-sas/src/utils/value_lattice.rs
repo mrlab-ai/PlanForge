@@ -3,7 +3,9 @@
 use crate::numeric_task::NumericValue;
 use crate::utils::float_tolerance::GRID_SCALE;
 
-/// A lattice containing one numeric coordinate's reachable values.
+/// An offset and gcd lattice in canonical grid units.
+/// Callers infer reachable-value lattices only after proving that rounding
+/// preserves these generators, or taking their arithmetic closure.
 /// The offset and step are integers in units of the canonical grid, so gcd
 /// and boundary snapping never depend on a floating integer tolerance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,6 +43,28 @@ impl ValueLattice {
         } else {
             Self { offset, step }
         }
+    }
+
+    /// A containing lattice closed under floating addition and rounding,
+    /// without assuming any reachable magnitude bound. Only binary fractions
+    /// aligned to the decimal grid can retain a nontrivial global quantum.
+    pub fn arithmetic_closure(self) -> Self {
+        // 1e12 = 2^12 * 5^12: grid units divisible by 5^12 represent an exact
+        // binary fraction. The phase can disappear at large magnitudes, so
+        // include the offset when finding the common power-of-two quantum.
+        const FIVE_TO_TWELVE: u64 = 244_140_625;
+        let divisor = gcd(self.offset.unsigned_abs(), self.step);
+        if !divisor.is_multiple_of(FIVE_TO_TWELVE) {
+            return Self::GRID;
+        }
+        let binary_units = divisor / FIVE_TO_TWELVE;
+        assert!(binary_units > 0, "a lattice has a positive step");
+        let step = (1u64 << binary_units.trailing_zeros()) * FIVE_TO_TWELVE;
+        Self { offset: 0, step }
+    }
+
+    pub fn step(self) -> NumericValue {
+        NumericValue::new(self.step as f64 / GRID_SCALE)
     }
 
     /// Greatest lattice value <= boundary (or < when `include` is false),

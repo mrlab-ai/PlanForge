@@ -1,8 +1,9 @@
+mod lattices;
+
 #[cfg(test)]
 mod tests;
 
 use planforge_sas::axioms::NumericExpression;
-use planforge_sas::utils::value_lattice::ValueLattice;
 use std::sync::Arc;
 
 use planforge_sas::numeric_conditions::{CompOp, ConditionNode, ConditionValue, NumericCondition};
@@ -207,50 +208,6 @@ impl<'task> Coordinates<'task> {
             views,
             requirements,
         }
-    }
-
-    /// Lattices containing each coordinate's reachable values, inferred using
-    /// exact integer grid units. Conditional effects contribute generators too.
-    pub(crate) fn value_lattices(&self) -> Vec<ValueLattice> {
-        let initial = self.task.get_initial_numeric_state_values();
-        let mut generators = vec![Vec::new(); initial.len()];
-        for operator in self.task.get_operators() {
-            for effect in operator.assignment_effects() {
-                let target = effect.affected_var_id().index();
-                let source = effect.var_id().index();
-                let generator =
-                    if self.task.numeric_variables()[source].get_type() == &NumericType::Constant {
-                        let rhs = initial[source].grid_units();
-                        match effect.operation() {
-                            AssignmentOperation::Plus | AssignmentOperation::Minus => rhs,
-                            AssignmentOperation::Assign => rhs
-                                .zip(initial[target].grid_units())
-                                .map(|(value, offset)| value - offset),
-                            AssignmentOperation::Times | AssignmentOperation::Divide => None,
-                        }
-                    } else {
-                        None
-                    };
-                generators[target].push(generator);
-            }
-        }
-        let mut lattices: Vec<_> = initial
-            .iter()
-            .zip(generators)
-            .map(|(&value, generators)| ValueLattice::from_generators(value, generators))
-            .collect();
-        for (variable, view) in self.views.iter().enumerate() {
-            if let Some(view) = view {
-                lattices[variable] = ValueLattice::from_generators(
-                    view.evaluate(initial),
-                    (0..self.task.get_operators().len()).map(|operator| {
-                        view.operator_delta(OperatorIndex::from_usize(operator))
-                            .grid_units()
-                    }),
-                );
-            }
-        }
-        lattices
     }
 
     /// The additive view of every numeric variable that has one.
