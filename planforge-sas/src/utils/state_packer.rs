@@ -233,7 +233,7 @@ impl StatePacker {
     }
 
     pub fn pack_double(&self, value: NumericValue) -> u64 {
-        (value).to_bits()
+        value.to_bits()
     }
 
     pub fn get(&self, buffer: &[u64], var: usize) -> u64 {

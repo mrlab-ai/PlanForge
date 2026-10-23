@@ -3,6 +3,10 @@
 use crate::numeric_task::NumericValue;
 use crate::utils::float_tolerance::GRID_SCALE;
 
+/// 5^12: since 1e12 = 2^12 * 5^12, a number of grid units divisible by it is
+/// an exact binary fraction.
+pub const FIVE_TO_TWELVE: u64 = 244_140_625;
+
 /// An offset and gcd lattice in canonical grid units.
 /// Callers infer reachable-value lattices only after proving that rounding
 /// preserves these generators, or taking their arithmetic closure.
@@ -49,10 +53,9 @@ impl ValueLattice {
     /// without assuming any reachable magnitude bound. Only binary fractions
     /// aligned to the decimal grid can retain a nontrivial global quantum.
     pub fn arithmetic_closure(self) -> Self {
-        // 1e12 = 2^12 * 5^12: grid units divisible by 5^12 represent an exact
-        // binary fraction. The phase can disappear at large magnitudes, so
-        // include the offset when finding the common power-of-two quantum.
-        const FIVE_TO_TWELVE: u64 = 244_140_625;
+        // Only binary fractions keep a quantum under floating arithmetic. The
+        // phase can disappear at large magnitudes, so include the offset when
+        // finding the common power-of-two quantum.
         let divisor = gcd(self.offset.unsigned_abs(), self.step);
         if !divisor.is_multiple_of(FIVE_TO_TWELVE) {
             return Self::GRID;

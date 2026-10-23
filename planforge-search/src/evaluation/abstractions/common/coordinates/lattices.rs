@@ -3,7 +3,7 @@
 
 use super::*;
 use planforge_sas::utils::float_tolerance::{ABS_EPSILON, GRID_BOUND, GRID_SCALE};
-use planforge_sas::utils::value_lattice::ValueLattice;
+use planforge_sas::utils::value_lattice::{FIVE_TO_TWELVE, ValueLattice};
 use std::collections::HashSet;
 
 const WHOLE_UNITS: i64 = 1_000_000_000_000;
@@ -191,9 +191,9 @@ impl Coordinates<'_> {
                     };
                     let value = NumericValue::new(quantum);
                     (value.value() == quantum
-                        && value
-                            .grid_units()
-                            .is_some_and(|units| units.unsigned_abs().is_multiple_of(244_140_625)))
+                        && value.grid_units().is_some_and(|units| {
+                            units.unsigned_abs().is_multiple_of(FIVE_TO_TWELVE)
+                        }))
                     .then(|| value.grid_units().expect("checked binary grid value"))
                 });
                 lattices[variable] = ValueLattice::from_generators(view.evaluate(initial), quanta)

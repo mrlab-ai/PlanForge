@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use planforge_sas::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
+use planforge_sas::axioms::{
+    AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, NumericExpression, PropositionalAxiom,
+};
 use planforge_sas::numeric_conditions::{NumericConditionError, NumericConditions};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
@@ -293,7 +295,7 @@ impl PatternLookupProjection {
         for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
         {
             bins[numeric_index + 1] =
-                (Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?)
+                Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?
                     .to_bits();
         }
         Ok(())
@@ -1334,23 +1336,21 @@ fn project_assignment_axiom(
             .map(VariableIndex::from_usize)
     };
     let expression = match &axiom.expression {
-        planforge_sas::axioms::NumericExpression::Binary {
+        NumericExpression::Binary {
             operator,
             left,
             right,
-        } => planforge_sas::axioms::NumericExpression::Binary {
+        } => NumericExpression::Binary {
             operator: operator.clone(),
             left: mapped(*left)?,
             right: mapped(*right)?,
         },
-        planforge_sas::axioms::NumericExpression::Linear(terms) => {
-            planforge_sas::axioms::NumericExpression::Linear(
-                terms
-                    .iter()
-                    .map(|(var, coefficient)| Some((mapped(*var)?, *coefficient)))
-                    .collect::<Option<_>>()?,
-            )
-        }
+        NumericExpression::Linear(terms) => NumericExpression::Linear(
+            terms
+                .iter()
+                .map(|(var, coefficient)| Some((mapped(*var)?, *coefficient)))
+                .collect::<Option<_>>()?,
+        ),
     };
     Some(AssignmentAxiom {
         affected_var_id: VariableIndex::from_usize(affected),

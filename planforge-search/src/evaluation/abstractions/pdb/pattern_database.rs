@@ -45,7 +45,7 @@ fn hash_state_components(propositional: &[ExplicitValueIndex], numeric: &[Numeri
     }
     hash = hash_bytes(hash, &(propositional.len() as u64).to_le_bytes());
     for value in numeric {
-        hash = hash_bytes(hash, &(*value).to_bits().to_le_bytes());
+        hash = hash_bytes(hash, &value.to_bits().to_le_bytes());
     }
     hash_bytes(hash, &(numeric.len() as u64).to_le_bytes())
 }
@@ -64,7 +64,7 @@ fn hash_pattern_components(
     }
     hash = hash_bytes(hash, &(pattern_regular_ids.len() as u64).to_le_bytes());
     for &var_id in pattern_numeric_ids {
-        hash = hash_bytes(hash, &(numeric[var_id]).to_bits().to_le_bytes());
+        hash = hash_bytes(hash, &numeric[var_id].to_bits().to_le_bytes());
     }
     hash_bytes(hash, &(pattern_numeric_ids.len() as u64).to_le_bytes())
 }
@@ -578,8 +578,7 @@ impl<'task> PatternDatabase<'task> {
                         .iter()
                         .enumerate()
                         .all(|(pattern_index, &var_id)| {
-                            state.numeric.get(var_id).map(|value| (*value).to_bits())
-                                == numeric.get(pattern_index).map(|value| (*value).to_bits())
+                            state.numeric.get(var_id) == numeric.get(pattern_index)
                         })
             })
             .map(|state_id| self.distances[state_id])
@@ -680,7 +679,7 @@ impl<'task> PatternDatabase<'task> {
         bins.resize(1 + numeric.len(), 0);
         bins[0] = prop_hash as u64;
         for (numeric_index, value) in numeric.iter().enumerate() {
-            bins[numeric_index + 1] = (*value).to_bits();
+            bins[numeric_index + 1] = value.to_bits();
         }
         self.lookup_compact_numeric_distance(&bins)
     }
@@ -697,7 +696,7 @@ impl<'task> PatternDatabase<'task> {
         for (numeric_index, &projected_numeric_id) in
             self.task.pattern_numeric_projected_ids().iter().enumerate()
         {
-            bins[numeric_index + 1] = (numeric[projected_numeric_id]).to_bits();
+            bins[numeric_index + 1] = numeric[projected_numeric_id].to_bits();
         }
         self.lookup_compact_numeric_distance(&bins)
     }
@@ -1243,7 +1242,7 @@ impl<'task> PatternDatabase<'task> {
                 for (numeric_index, &projected_numeric_id) in pattern_numeric_ids.iter().enumerate()
                 {
                     compact_numeric_bins[numeric_index + 1] =
-                        (state.numeric[projected_numeric_id]).to_bits();
+                        state.numeric[projected_numeric_id].to_bits();
                 }
                 let distance = self.distances[state_id];
                 self.compact_numeric_registry

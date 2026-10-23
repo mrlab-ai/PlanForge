@@ -364,9 +364,8 @@ impl ConditionDomain for NumericValue {
 impl ConditionDomain for Interval {
     type Verdict = Option<bool>;
 
-    /// Intersect the recomputed value with whatever the caller already knows
-    /// about the derived variable. An empty supplied interval means "nothing
-    /// known", not "unsatisfiable".
+    /// The recomputed value, refined by what the caller already knows about
+    /// the derived variable.
     #[inline]
     fn combine(
         op: ArithOp,
@@ -375,13 +374,10 @@ impl ConditionDomain for Interval {
         result_numeric_var_id: VariableIndex,
         inputs: &[Interval],
     ) -> Interval {
-        let computed = op.apply_interval(lhs, rhs);
-        let supplied = inputs[result_numeric_var_id.index()];
-        if supplied.is_empty() {
-            computed
-        } else {
-            computed.intersection(&supplied)
-        }
+        refine_supplied(
+            op.apply_interval(lhs, rhs),
+            inputs[result_numeric_var_id.index()],
+        )
     }
 
     fn linear(
@@ -389,23 +385,30 @@ impl ConditionDomain for Interval {
         result: VariableIndex,
         inputs: &[Self],
     ) -> Self {
-        let computed = Interval::affine(
-            terms
-                .iter()
-                .map(|(var, coefficient)| (coefficient.value(), inputs[var.index()])),
-            0.0,
-        );
-        let supplied = inputs[result.index()];
-        if supplied.is_empty() {
-            computed
-        } else {
-            computed.intersection(&supplied)
-        }
+        refine_supplied(
+            Interval::affine(
+                terms
+                    .iter()
+                    .map(|(var, coefficient)| (coefficient.value(), inputs[var.index()])),
+                0.0,
+            ),
+            inputs[result.index()],
+        )
     }
 
     #[inline]
     fn compare(op: CompOp, lhs: Interval, rhs: Interval) -> Option<bool> {
         op.apply_interval(lhs, rhs)
+    }
+}
+
+/// `computed` intersected with what the caller already knows about the
+/// derived variable; an empty `supplied` interval means "nothing known".
+fn refine_supplied(computed: Interval, supplied: Interval) -> Interval {
+    if supplied.is_empty() {
+        computed
+    } else {
+        computed.intersection(&supplied)
     }
 }
 
