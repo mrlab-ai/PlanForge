@@ -533,9 +533,7 @@ fn add_task_operator(
     let parent_op_id = ops.push(RelaxedOperator {
         task_idx: Some(op_idx),
         parent: None,
-        cost: task
-            .abstract_operator_cost(OperatorIndex::from_usize(op_idx))
-            .value(),
+        cost: task.abstract_operator_cost(OperatorIndex::from_usize(op_idx)),
         preconditions: parent_preconds.clone(),
         state_deps: parent_state_deps.clone(),
         effects: parent_effects,

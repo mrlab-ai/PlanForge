@@ -290,13 +290,10 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
 
     assert!(build_restricted_task(&task).unwrap().is_none());
     let transformed = &task;
-    assert_eq!(
-        task.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(1.0)
-    );
+    assert_eq!(task.abstract_operator_cost(OperatorIndex::new(0)), 1.0);
     assert_eq!(
         transformed.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(1.0)
+        1.0
     );
     let metric_var_id = transformed.metric().var_id().unwrap();
     assert!(
@@ -399,17 +396,14 @@ fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
     );
     assert_eq!(
         transformed.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(2.0)
+        2.0
     );
 }
 
 #[test]
 fn restricted_task_preserves_derived_metric_cost() {
     let task = task_with_derived_metric();
-    assert_eq!(
-        task.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(2.0)
-    );
+    assert_eq!(task.abstract_operator_cost(OperatorIndex::new(0)), 2.0);
     let restricted = build_restricted_task(&task)
         .unwrap()
         .expect("task should be restricted");

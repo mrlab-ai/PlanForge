@@ -176,12 +176,12 @@ pub(crate) fn replay_plan(
         let op_cost = semantics.operator_costs()[op_id.index()];
         ensure!(
             approximately_equal(
-                op_cost.value() + view.goal_distance(transition.target),
+                op_cost + view.goal_distance(transition.target),
                 abstract_distance
             ),
             "optimal abstract transition does not preserve the goal distance"
         );
-        concrete_cost += op_cost.value();
+        concrete_cost += op_cost;
         operator_ids.push(op_id);
     }
 }
@@ -275,7 +275,7 @@ fn replay_whole_plan(
         let transition = view.optimal_transition(abstract_state)?;
         ensure!(
             approximately_equal(
-                semantics.operator_costs()[transition.concrete_op_id.index()].value()
+                semantics.operator_costs()[transition.concrete_op_id.index()]
                     + view.goal_distance(transition.target),
                 abstract_distance
             ),
@@ -339,7 +339,7 @@ fn replay_whole_plan(
         }
         std::mem::swap(&mut state, &mut successor);
 
-        concrete_cost += semantics.operator_costs()[op_id.index()].value();
+        concrete_cost += semantics.operator_costs()[op_id.index()];
         operator_ids.push(op_id);
     };
     Ok(PlanCheck::Refine(select_split(
@@ -377,7 +377,7 @@ pub(crate) fn validate_concrete_plan(
             .states()
             .successor_into(&state, op, &mut successor)?;
         std::mem::swap(&mut state, &mut successor);
-        cost += semantics.operator_costs()[op_id.index()].value();
+        cost += semantics.operator_costs()[op_id.index()];
     }
     ensure!(
         semantics.states().is_goal(&state),

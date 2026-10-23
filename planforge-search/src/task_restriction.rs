@@ -617,7 +617,9 @@ fn ensure_operator_costs_unchanged(
         let source_cost = source_task.abstract_operator_cost(operator_index);
         let transformed_cost = transformed_task.abstract_operator_cost(operator_index);
         ensure!(
-            approx_eq(source_cost, transformed_cost),
+            (source_cost - transformed_cost).abs()
+                <= planforge_sas::utils::float_tolerance::AGREEMENT_EPSILON
+                    * source_cost.abs().max(transformed_cost.abs()).max(1.0),
             "restricted task changed metric cost of operator {operator_id} ({}): {source_cost} -> {transformed_cost}",
             source.name()
         );

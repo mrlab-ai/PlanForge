@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Result, ensure};
 use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex,
+    AbstractNumericTask, ExplicitValueIndex, OperatorIndex, VariableIndex,
 };
 
 use super::abstract_operators::{AbstractOperator, DomainMapping, build_abstract_operators};
@@ -44,7 +44,7 @@ pub struct DomainAbstractionFunction {
     /// The validated cost of every concrete operator, shared with the CEGAR
     /// semantics. Task views that move the initial state keep these costs
     /// pinned to the base task.
-    operator_costs: Arc<[NumericValue]>,
+    operator_costs: Arc<[f64]>,
     /// Propositional dimensions that a single abstract state can constrain,
     /// ascending: exactly the variables this abstraction split into more than
     /// one class. A variable with one class has that class covering its whole
@@ -183,7 +183,7 @@ impl DomainAbstractionFunction {
         &self.additive_numeric_views
     }
 
-    pub(super) fn operator_cost(&self, op_id: OperatorIndex) -> NumericValue {
+    pub(super) fn operator_cost(&self, op_id: OperatorIndex) -> f64 {
         self.operator_costs[op_id.index()]
     }
 

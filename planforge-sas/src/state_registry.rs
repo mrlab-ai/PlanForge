@@ -1208,7 +1208,7 @@ impl<'a> StateRegistry<'a> {
         operator: &Operator,
         successor_values: &mut Vec<NumericValue>,
         cost_values: &mut Vec<NumericValue>,
-    ) -> Result<(ConcreteState, NumericValue), StateInsertError> {
+    ) -> Result<(ConcreteState, f64), StateInsertError> {
         let mut ctx = ExpansionContext::default();
         self.build_expansion_context(current_state, &mut ctx)?;
         self.apply_operator_in_context(current_state, operator, &ctx, successor_values, cost_values)
@@ -1256,7 +1256,7 @@ impl<'a> StateRegistry<'a> {
         ctx: &ExpansionContext,
         successor_values: &mut Vec<NumericValue>,
         cost_values: &mut Vec<NumericValue>,
-    ) -> Result<(ConcreteState, NumericValue), StateInsertError> {
+    ) -> Result<(ConcreteState, f64), StateInsertError> {
         // Seed successor scratch from the cached parent values; the numeric
         // and cost effects below will mutate them in place.
         successor_values.clear();
@@ -1311,9 +1311,9 @@ impl<'a> StateRegistry<'a> {
             NumericValue::new(0.0)
         };
         let op_cost = if self.metric_use_metric {
-            new_metric - ctx.parent_metric
+            new_metric.value() - ctx.parent_metric.value()
         } else {
-            NumericValue::new(1.0)
+            1.0
         };
 
         let (id, is_new_state) = self.insert_id_or_pop_state();
@@ -1663,10 +1663,10 @@ impl<'a> StateRegistry<'a> {
         &self,
         state: &ConcreteState,
         operator: &Operator,
-    ) -> Result<NumericValue, StateInsertError> {
+    ) -> Result<f64, StateInsertError> {
         if !self.task.metric().use_metric() {
             // Numeric-FD treats non-metric tasks as unit-cost.
-            return Ok(NumericValue::new(1.0));
+            return Ok(1.0);
         }
 
         let old_metric = self
@@ -1713,7 +1713,7 @@ impl<'a> StateRegistry<'a> {
                 message: format!("Failed to evaluate metric after applying operator: {e:?}"),
             })?;
 
-        Ok(new_metric - old_metric)
+        Ok(new_metric.value() - old_metric.value())
     }
 
     fn metric_value_for_state(

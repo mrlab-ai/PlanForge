@@ -254,7 +254,7 @@ impl<'e> Expansion<'e> {
         &mut self,
         registry: &mut StateRegistry<'_>,
         operator: &Operator,
-    ) -> Result<(ConcreteState, NumericValue), StateInsertError> {
+    ) -> Result<(ConcreteState, f64), StateInsertError> {
         registry.apply_operator_in_context(
             &self.state,
             operator,

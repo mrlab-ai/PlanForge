@@ -1446,7 +1446,7 @@ impl<'task> PatternDatabase<'task> {
                 if inner_h.dead_end {
                     continue;
                 }
-                let g = entry.g.into_inner() + self.task.abstract_operator_cost(op_id).value();
+                let g = entry.g.into_inner() + self.task.abstract_operator_cost(op_id);
                 // Blind and Zero explore breadth-first: their value is a
                 // constant, so folding it into `f` would only shift every key.
                 let h = if matches!(
@@ -1531,7 +1531,7 @@ impl<'task> PatternDatabase<'task> {
                 continue;
             }
             for &(parent_id, operator_id) in &predecessors[state_id] {
-                let alternative = distance + self.task.abstract_operator_cost(operator_id).value();
+                let alternative = distance + self.task.abstract_operator_cost(operator_id);
                 if alternative + float_tolerance::DIJKSTRA_EPSILON < distances[parent_id] {
                     distances[parent_id] = alternative;
                     heap.push((Reverse(NotNan::new(alternative).unwrap()), parent_id));

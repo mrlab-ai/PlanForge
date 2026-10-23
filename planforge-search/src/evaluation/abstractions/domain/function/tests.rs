@@ -4,7 +4,6 @@ use super::*;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::domain::comparison_inputs::fill_state_intervals;
-use ordered_float::NotNan;
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -44,9 +43,9 @@ fn constant_leaf_values(
     condition: &NumericCondition,
     task: &dyn AbstractNumericTask,
     initial_numeric_values: &[NumericValue],
-) -> Vec<f64> {
+) -> Vec<NumericValue> {
     let numeric_variables = task.numeric_variables();
-    let mut out: HashSet<u64> = HashSet::new();
+    let mut out: HashSet<NumericValue> = HashSet::new();
     for node in condition.nodes() {
         let ConditionNode::Leaf { numeric_var_id } = node else {
             continue;
@@ -55,9 +54,9 @@ fn constant_leaf_values(
             continue;
         }
         let value = initial_numeric_values[numeric_var_id.index()];
-        out.insert(value.to_bits());
+        out.insert(value);
     }
-    out.into_iter().map(f64::from_bits).collect()
+    out.into_iter().collect()
 }
 
 fn partitions_from_cutpoints(cutpoints: &[NumericValue]) -> Vec<Interval> {
@@ -66,8 +65,8 @@ fn partitions_from_cutpoints(cutpoints: &[NumericValue]) -> Vec<Interval> {
         .copied()
         .filter(|v| v.is_finite())
         .collect();
-    cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    cuts.dedup_by(|a, b| a.to_bits() == b.to_bits());
+    cuts.sort();
+    cuts.dedup();
 
     let mut out: Vec<Interval> = Vec::new();
     let mut prev = NEG_INF_VALUE;
@@ -84,7 +83,7 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
     let initial_numeric_values = task.get_initial_numeric_state_values();
     let num_numeric_vars = task.numeric_variables().len();
 
-    let mut cutpoints_by_var: Vec<BTreeSet<NotNan<f64>>> = vec![BTreeSet::new(); num_numeric_vars];
+    let mut cutpoints_by_var: Vec<BTreeSet<NumericValue>> = vec![BTreeSet::new(); num_numeric_vars];
     for condition in task.numeric_conditions().iter() {
         let constant_values = constant_leaf_values(condition, task, initial_numeric_values);
         if constant_values.is_empty() {
@@ -98,8 +97,6 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
                 cutpoints_by_var.len()
             );
             for &value in &constant_values {
-                let value =
-                    NotNan::new(value).map_err(|_| anyhow::anyhow!("NaN cutpoint encountered"))?;
                 if value.is_finite() {
                     cutpoints_by_var[dep.index()].insert(value);
                 }
@@ -112,10 +109,7 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
         let parts = match var.get_type() {
             NumericType::Constant => vec![Interval::singleton(initial_numeric_values[var_id])],
             NumericType::Regular => {
-                let cuts: Vec<NumericValue> = cutpoints_by_var[var_id]
-                    .iter()
-                    .map(|v| NumericValue::new(v.into_inner()))
-                    .collect();
+                let cuts: Vec<NumericValue> = cutpoints_by_var[var_id].iter().copied().collect();
                 if cuts.is_empty() {
                     vec![Interval::unbounded()]
                 } else {
@@ -945,7 +939,7 @@ fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
@@ -976,7 +970,7 @@ fn abstract_source_set_tightens_source_by_inverse_target_image() {
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
@@ -1003,7 +997,7 @@ fn source_set_active_preimage_allows_boundary_charge() {
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
@@ -1029,7 +1023,7 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
@@ -1047,7 +1041,7 @@ fn abstract_source_set_allocates_unbounded_changed_tail() {
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
@@ -1111,7 +1105,7 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
     .unwrap();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::propositional(0, 1)],
         preconditions: vec![ExplicitFact::propositional(0, 0)],
@@ -1206,7 +1200,7 @@ fn abstract_source_set_allows_one_finite_changed_source() {
     let y_abs_var = x_abs_var + 1;
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![
             ExplicitFact::numeric_variable(x_abs_var, 1),
@@ -1332,7 +1326,7 @@ fn source_set_one_finite_dim_suffices() {
     let y_abs_var = x_abs_var + 1;
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![
             ExplicitFact::numeric_variable(x_abs_var, 1),
@@ -1440,7 +1434,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
     let y_abs_var = x_abs_var + 1;
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![
             ExplicitFact::numeric_variable(x_abs_var, 1),
@@ -1484,7 +1478,7 @@ fn source_set_width_does_not_change_valid_preimage() {
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
@@ -1511,7 +1505,7 @@ fn singleton_preimage_is_preserved_exactly() {
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
-        cost: NumericValue::new(1.0),
+        cost: 1.0,
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],

@@ -572,7 +572,7 @@ pub(crate) fn regression_plan_check(
     if flaws.is_empty() {
         let cost = operator_ids
             .iter()
-            .map(|op_id| semantics.operator_costs()[op_id.index()].value())
+            .map(|op_id| semantics.operator_costs()[op_id.index()])
             .sum();
         return Ok(PlanCheck::ConcretePlan(ConcretePlan::new(
             operator_ids,

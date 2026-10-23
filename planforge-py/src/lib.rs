@@ -1345,8 +1345,7 @@ impl Task {
                     Some(operator_id),
                     Some(task_id),
                     self.task
-                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                        .value(),
+                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
                 )
                 .expect("creating a Python Operator should not fail")
             })
@@ -1389,8 +1388,7 @@ impl Task {
                     Some(operator_id),
                     Some(task_id),
                     self.task
-                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                        .value(),
+                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
                 )
             })
             .collect()
@@ -1467,11 +1465,10 @@ impl Task {
                 Some(operator_id),
                 Some(task_id),
                 self.task
-                    .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                    .value(),
+                    .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
             )?;
             let snap = State::snapshot(&succ, &reg);
-            out.push((py_op, snap, cost.value()));
+            out.push((py_op, snap, cost));
         }
         Ok(out)
     }
@@ -1639,7 +1636,7 @@ impl Task {
                     rust_operator.name()
                 ))
             })?;
-        Ok((State::snapshot(&successor, &registry), cost.value()))
+        Ok((State::snapshot(&successor, &registry), cost))
     }
 }
 

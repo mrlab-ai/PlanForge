@@ -336,9 +336,7 @@ impl PotentialTask {
                         })
                         .collect(),
                     numeric_precondition_bounds: sparse_bounds(numeric_precondition_bounds),
-                    cost: task
-                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                        .value(),
+                    cost: task.abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
                     reachable: true,
                 })
             })

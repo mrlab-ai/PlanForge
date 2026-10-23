@@ -82,11 +82,7 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             .map(|component| component.relevant_operator_ids(task))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let original_costs: Vec<f64> = task
-            .effective_operator_costs()
-            .iter()
-            .map(|cost| cost.value())
-            .collect();
+        let original_costs: Vec<f64> = task.effective_operator_costs().iter().copied().collect();
 
         let constraints = build_constraints(&relevant_operators, &original_costs);
 

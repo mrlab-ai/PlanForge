@@ -153,7 +153,7 @@ impl<'a> MatchTreeGraph<'a> {
             match_tree,
             num_states,
             goal_states,
-            costs: operators.iter().map(|op| op.cost.value()).collect(),
+            costs: operators.iter().map(|op| op.cost).collect(),
             applicable: Vec::new(),
         }
     }

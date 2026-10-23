@@ -39,7 +39,7 @@ pub(crate) struct SplitOptions {
 pub(crate) struct CegarSemantics<'task> {
     states: ExplicitStateSpace<'task>,
     regions: RegionSemantics<'task>,
-    operator_costs: Arc<[NumericValue]>,
+    operator_costs: Arc<[f64]>,
     numeric_integer_lattice: Vec<bool>,
     /// Per numeric variable, the seed of its name that split choice keys
     /// mix in.
@@ -86,10 +86,10 @@ impl<'task> CegarSemantics<'task> {
             .map(|op_id| {
                 let cost = task.abstract_operator_cost(OperatorIndex::from_usize(op_id));
                 ensure!(
-                    cost.value() >= -float_tolerance::SEARCH_EPSILON,
+                    cost >= -float_tolerance::SEARCH_EPSILON,
                     "operator {op_id} has the negative cost {cost}"
                 );
-                Ok(NumericValue::new(cost.value().max(0.0)))
+                Ok(cost.max(0.0))
             })
             .collect::<Result<_>>()?;
         let mut wanted_split_boundaries = task
@@ -143,12 +143,12 @@ impl<'task> CegarSemantics<'task> {
     }
 
     /// The nonnegative cost of every operator.
-    pub(crate) fn operator_costs(&self) -> &[NumericValue] {
+    pub(crate) fn operator_costs(&self) -> &[f64] {
         &self.operator_costs
     }
 
     /// The costs, shared with an abstraction that outlives the task borrow.
-    pub(crate) fn shared_operator_costs(&self) -> Arc<[NumericValue]> {
+    pub(crate) fn shared_operator_costs(&self) -> Arc<[f64]> {
         Arc::clone(&self.operator_costs)
     }
 

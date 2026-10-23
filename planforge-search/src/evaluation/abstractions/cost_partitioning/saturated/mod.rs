@@ -119,11 +119,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 }
             }
         }
-        let original_costs: Vec<f64> = task
-            .effective_operator_costs()
-            .iter()
-            .map(|cost| cost.value())
-            .collect();
+        let original_costs: Vec<f64> = task.effective_operator_costs().iter().copied().collect();
 
         let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(components.len());
         let mut saturated_costs_by_abstraction: Vec<Vec<f64>> =

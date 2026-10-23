@@ -263,10 +263,7 @@ fn metric_cost_reads_parent_values_across_effects() {
         Some(VariableIndex::from_usize(COST)),
     );
 
-    assert_eq!(
-        crate::numeric_task::metric_operator_costs(&task),
-        [NumericValue::new(3.0)]
-    );
+    assert_eq!(crate::numeric_task::metric_operator_costs(&task), [3.0]);
 }
 
 #[test]

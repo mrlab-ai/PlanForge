@@ -1,6 +1,7 @@
 use super::*;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
+use planforge_sas::numeric_task::NumericValue;
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
@@ -539,7 +540,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
     let abs_ops = identity_operators(&task, partitions, false).unwrap();
 
     assert_eq!(abs_ops.len(), 1);
-    assert_eq!(abs_ops[0].cost, NumericValue::new(5.0));
+    assert_eq!(abs_ops[0].cost, 5.0);
 }
 
 #[test]
