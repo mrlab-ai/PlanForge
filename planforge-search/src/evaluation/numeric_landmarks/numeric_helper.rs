@@ -49,14 +49,23 @@ impl LinearNumericCondition {
     }
 
     pub(crate) fn evaluate_slack(&self, numeric_values: &[NumericValue], epsilon: f64) -> f64 {
-        let mut net = self.constant;
+        assert!(
+            numeric_values.len() >= self.coefficients.len(),
+            "numeric state too short for condition slack"
+        );
+        let net = NumericValue::affine(
+            self.coefficients
+                .iter()
+                .copied()
+                .zip(numeric_values.iter().copied()),
+            self.constant,
+        )
+        .value();
         if self.is_strictly_greater {
-            net -= epsilon;
+            net - epsilon
+        } else {
+            net
         }
-        for (coefficient, value) in self.coefficients.iter().zip(numeric_values.iter()) {
-            net += coefficient * value.value();
-        }
-        net
     }
 }
 
@@ -1671,5 +1680,24 @@ fn append_unique_ids(target: &mut Vec<usize>, source: &[usize]) {
         if seen.insert(value) {
             target.push(value);
         }
+    }
+}
+
+#[cfg(test)]
+mod affine_slack_tests {
+    use super::*;
+
+    #[test]
+    fn state_expression_is_rounded_before_the_relaxation_epsilon() {
+        let condition = LinearNumericCondition::from_expression(
+            LinearExpression {
+                coefficients: vec![0.7, 0.7],
+                constant: 0.0,
+            },
+            true,
+            "small affine condition".into(),
+        );
+        let slack = condition.evaluate_slack(&[NumericValue::new(2e-12); 2], 1e-13);
+        assert_eq!(slack, NumericValue::new(3e-12).value() - 1e-13);
     }
 }

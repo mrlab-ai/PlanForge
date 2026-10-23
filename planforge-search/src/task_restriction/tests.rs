@@ -535,3 +535,16 @@ fn a_grid_unit_coefficient_is_not_a_zero_coefficient() {
         NumericValue::new(1e-12)
     );
 }
+
+#[test]
+fn substituted_affine_constants_are_rounded_once() {
+    let expression = AffineExpression {
+        coefficients: vec![NumericValue::new(0.25); 2],
+        constant: ZERO_VALUE,
+    };
+    let small = NumericValue::new(2e-12);
+    for (deltas, assignments) in [([small; 2], [None; 2]), ([ZERO_VALUE; 2], [Some(small); 2])] {
+        let substituted = expression.apply_effects(&deltas, &assignments);
+        assert_eq!(substituted.constant, NumericValue::new(1e-12));
+    }
+}

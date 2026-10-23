@@ -164,18 +164,26 @@ impl AffineExpression {
         additive_deltas: &[NumericValue],
         assigned_constants: &[Option<NumericValue>],
     ) -> Self {
-        let mut out = Self::constant(self.constant, self.coefficients.len());
-        for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
-            if coefficient == ZERO_VALUE {
-                continue;
-            }
-            if let Some(value) = assigned_constants[var_id] {
-                out.constant += coefficient * value;
-            } else {
-                out.coefficients[var_id] += coefficient;
-                out.constant += coefficient * additive_deltas[var_id];
-            }
-        }
+        let mut out = self.clone();
+        out.constant = NumericValue::affine(
+            self.coefficients
+                .iter()
+                .enumerate()
+                .filter_map(|(var_id, &coefficient)| {
+                    if coefficient == ZERO_VALUE {
+                        return None;
+                    }
+                    let value = match assigned_constants[var_id] {
+                        Some(value) => {
+                            out.coefficients[var_id] = ZERO_VALUE;
+                            value
+                        }
+                        None => additive_deltas[var_id],
+                    };
+                    Some((coefficient.value(), value))
+                }),
+            self.constant.value(),
+        );
         out
     }
 }

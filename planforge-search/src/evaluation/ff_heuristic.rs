@@ -88,6 +88,30 @@ impl NumericRange {
         Self { max: v, min: v }
     }
 
+    fn affine(terms: &[(VariableIndex, NumericValue)], values: &[Self]) -> Self {
+        let terms = terms
+            .iter()
+            .filter(|(_, coefficient)| *coefficient != ZERO_VALUE);
+        let endpoint = |upper| {
+            NumericValue::affine(
+                terms.clone().map(|(variable, coefficient)| {
+                    let range = values[variable.index()];
+                    let value = if (*coefficient > ZERO_VALUE) == upper {
+                        range.max
+                    } else {
+                        range.min
+                    };
+                    (coefficient.value(), value)
+                }),
+                0.0,
+            )
+        };
+        Self {
+            min: endpoint(false),
+            max: endpoint(true),
+        }
+    }
+
     /// Returns `true` if `other` widens this range.
     fn join(&mut self, other: NumericRange) -> bool {
         let new_max = if other.max > self.max {
@@ -1028,24 +1052,7 @@ impl FfHeuristic {
             let mut changed = false;
             for ax in &self.assignment_axioms {
                 let new = match &ax.expression {
-                    NumericExpression::Linear(terms) => terms.iter().fold(
-                        NumericRange {
-                            min: ZERO_VALUE,
-                            max: ZERO_VALUE,
-                        },
-                        |sum, (var, coefficient)| {
-                            let range = numeric[var.index()];
-                            let (min, max) = if *coefficient > ZERO_VALUE {
-                                (range.min, range.max)
-                            } else {
-                                (range.max, range.min)
-                            };
-                            NumericRange {
-                                min: sum.min + *coefficient * min,
-                                max: sum.max + *coefficient * max,
-                            }
-                        },
-                    ),
+                    NumericExpression::Linear(terms) => NumericRange::affine(terms, numeric),
                     NumericExpression::Binary {
                         operator,
                         left,
@@ -1653,5 +1660,27 @@ impl crate::heuristic_factory::HeuristicFeature for FfFeature {
         let heuristic = FfHeuristic::new(&**context.task)
             .map_err(|error| format!("failed to construct ff heuristic: {error}"))?;
         Ok(Box::new(heuristic))
+    }
+}
+
+#[cfg(test)]
+mod affine_range_tests {
+    use super::*;
+
+    #[test]
+    fn shared_linear_ranges_round_each_endpoint_once() {
+        let value = NumericRange::singleton(NumericValue::new(2e-12));
+        let terms = [
+            (VariableIndex::new(0), NumericValue::new(0.25)),
+            (VariableIndex::new(1), NumericValue::new(0.25)),
+            (VariableIndex::new(2), ZERO_VALUE),
+        ];
+        let unbounded = NumericRange {
+            min: NEG_INF_VALUE,
+            max: INF_VALUE,
+        };
+        let result = NumericRange::affine(&terms, &[value, value, unbounded]);
+        assert_eq!(result.min, NumericValue::new(1e-12));
+        assert_eq!(result.max, NumericValue::new(1e-12));
     }
 }

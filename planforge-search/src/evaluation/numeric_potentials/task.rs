@@ -281,8 +281,14 @@ impl PotentialTask {
                 let rhs_coefficient = if identical { -1.0 } else { 1.0 };
                 let coefficients = vec![(lhs_id, 1.0), (rhs_id, rhs_coefficient)];
                 global_linear_equalities.push(LinearEquality {
-                    rhs: initial_numeric[lhs].value()
-                        + rhs_coefficient * initial_numeric[rhs].value(),
+                    rhs: NumericValue::affine(
+                        [
+                            (1.0, initial_numeric[lhs]),
+                            (rhs_coefficient, initial_numeric[rhs]),
+                        ],
+                        0.0,
+                    )
+                    .value(),
                     coefficients,
                 });
             }
