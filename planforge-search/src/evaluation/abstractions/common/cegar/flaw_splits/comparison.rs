@@ -69,15 +69,12 @@ pub(super) fn split_comparison(
         boundaries.sort_by(NumericValue::total_cmp);
         boundaries.dedup_by(|left, right| *left == *right);
 
-        let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
+        let lattice = semantics.numeric_lattices()[var_id.index()];
         for &boundary in &boundaries {
             for lower_includes_boundary in [true, false] {
-                let Some((lower, upper)) = numeric_split_intervals(
-                    parent,
-                    boundary,
-                    lower_includes_boundary,
-                    integer_lattice,
-                ) else {
+                let Some((lower, upper)) =
+                    numeric_split_intervals(parent, boundary, lower_includes_boundary, lattice)
+                else {
                     continue;
                 };
                 let (witness_child, other_child) = if lower.contains(witness_value) {
@@ -106,7 +103,7 @@ pub(super) fn split_comparison(
                         boundary,
                         lower_includes_boundary,
                         witness_value,
-                        integer_lattice,
+                        lattice,
                     },
                     decides_witness,
                     separates_truth: decides_witness && other_result == Some(!concrete_truth),

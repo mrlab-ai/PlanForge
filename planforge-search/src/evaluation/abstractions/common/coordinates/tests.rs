@@ -199,3 +199,40 @@ fn a_one_variable_expression_is_refined_along_its_variable() {
     assert!(coordinates.is_coordinate(VariableIndex::new(0)));
     assert!(coordinates.views().iter().all(Option::is_none));
 }
+
+#[test]
+fn decimal_steps_are_inferred_for_regular_and_shared_linear_coordinates() {
+    let task = affine_sum_task_with_step(AssignmentOperation::Plus, 0.1);
+    let coordinates = Coordinates::new(&task);
+    let lattices = coordinates.value_lattices();
+    for variable in [0, task.comparison_axioms()[0].get_left_var_id().index()] {
+        assert_eq!(
+            lattices[variable].split_bounds(NumericValue::new(140.0), true),
+            Some((NumericValue::new(140.0), NumericValue::new(140.1)))
+        );
+    }
+}
+
+#[test]
+fn assigned_constants_contribute_differences_from_the_initial_value() {
+    let task = affine_sum_task_with_step(AssignmentOperation::Assign, 0.3);
+    let coordinates = Coordinates::new(&task);
+    assert_eq!(
+        coordinates.value_lattices()[0].split_bounds(NumericValue::new(0.1), true),
+        Some((ZERO_VALUE, NumericValue::new(0.3)))
+    );
+}
+
+#[test]
+fn multiplicative_and_large_effects_use_the_full_grid() {
+    for (operation, step) in [
+        (AssignmentOperation::Times, 2.0),
+        (AssignmentOperation::Plus, 1e10),
+    ] {
+        let task = affine_sum_task_with_step(operation, step);
+        assert_eq!(
+            Coordinates::new(&task).value_lattices()[0],
+            ValueLattice::GRID
+        );
+    }
+}

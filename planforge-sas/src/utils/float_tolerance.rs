@@ -26,17 +26,7 @@ pub(crate) fn canonicalize(value: f64) -> f64 {
     if value.abs() >= GRID_BOUND {
         value
     } else {
-        let scaled = value * GRID_SCALE;
-        let mut units = scaled.round();
-        // Multiplication can round a value just below a half-grid point onto
-        // that point. Resolve those ties using the exact product residual;
-        // otherwise canonicalizing the resulting f64 a second time can move it.
-        if (scaled - units).abs() == 0.5
-            && value.mul_add(GRID_SCALE, -scaled) * (units - scaled) < 0.0
-        {
-            units -= scaled.signum();
-        }
-        units / GRID_SCALE
+        rounded_grid_units(value) / GRID_SCALE
     }
 }
 
@@ -44,4 +34,19 @@ pub(crate) fn canonicalize(value: f64) -> f64 {
 pub fn equal(lhs: NumericValue, rhs: NumericValue) -> bool {
     (lhs.value() - rhs.value()).abs()
         <= ABS_EPSILON.max(REL_EPSILON * lhs.value().abs().max(rhs.value().abs()))
+}
+
+/// Nearest exact integer grid unit, resolving multiplication ties.
+#[inline]
+pub(crate) fn rounded_grid_units(value: f64) -> f64 {
+    let scaled = value * GRID_SCALE;
+    let mut units = scaled.round();
+    // Multiplication can round a value just below a half-grid point onto
+    // that point. Resolve those ties using the exact product residual;
+    // otherwise canonicalizing the resulting f64 a second time can move it.
+    if (scaled - units).abs() == 0.5 && value.mul_add(GRID_SCALE, -scaled) * (units - scaled) < 0.0
+    {
+        units -= scaled.signum();
+    }
+    units
 }

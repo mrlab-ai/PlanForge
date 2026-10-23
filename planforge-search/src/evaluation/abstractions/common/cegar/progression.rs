@@ -20,8 +20,15 @@ use super::selection::{
     DEVIATION_TAG, GOAL_TAG, PRECONDITION_TAG, WHOLE_PLAN_TAG, push_unique_split, select_split,
 };
 use super::semantics::CegarSemantics;
-use super::split::{Split, approximately_equal};
+use super::split::Split;
 use super::view::AbstractionView;
+
+/// Relative agreement of two independently computed path costs.
+fn costs_agree(left: f64, right: f64) -> bool {
+    (left - right).abs()
+        <= planforge_sas::utils::float_tolerance::AGREEMENT_EPSILON
+            * left.abs().max(right.abs()).max(1.0)
+}
 
 #[derive(Debug)]
 pub(crate) struct ConcretePlan {
@@ -69,7 +76,7 @@ pub(crate) fn replay_plan(
         let abstract_state = view.abstract_state(&state.propositional, &state.numeric)?;
         let abstract_distance = view.goal_distance(abstract_state);
         ensure!(
-            approximately_equal(concrete_cost + abstract_distance, abstract_plan_cost),
+            costs_agree(concrete_cost + abstract_distance, abstract_plan_cost),
             "concrete trace left optimal abstract path: g={concrete_cost} h={abstract_distance} initial_h={abstract_plan_cost}"
         );
 
@@ -175,7 +182,7 @@ pub(crate) fn replay_plan(
 
         let op_cost = semantics.operator_costs()[op_id.index()];
         ensure!(
-            approximately_equal(
+            costs_agree(
                 op_cost + view.goal_distance(transition.target),
                 abstract_distance
             ),
@@ -274,7 +281,7 @@ fn replay_whole_plan(
 
         let transition = view.optimal_transition(abstract_state)?;
         ensure!(
-            approximately_equal(
+            costs_agree(
                 semantics.operator_costs()[transition.concrete_op_id.index()]
                     + view.goal_distance(transition.target),
                 abstract_distance
@@ -384,7 +391,7 @@ pub(crate) fn validate_concrete_plan(
         "replayed concrete plan does not satisfy the full goal"
     );
     ensure!(
-        approximately_equal(cost, plan.cost),
+        costs_agree(cost, plan.cost),
         "replayed concrete plan cost {cost} differs from recorded cost {}",
         plan.cost
     );

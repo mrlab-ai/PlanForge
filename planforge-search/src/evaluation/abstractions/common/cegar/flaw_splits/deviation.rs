@@ -172,10 +172,8 @@ pub(crate) fn split_deviation_candidates(
             reject(NumericRejection::InfiniteBoundary { parent });
             continue;
         }
-        let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
-        if numeric_split_intervals(parent, boundary, lower_includes_boundary, integer_lattice)
-            .is_none()
-        {
+        let lattice = semantics.numeric_lattices()[var_id.index()];
+        if numeric_split_intervals(parent, boundary, lower_includes_boundary, lattice).is_none() {
             reject(NumericRejection::NotStrict {
                 parent,
                 boundary,
@@ -189,7 +187,7 @@ pub(crate) fn split_deviation_candidates(
             boundary,
             lower_includes_boundary,
             witness_value: source,
-            integer_lattice,
+            lattice,
         });
     }
     ensure!(

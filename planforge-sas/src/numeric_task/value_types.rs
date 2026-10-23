@@ -312,6 +312,12 @@ impl NumericValue {
         )
     }
 
+    /// Exact integer grid units while every unit is representable in f64.
+    pub fn grid_units(self) -> Option<i64> {
+        (self.0.abs() < float_tolerance::GRID_BOUND)
+            .then(|| float_tolerance::rounded_grid_units(self.0) as i64)
+    }
+
     /// Decode the representation emitted by the state packer.
     #[inline]
     pub(crate) fn from_canonical_bits(bits: u64) -> Self {

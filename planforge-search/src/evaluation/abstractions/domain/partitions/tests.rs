@@ -1,5 +1,6 @@
 use super::*;
 use planforge_sas::utils::float_tolerance;
+use planforge_sas::utils::value_lattice::ValueLattice;
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
@@ -141,19 +142,19 @@ fn partition_images_use_the_numeric_state_lattice() {
         VariableIndex::from_usize(0),
         NumericValue::new(-5.9999999999999964),
         true,
-        false
+        ValueLattice::GRID
     ));
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
         NumericValue::new(-5.799999999999997),
         true,
-        false
+        ValueLattice::GRID
     ));
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
         NumericValue::new(-5.6999999999999975),
         true,
-        false
+        ValueLattice::GRID
     ));
 
     assert_eq!(
@@ -161,18 +162,18 @@ fn partition_images_use_the_numeric_state_lattice() {
         &[
             Interval::new(NEG_INF_VALUE, NumericValue::new(-6.0), false, true),
             Interval::new(
-                NumericValue::new(-6.0),
+                NumericValue::new(-6.0 + 1e-12),
                 NumericValue::new(-5.8),
-                false,
+                true,
                 true
             ),
             Interval::new(
-                NumericValue::new(-5.8),
+                NumericValue::new(-5.8 + 1e-12),
                 NumericValue::new(-5.7),
-                false,
+                true,
                 true
             ),
-            Interval::new(NumericValue::new(-5.7), INF_VALUE, false, false),
+            Interval::new(NumericValue::new(-5.7 + 1e-12), INF_VALUE, true, false),
         ]
     );
 

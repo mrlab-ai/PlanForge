@@ -7,6 +7,7 @@
 //! `init_value` initial splits of the numeric Fast Downward collections this
 //! ports.
 
+use planforge_sas::utils::value_lattice::ValueLattice;
 use std::collections::HashSet;
 
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};
@@ -48,7 +49,7 @@ pub(crate) enum InitialSplit {
         var_id: VariableIndex,
         boundary: NumericValue,
         lower_includes_boundary: bool,
-        integer_lattice: bool,
+        lattice: ValueLattice,
     },
 }
 
@@ -75,12 +76,12 @@ impl InitialSplit {
                 var_id,
                 boundary,
                 lower_includes_boundary,
-                integer_lattice,
+                lattice,
             } => numeric_split_intervals(
                 region.numeric[var_id.index()],
                 boundary,
                 lower_includes_boundary,
-                integer_lattice,
+                lattice,
             )
             .map(|_| Split::Numeric {
                 state_id,
@@ -88,7 +89,7 @@ impl InitialSplit {
                 boundary,
                 lower_includes_boundary,
                 witness_value: boundary,
-                integer_lattice,
+                lattice,
             }),
         }
     }
@@ -146,7 +147,7 @@ pub(crate) fn initial_splits(
             var_id: numeric_var,
             boundary: initial_values[numeric_var.index()],
             lower_includes_boundary: rng.gen_range(0..2) == 0,
-            integer_lattice: semantics.numeric_integer_lattice()[numeric_var.index()],
+            lattice: semantics.numeric_lattices()[numeric_var.index()],
         });
     }
     splits

@@ -247,7 +247,7 @@ impl DomainAbstractionFunction {
                 var_id,
                 boundary,
                 lower_includes_boundary,
-                integer_lattice,
+                lattice,
                 ..
             } => {
                 ensure!(
@@ -255,7 +255,7 @@ impl DomainAbstractionFunction {
                         *var_id,
                         *boundary,
                         *lower_includes_boundary,
-                        *integer_lattice,
+                        *lattice,
                     ),
                     "non-strict numeric split of variable {var_id} at {boundary}"
                 );

@@ -623,12 +623,12 @@ fn flaw_split(
             lower_includes_boundary,
             wanted_is_lower,
         } => {
-            let integer_lattice = semantics.numeric_integer_lattice()[var.index()];
+            let lattice = semantics.numeric_lattices()[var.index()];
             let (lower, upper) = numeric_split_intervals(
                 view.region(state_id).numeric[var.index()],
                 boundary,
                 lower_includes_boundary,
-                integer_lattice,
+                lattice,
             )
             .with_context(|| {
                 format!("regression flaw boundary {boundary} does not split numeric var {var}")
@@ -639,7 +639,7 @@ fn flaw_split(
                 boundary,
                 lower_includes_boundary,
                 witness_value: interior_value(if wanted_is_lower { upper } else { lower }),
-                integer_lattice,
+                lattice,
             }
         }
         FlawSplit::Propositional { var, wanted } => {

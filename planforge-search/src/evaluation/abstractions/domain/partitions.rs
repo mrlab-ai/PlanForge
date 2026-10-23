@@ -2,6 +2,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, VariableIndex};
+use planforge_sas::utils::value_lattice::ValueLattice;
 
 use crate::evaluation::abstractions::common::cegar::split::numeric_split_intervals;
 
@@ -95,7 +96,7 @@ impl NumericPartitions {
         numeric_var_id: VariableIndex,
         value: NumericValue,
         include_in_lower: bool,
-        integer_lattice: bool,
+        lattice: ValueLattice,
     ) -> bool {
         let parts = &mut self.partitions_by_numeric_var[numeric_var_id.index()];
         let Some(part_id) = partition_for_value(parts, value) else {
@@ -105,8 +106,7 @@ impl NumericPartitions {
         if !iv.can_split_at(value, include_in_lower) {
             return false;
         }
-        let Some((lower, upper)) =
-            numeric_split_intervals(iv, value, include_in_lower, integer_lattice)
+        let Some((lower, upper)) = numeric_split_intervals(iv, value, include_in_lower, lattice)
         else {
             return false;
         };
