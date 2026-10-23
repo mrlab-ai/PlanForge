@@ -98,12 +98,22 @@ pub(crate) fn register_event_handlers() {
     static INIT: Once = Once::new();
 
     // TODO: use signal-hook crate instead.
-    INIT.call_once(|| unsafe {
-        libc::signal(libc::SIGABRT, signal_handler as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
-        libc::signal(libc::SIGSEGV, signal_handler as libc::sighandler_t);
-        libc::signal(libc::SIGINT, signal_handler as libc::sighandler_t);
-        libc::signal(libc::SIGXCPU, signal_handler as libc::sighandler_t);
+    INIT.call_once(|| {
+        let handler = signal_handler as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        for signal in [
+            libc::SIGABRT,
+            libc::SIGTERM,
+            libc::SIGSEGV,
+            libc::SIGINT,
+            libc::SIGXCPU,
+        ] {
+            let previous = unsafe { libc::signal(signal, handler) };
+            assert_ne!(
+                previous,
+                libc::SIG_ERR,
+                "cannot install the handler for signal {signal}"
+            );
+        }
     });
 }
 
