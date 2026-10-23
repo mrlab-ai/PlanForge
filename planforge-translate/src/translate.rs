@@ -128,6 +128,10 @@ struct Translation {
     /// One entry per mutex group, in SAS facts.
     mutex_key: Vec<Vec<SasFact>>,
     implied_facts: HashMap<SasFact, Vec<SasFact>>,
+    /// The value of each numeric variable that a constant numeric axiom
+    /// defines, so that a comparison of two constants is decided here, as
+    /// instantiation decides a static atom, instead of becoming a variable.
+    constants: Vec<Option<NumericValue>>,
     /// The initial value of every numeric variable, for static costs.
     num_vals: Vec<NumericValue>,
     relevant_numeric: Vec<usize>,
@@ -251,6 +255,7 @@ fn translate_strips_conditions_aux(
         (&mut translation.dictionary, &mut translation.ranges)
     };
     let numeric_dictionary = &translation.numeric;
+    let constants = &translation.constants;
     let comp_axiom_dict = &mut translation.comparison_axioms;
     let sas_comp_axioms = &mut translation.sas_comparison_axioms;
     let mut condition = Domains::default();
@@ -291,6 +296,15 @@ fn translate_strips_conditions_aux(
                         }
                     })
                     .collect();
+
+                if let [left, right] = parts[..]
+                    && let (Some(left), Some(right)) = (constants[left], constants[right])
+                {
+                    if comparison_holds(comparator, left, right) == negated {
+                        return None;
+                    }
+                    continue;
+                }
 
                 let key = (comparator.to_owned(), parts.clone());
 
@@ -1149,6 +1163,21 @@ fn translate_task(
         ));
     }
 
+    // The goal, operators and axioms may compare constants, which are decided
+    // while their conditions are translated.
+    translation.constants = vec![None; translation.numeric_names.len()];
+    for axiom in &numeric_axioms.constant {
+        if let Some(&var) = translation.numeric.get(&axiom.effect) {
+            let Some(FunctionalExpression::NumericConstant(nc)) = axiom.parts.first() else {
+                unreachable!(
+                    "constant numeric axiom {} must hold a folded numeric constant",
+                    axiom.name
+                );
+            };
+            translation.constants[var] = Some(nc.value);
+        }
+    }
+
     // Translate goal
     let goal_dict_list = translate_strips_conditions(translation, task.goal_list);
 
@@ -1157,7 +1186,10 @@ fn translate_task(
     let global_constraint_dict_list = translate_strips_conditions(translation, &gc_as_list);
 
     if goal_dict_list.is_none() {
-        return Ok(trivial_task(false, "Goal violates a mutex"));
+        return Ok(trivial_task(
+            false,
+            "Goal violates a mutex or a comparison of constants",
+        ));
     }
 
     let goal_dict_list = goal_dict_list.unwrap();
@@ -1209,15 +1241,9 @@ fn translate_task(
     // compound cost expression into a derived function backed by such an
     // axiom. Constant axiom effects are derived fluents and therefore never
     // collide with the `:init` facts above.
-    for axiom in &numeric_axioms.constant {
-        if let Some(&var) = translation.numeric.get(&axiom.effect) {
-            let Some(FunctionalExpression::NumericConstant(nc)) = axiom.parts.first() else {
-                unreachable!(
-                    "constant numeric axiom {} must hold a folded numeric constant",
-                    axiom.name
-                );
-            };
-            num_init_values[var] = nc.value;
+    for (value, constant) in num_init_values.iter_mut().zip(&translation.constants) {
+        if let Some(constant) = constant {
+            *value = *constant;
         }
     }
 
@@ -1601,6 +1627,7 @@ pub fn translate_task_from_grounded_internal(
         comparison_axioms: HashMap::new(),
         sas_comparison_axioms: Vec::new(),
         implied_facts,
+        constants: Vec::new(),
         num_vals: Vec::new(),
         relevant_numeric: Vec::new(),
         simplified_effect_conditions: 0,
@@ -1747,6 +1774,7 @@ mod tests {
             translation_key: vec![],
             mutex_key: vec![],
             implied_facts: HashMap::new(),
+            constants: vec![None; numeric_count],
             num_vals: vec![ZERO_VALUE; numeric_count],
             relevant_numeric: (0..numeric_count).collect(),
             simplified_effect_conditions: 0,

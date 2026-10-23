@@ -19,6 +19,19 @@ pub fn inverted_comparator(comp: &str) -> &'static str {
     }
 }
 
+/// Whether `left comp right` holds.
+pub fn comparison_holds(comp: &str, left: NumericValue, right: NumericValue) -> bool {
+    match comp {
+        "<" => left < right,
+        "<=" => left <= right,
+        "=" => left == right,
+        ">=" => left >= right,
+        ">" => left > right,
+        "!=" => left != right,
+        other => panic!("unknown comparator: {other:?}"),
+    }
+}
+
 /// Planning task in finite-domain representation.
 #[derive(Debug, Clone)]
 pub struct SASTask {
