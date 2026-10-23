@@ -1,5 +1,3 @@
-use crate::numeric_task::NumericValue;
-
 pub const ABS_EPSILON: f64 = 1e-12;
 /// Exact decimal scale of the canonical grid.
 pub const GRID_SCALE: f64 = 1e12;
@@ -28,12 +26,6 @@ pub(crate) fn canonicalize(value: f64) -> f64 {
     } else {
         rounded_grid_units(value) / GRID_SCALE
     }
-}
-
-#[inline]
-pub fn equal(lhs: NumericValue, rhs: NumericValue) -> bool {
-    (lhs.value() - rhs.value()).abs()
-        <= ABS_EPSILON.max(REL_EPSILON * lhs.value().abs().max(rhs.value().abs()))
 }
 
 /// Nearest exact integer grid unit, resolving multiplication ties.

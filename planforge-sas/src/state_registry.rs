@@ -28,7 +28,6 @@ use crate::numeric_task::{
 use crate::utils::errors::{
     AssignmentAxiomError, AxiomEvalError, InvalidIndex, StateInsertError, StateNotFoundError,
 };
-use crate::utils::float_tolerance;
 use crate::utils::segmented_vector::SegmentedArrayVector;
 use crate::{numeric_task::NumericType, utils::state_packer::StatePacker};
 use hashbrown::HashTable;
@@ -1156,7 +1155,7 @@ impl<'a> StateRegistry<'a> {
                             ),
                         }
                     })?;
-                    if !float_tolerance::equal(registered, value) {
+                    if registered != value {
                         return Err(StateInsertError {
                             message: format!(
                                 "Constant numeric variable {i} is {registered} in this registry, but the state to register has {value}"

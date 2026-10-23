@@ -433,3 +433,14 @@ fn distinct_states_with_the_same_hash_remain_distinguishable() {
     );
     assert_eq!(registry.registered_states.len(), 2);
 }
+
+#[test]
+fn registration_rejects_a_distinct_canonical_constant() {
+    let mut registry = StateRegistry::for_task(task_with_every_numeric_type());
+    let initial = registry.get_initial_state();
+    let mut numeric = Vec::new();
+    registry.view(&initial).fill_numeric(&mut numeric).unwrap();
+    numeric[1] += NumericValue::new(1e-12);
+    let error = registry.register_state(vec![1], numeric).unwrap_err();
+    assert!(error.message.contains("Constant numeric variable 1"));
+}
