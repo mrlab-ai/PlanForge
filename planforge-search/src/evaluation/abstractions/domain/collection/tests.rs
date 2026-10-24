@@ -131,6 +131,28 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
     assert!(abstractions[0].metadata().solved_by_self());
 }
 
+#[test]
+fn standard_collection_stops_when_the_states_left_admit_no_split() {
+    // Without the stop, every restart limited to the one state left rebuilds
+    // the trivial abstraction until the collection time limit.
+    let config = DomainAbstractionCollectionConfig {
+        max_collection_size: 3,
+        total_max_time: Some(Duration::from_secs(600)).into(),
+        stagnation_limit: Some(Duration::from_secs(600)).into(),
+        member: member_config(2, Some(Duration::from_secs(600))),
+        ..Default::default()
+    };
+    let start = Instant::now();
+    let abstractions = DomainAbstractionCollectionGenerator::new(config)
+        .unwrap()
+        .generate(&two_counter_task())
+        .unwrap();
+
+    assert!(start.elapsed() < Duration::from_secs(60));
+    let states: Vec<usize> = abstractions.iter().map(|a| a.num_states()).collect();
+    assert_eq!(states, [2]);
+}
+
 /// The default member with `max_states` and `max_time`, without operator
 /// regions.
 fn member_config(max_states: usize, max_time: Option<Duration>) -> DomainAbstractionConfig {

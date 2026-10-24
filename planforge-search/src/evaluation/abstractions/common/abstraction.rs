@@ -245,7 +245,7 @@ pub(crate) fn finish_abstraction(
         abstraction.kind(),
         metadata.stop_reason
     );
-    tracing::info!(
+    tracing::debug!(
         "{}: states={}, abstract_operators={}, refinements={}, h(init)={initial_h}, stop={:?}, elapsed={:.3}s",
         abstraction.kind(),
         abstraction.num_states(),

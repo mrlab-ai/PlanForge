@@ -3,14 +3,15 @@
 //!
 //! Every restart refines the full task from the trivial abstraction split on
 //! one initial variable, which the candidates take turns being, with a fresh
-//! seed. A restart that repeats an earlier member is dropped. Once the time
-//! budget is mostly spent, or once no new member appeared for the stagnation
-//! limit, restarts also blacklist a random subset of the candidates, which
-//! CEGAR then may not refine. The collection stops at its state or time
-//! budget, at stagnation while blacklisting, at the memory limit, or at a
-//! member that settles the task: its abstract plan is a concrete plan, or its
-//! initial state is an abstract dead end, and no further member can help the
-//! search.
+//! seed. A restart that repeats an earlier member, or has a single state and
+//! is not the first, is dropped. Once the time budget is mostly spent, or once
+//! no new member appeared for the stagnation limit, restarts also blacklist a
+//! random subset of the candidates, which CEGAR then may not refine. The
+//! collection stops at its state or time budget, at a restart that cannot
+//! split once within the states left, at stagnation while blacklisting, at the
+//! memory limit, or at a member that settles the task: its abstract plan is a
+//! concrete plan, or its initial state is an abstract dead end, and no further
+//! member can help the search.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -25,6 +26,8 @@ use super::budget::{CollectionBudget, CollectionLimits, CollectionStopReason};
 use super::config::{MemberConfig, SplitKinds};
 use super::generator::AbstractionGenerator;
 use super::member::{CollectionMember, MemberConstruction};
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::initial_splits::{
     InitialSplitVar, RefinementScope,
 };
@@ -131,11 +134,20 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
             }
         };
 
+        let num_states = built.report().num_states;
         let settles = built.settles();
+        // The states the collection has left do not admit a single split.
+        let full = num_states == 1
+            && built.metadata().stop_reason == CegarStopReason::SizeLimit
+            && max_states == budget.remaining_states();
         let iteration_end = Instant::now();
-        if keys.insert(G::key(&built)) {
+        // A one-state member estimates 0 everywhere: it adds nothing unless
+        // it settles the task or is the mandatory first member.
+        if (num_states > 1 || settles.is_some() || members.is_empty())
+            && keys.insert(G::key(&built))
+        {
             last_new_member = iteration_end;
-            budget.charge(built.report().num_states);
+            budget.charge(num_states);
             built.record(iteration, None);
             members.push(built);
             debug!(
@@ -151,7 +163,7 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
         let stagnated = schedule
             .stagnation_limit
             .is_some_and(|limit| iteration_end - last_new_member > limit);
-        if budget.remaining_states() == 0 {
+        if full || budget.remaining_states() == 0 {
             break CollectionStopReason::SizeLimit;
         }
         if budget.deadline_passed() {
