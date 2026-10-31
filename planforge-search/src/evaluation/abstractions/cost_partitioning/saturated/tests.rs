@@ -13,7 +13,6 @@ use super::lookup::{
 use super::orders::max_heuristic_greedy_order;
 use super::partition::is_zero_at_evaluated_state;
 use super::scoring::{pairwise_region_stolen_cost, region_stolen_costs};
-use crate::evaluation::abstractions::random_walk::random_walk_length;
 use std::collections::{HashMap, HashSet};
 
 use super::*;
@@ -255,5 +254,4 @@ mod diverse_orders;
 mod goal_cover_orders;
 mod heuristic;
 mod sailing;
-mod sampling;
 mod scoring;

@@ -33,7 +33,13 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 .map_err(EvaluationError::ComputationFailed)?,
         )?);
         let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
-        let samples = self.sample_states(collection.components, state, initial_h, deadline)?;
+        let samples = self.sample_states(
+            collection.components,
+            state,
+            &initial_candidates[0],
+            initial_h,
+            deadline,
+        )?;
         assert!(
             !samples.is_empty(),
             "offline diversification must retain at least the initial state sample"
