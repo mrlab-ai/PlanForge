@@ -12,8 +12,9 @@
 - [`rust-goal-count/`](rust-goal-count/) implements a native `Heuristic`, then
   loads a task and drives A* itself; use it when you want direct control over
   search construction.
-- [`rust-custom-search/`](rust-custom-search/) registers a new search algorithm
-  and drives the generic expansion loop with its own priority policy.
+- [`rust-custom-search/`](rust-custom-search/) instantiates best-first search
+  with another node ordering (uniform-cost search); implement
+  `NodeOrdering` for a priority of your own.
 - [`rust-plugin-binary/`](rust-plugin-binary/) registers a native heuristic and
   runs the real PlanForge binary; use this path to keep the standard CLI,
   portfolio, limits, re-exec behavior, and plan output while adding your own
