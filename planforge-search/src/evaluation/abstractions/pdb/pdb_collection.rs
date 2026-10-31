@@ -3,8 +3,8 @@ mod tests;
 
 use super::pattern_collection::PatternCollection;
 use super::pattern_database::{PatternDatabase, PdbBuildConfig};
-use super::projected_task::ProjectedTask;
 use super::utils;
+use crate::task_transformations::projection::ProjectedTask;
 use crate::task_transformations::restriction::validate_restricted_task;
 use planforge_sas::numeric_task::AbstractNumericTask;
 

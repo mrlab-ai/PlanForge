@@ -17,8 +17,8 @@ use super::regression::ensure_regressable;
 use super::split::{Split, SplitDimension};
 use super::{FlawKind, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
+use crate::evaluation::abstractions::common::operator_support::validate_abstraction_operator;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
-use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
 use crate::evaluation::seed::{RANDOM_SPLIT_SEED, mix_seed, stable_text_seed};
 use crate::evaluation::validate_abstractable_goal;
 

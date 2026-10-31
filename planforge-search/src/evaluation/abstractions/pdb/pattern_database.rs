@@ -18,10 +18,10 @@ use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumeric
 use crate::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use crate::successor_generator::RegistryExpander;
 
-use super::projected_task::ProjectedTask;
 use crate::evaluation::abstractions::common::transition_system::{
     BackwardGraph, backward_goal_distances, no_limit,
 };
+use crate::task_transformations::projection::ProjectedTask;
 
 /// The heuristic a pattern database estimates abstract goal distances with
 /// where its exploration gives none.

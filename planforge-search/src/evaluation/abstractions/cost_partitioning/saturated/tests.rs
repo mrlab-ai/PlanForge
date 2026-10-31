@@ -42,7 +42,7 @@ use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerat
 
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 
-use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTask};
+use crate::task_transformations::projection::{Pattern, ProjectedTask};
 
 pub(super) fn binary_variable(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(

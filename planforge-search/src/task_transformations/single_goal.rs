@@ -6,8 +6,8 @@ use std::sync::Arc;
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric,
-    NumericValue, NumericVariable, Operator, OperatorIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericValue,
+    NumericVariable, Operator, OperatorIndex,
 };
 
 /// A task view that changes only the goal condition.

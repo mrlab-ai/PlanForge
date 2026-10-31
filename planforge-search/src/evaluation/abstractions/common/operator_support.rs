@@ -3,13 +3,9 @@
 use anyhow::{Context, Result, ensure};
 
 use crate::ensure_supported;
-use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
-use std::sync::Arc;
 
-use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorIndex, ZERO_VALUE,
+    AbstractNumericTask, AssignmentOperation, NumericType, Operator, OperatorIndex, ZERO_VALUE,
 };
 
 /// Validates the concrete-operator fragment shared by domain and Cartesian
@@ -103,4 +99,3 @@ pub(crate) fn validate_abstraction_operator(
     }
     Ok(())
 }
-

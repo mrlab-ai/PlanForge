@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use super::projected_task::Pattern;
+use crate::task_transformations::projection::Pattern;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PatternCollection {

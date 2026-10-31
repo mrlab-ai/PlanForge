@@ -92,7 +92,7 @@ use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };
 use crate::evaluation::abstractions::common::coordinates::AdditiveNumericView;
-use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
+use crate::evaluation::abstractions::common::operator_support::validate_abstraction_operator;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem,
     CostedTransitionSystem, LabelSourceSet, backward_goal_distances, no_limit,

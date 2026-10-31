@@ -8,7 +8,7 @@ use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType
 
 use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use super::pattern_collection::PatternCollection;
-use super::projected_task::Pattern;
+use crate::task_transformations::projection::Pattern;
 
 pub const DEFAULT_SYSTEMATIC_MAX_PDB_STATES: usize = 50_000;
 pub const DEFAULT_MAX_PATTERN_SIZE: usize = 2;

@@ -44,7 +44,7 @@ use super::budget::{CollectionBudget, CollectionStopReason};
 use super::member::{CollectionMember, MemberConstruction};
 use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CollectionMembership;
-use crate::evaluation::abstractions::common::task::SingleGoalTask;
+use crate::task_transformations::single_goal::SingleGoalTask;
 
 /// A goal-focused collection stops once fewer states than this are left: a
 /// member with fewer is the trivial abstraction, which tells search nothing.

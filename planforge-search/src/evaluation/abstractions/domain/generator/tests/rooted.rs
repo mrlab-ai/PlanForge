@@ -3,12 +3,12 @@ use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
-use planforge_sas::numeric_task::VariableIndex;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, NumericRootTask, NumericRootTaskParts, OperatorCost,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
+    Operator, OperatorCost, OperatorIndex, VariableIndex,
 };
 
-use super::*;
 use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;

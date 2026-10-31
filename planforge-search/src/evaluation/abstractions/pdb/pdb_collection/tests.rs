@@ -5,7 +5,7 @@ use planforge_sas::numeric_task::{
 };
 
 use super::*;
-use crate::evaluation::abstractions::pdb::projected_task::Pattern;
+use crate::task_transformations::projection::Pattern;
 
 fn simple_var(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(

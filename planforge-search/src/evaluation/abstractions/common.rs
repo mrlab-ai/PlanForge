@@ -8,6 +8,6 @@ pub mod abstraction;
 pub mod cartesian_set;
 pub mod cegar;
 pub(crate) mod coordinates;
+pub(crate) mod operator_support;
 pub(crate) mod regions;
-pub(crate) mod task;
 pub mod transition_system;
