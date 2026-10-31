@@ -1,12 +1,8 @@
 //! Numeric potential heuristics, behind the `cplex` feature.
 //!
-//! Linking needs a proprietary CPLEX installation, which neither this checkout
-//! nor CI has, but `DOCS_RS=1 cargo clippy -p planforge-search --features cplex`
-//! type-checks and lints this module without one. The three
-//! `too_many_arguments` allows below still fire: the portfolio builders take the
-//! same eight -- task, optimizer, registry, initial state, initial `h`, config,
-//! sampler -- and want the same parameter struct the rest of the crate now uses;
-//! that is a change for someone who can run the tests against CPLEX.
+//! Linking needs a proprietary CPLEX installation; without one,
+//! `DOCS_RS=1 cargo clippy -p planforge-search --features cplex` type-checks
+//! and lints this module.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -21,7 +17,7 @@ use tracing::{debug, info, warn};
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 
 use super::rays::{Ray, RayGenerator};
-use super::sampling::RandomWalkSampler;
+use super::sampling::{RandomWalkSampler, SampleSpace};
 use super::{
     DiverseFallback, NumericPotentialConfig, NumericPotentialFunction, NumericPotentialOptimizer,
     OptimizationOutcome, OptimizeFor, PotentialTask,
@@ -84,7 +80,6 @@ impl NumericPotentialHeuristic {
         let ordinary_rows = optimizer.num_rows();
         let mut registry = StateRegistry::for_task(task_ref.clone());
         let initial_state = registry.get_initial_state();
-        let mut sampler = RandomWalkSampler::new(&*task_ref, 2011);
         let mut ray_generator = (config.rays > 0)
             .then(|| RayGenerator::new(&optimizer, config.ray_epsilon))
             .transpose()?;
@@ -200,6 +195,15 @@ impl NumericPotentialHeuristic {
             );
         }
 
+        let mut space = SampleSpace {
+            sampler: RandomWalkSampler::new(
+                task_ref.clone(),
+                initial_value,
+                average_operator_cost(&potential_task),
+            ),
+            registry,
+            initial_state,
+        };
         let functions = if dead_end_certified {
             potential_task
                 .goal_unsatisfiable
@@ -207,29 +211,12 @@ impl NumericPotentialHeuristic {
                 .into_iter()
                 .collect()
         } else {
-            build_static_portfolio(
-                &mut optimizer,
-                task_ref.clone(),
-                &mut registry,
-                &initial_state,
-                initial_function,
-                initial_value,
-                &config,
-                &mut sampler,
-            )?
+            build_static_portfolio(&mut optimizer, &mut space, &config, initial_function)?
         };
         let conditioned_groups = if dead_end_certified || !config.goal_conditioned {
             Vec::new()
         } else {
-            build_conditioned_groups(
-                &mut optimizer,
-                &task_ref,
-                &mut registry,
-                &initial_state,
-                initial_value,
-                &config,
-                &mut sampler,
-            )?
+            build_conditioned_groups(&mut optimizer, &mut space, &config)?
         };
         if !dead_end_certified
             && config.rays > rays.len()
@@ -242,13 +229,7 @@ impl NumericPotentialHeuristic {
                 && ray_start.elapsed().as_secs_f64() < config.max_ray_generation_time.seconds()
             {
                 let chunk = (config.num_samples - ray_samples.len()).min(16);
-                ray_samples.extend(sampler.sample(
-                    &task_ref,
-                    &mut registry,
-                    chunk,
-                    initial_value,
-                    average_operator_cost(&potential_task),
-                )?);
+                ray_samples.extend(space.sample(chunk)?);
             }
             let generator = ray_generator
                 .as_mut()
@@ -263,7 +244,7 @@ impl NumericPotentialHeuristic {
                     .iter()
                     .map(|ray| {
                         ray.value(
-                            registry.view(&state),
+                            space.registry.view(&state),
                             &potential_task,
                             &mut Vec::new(),
                             &mut Vec::new(),
@@ -276,7 +257,7 @@ impl NumericPotentialHeuristic {
                     continue;
                 }
                 if let Some(candidate) =
-                    generator.try_certify(&mut optimizer, registry.view(&state))?
+                    generator.try_certify(&mut optimizer, space.registry.view(&state))?
                     && !generator.is_duplicate(&candidate, &rays, &potential_task)
                 {
                     rays.push(candidate);
@@ -289,16 +270,7 @@ impl NumericPotentialHeuristic {
         {
             Vec::new()
         } else {
-            build_goal_cost_partitions(
-                &potential_task,
-                &conditioned_groups,
-                &task_ref,
-                &mut registry,
-                &initial_state,
-                initial_value,
-                &config,
-                &mut sampler,
-            )?
+            build_goal_cost_partitions(&potential_task, &conditioned_groups, &mut space, &config)?
         };
         let mut goal_group_has_additive_share = vec![false; conditioned_groups.len()];
         for partition in &goal_cost_partitions {
@@ -309,8 +281,12 @@ impl NumericPotentialHeuristic {
         let mut max_initial_value = functions
             .iter()
             .map(|function| {
-                function_value(function, registry.view(&initial_state), &potential_task)
-                    .map(|value| value.max(0.0))
+                function_value(
+                    function,
+                    space.registry.view(&space.initial_state),
+                    &potential_task,
+                )
+                .map(|value| value.max(0.0))
             })
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
@@ -320,7 +296,11 @@ impl NumericPotentialHeuristic {
             let group_value = group
                 .iter()
                 .map(|function| {
-                    function_value(function, registry.view(&initial_state), &potential_task)
+                    function_value(
+                        function,
+                        space.registry.view(&space.initial_state),
+                        &potential_task,
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
@@ -693,30 +673,19 @@ impl Drop for NumericPotentialHeuristic {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_goal_cost_partitions(
     task: &PotentialTask,
     groups: &[Vec<NumericPotentialFunction>],
-    task_ref: &TaskRef<'_>,
-    registry: &mut StateRegistry<'_>,
-    initial_state: &ConcreteState,
-    initial_h: f64,
+    space: &mut SampleSpace<'_>,
     config: &NumericPotentialConfig,
-    sampler: &mut RandomWalkSampler,
 ) -> Result<Vec<Vec<f64>>, String> {
-    let mut objective_states = vec![initial_state.clone()];
+    let mut objective_states = vec![space.initial_state.clone()];
     if config.num_goal_cost_partitions > 1 {
-        objective_states.extend(sampler.sample(
-            task_ref,
-            registry,
-            config.num_goal_cost_partitions - 1,
-            initial_h,
-            average_operator_cost(task),
-        )?);
+        objective_states.extend(space.sample(config.num_goal_cost_partitions - 1)?);
     }
     let mut partitions = Vec::new();
     for state in objective_states {
-        let partition = compute_goal_cost_partition(task, groups, registry.view(&state))?;
+        let partition = compute_goal_cost_partition(task, groups, space.registry.view(&state))?;
         if !partitions.iter().any(|existing: &Vec<f64>| {
             existing.len() == partition.len()
                 && existing
@@ -786,17 +755,14 @@ fn compute_goal_cost_partition(
 
 fn build_conditioned_groups(
     optimizer: &mut NumericPotentialOptimizer,
-    task_ref: &TaskRef<'_>,
-    registry: &mut StateRegistry<'_>,
-    initial_state: &ConcreteState,
-    initial_h: f64,
+    space: &mut SampleSpace<'_>,
     config: &NumericPotentialConfig,
-    sampler: &mut RandomWalkSampler,
 ) -> Result<Vec<Vec<NumericPotentialFunction>>, String> {
     let start = Instant::now();
     let mut initial_props = Vec::new();
-    registry
-        .view(initial_state)
+    space
+        .registry
+        .view(&space.initial_state)
         .fill_propositional(&mut initial_props);
     let mut goals: Vec<_> = optimizer
         .conditionable_goals()
@@ -812,13 +778,7 @@ fn build_conditioned_groups(
 
     let mut sample_sets = vec![Vec::new(); config.num_goal_conditioned_heuristics - 1];
     if !sample_sets.is_empty() {
-        let samples = sampler.sample(
-            task_ref,
-            registry,
-            config.num_goal_conditioned_samples * sample_sets.len(),
-            initial_h,
-            average_operator_cost(optimizer.task()),
-        )?;
+        let samples = space.sample(config.num_goal_conditioned_samples * sample_sets.len())?;
         let set_count = sample_sets.len();
         for (sample_id, sample) in samples.into_iter().enumerate() {
             sample_sets[sample_id % set_count].push(sample);
@@ -844,7 +804,7 @@ fn build_conditioned_groups(
                 var,
                 value,
                 achiever,
-                registry.view(initial_state),
+                space.registry.view(&space.initial_state),
             )? {
                 OptimizationOutcome::Optimal {
                     value: objective_value,
@@ -864,7 +824,9 @@ fn build_conditioned_groups(
                 if !complete[portfolio_id] {
                     continue;
                 }
-                match optimizer.optimize_for_samples(&sample_sets[portfolio_id - 1], registry)? {
+                match optimizer
+                    .optimize_for_samples(&sample_sets[portfolio_id - 1], &space.registry)?
+                {
                     OptimizationOutcome::Optimal { function, .. } => {
                         portfolios[portfolio_id].push(function);
                     }
@@ -881,48 +843,32 @@ fn build_conditioned_groups(
     Ok(groups)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_static_portfolio(
     optimizer: &mut NumericPotentialOptimizer,
-    task_ref: TaskRef<'_>,
-    registry: &mut StateRegistry<'_>,
-    initial_state: &ConcreteState,
-    initial_function: NumericPotentialFunction,
-    initial_h: f64,
+    space: &mut SampleSpace<'_>,
     config: &NumericPotentialConfig,
-    sampler: &mut RandomWalkSampler,
+    initial_function: NumericPotentialFunction,
 ) -> Result<Vec<NumericPotentialFunction>, String> {
     match config.opt {
         OptimizeFor::InitialState => Ok(vec![initial_function]),
         OptimizeFor::AllStates => {
-            match optimizer.optimize_for_all_propositional_states(registry.view(initial_state))? {
+            match optimizer
+                .optimize_for_all_propositional_states(space.registry.view(&space.initial_state))?
+            {
                 OptimizationOutcome::Optimal { function, .. } => Ok(vec![function]),
                 _ => Ok(vec![initial_function]),
             }
         }
         OptimizeFor::Samples => {
-            let samples = sampler.sample(
-                &task_ref,
-                registry,
-                config.num_samples,
-                initial_h,
-                average_operator_cost(optimizer.task()),
-            )?;
-            match optimizer.optimize_for_samples(&samples, registry)? {
+            let samples = space.sample(config.num_samples)?;
+            match optimizer.optimize_for_samples(&samples, &space.registry)? {
                 OptimizationOutcome::Optimal { function, .. } => Ok(vec![function]),
                 _ => Ok(vec![initial_function]),
             }
         }
-        OptimizeFor::DiverseSamples => build_diverse_portfolio(
-            optimizer,
-            task_ref,
-            registry,
-            initial_state,
-            initial_function,
-            initial_h,
-            config,
-            sampler,
-        ),
+        OptimizeFor::DiverseSamples => {
+            build_diverse_portfolio(optimizer, space, config, initial_function)
+        }
     }
 }
 
@@ -931,16 +877,11 @@ struct SampleTarget {
     optimum: NumericPotentialFunction,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_diverse_portfolio(
     optimizer: &mut NumericPotentialOptimizer,
-    task_ref: TaskRef<'_>,
-    registry: &mut StateRegistry<'_>,
-    initial_state: &ConcreteState,
-    initial_function: NumericPotentialFunction,
-    initial_h: f64,
+    space: &mut SampleSpace<'_>,
     config: &NumericPotentialConfig,
-    sampler: &mut RandomWalkSampler,
+    initial_function: NumericPotentialFunction,
 ) -> Result<Vec<NumericPotentialFunction>, String> {
     let start = Instant::now();
     let mut functions = Vec::new();
@@ -950,8 +891,8 @@ fn build_diverse_portfolio(
     }
     if config.include_all_states_potential
         && functions.len() < config.num_heuristics
-        && let OptimizationOutcome::Optimal { function, .. } =
-            optimizer.optimize_for_all_propositional_states(registry.view(initial_state))?
+        && let OptimizationOutcome::Optimal { function, .. } = optimizer
+            .optimize_for_all_propositional_states(space.registry.view(&space.initial_state))?
     {
         functions.push(function);
     }
@@ -969,13 +910,7 @@ fn build_diverse_portfolio(
         && within_fraction(start, config.max_diverse_generation_time.seconds(), 0.25)
     {
         let chunk = (config.num_samples - samples.len()).min(16);
-        samples.extend(sampler.sample(
-            &task_ref,
-            registry,
-            chunk,
-            initial_h,
-            average_operator_cost(optimizer.task()),
-        )?);
+        samples.extend(space.sample(chunk)?);
     }
     if samples.is_empty() {
         if functions.is_empty() {
@@ -996,7 +931,7 @@ fn build_diverse_portfolio(
             continue;
         }
         if let OptimizationOutcome::Optimal { function, .. } =
-            optimizer.optimize_for_state(registry.view(&state))?
+            optimizer.optimize_for_state(space.registry.view(&state))?
         {
             targets.push(SampleTarget {
                 state,
@@ -1006,7 +941,7 @@ fn build_diverse_portfolio(
     }
 
     for function in &functions {
-        remove_covered(function, &mut targets, optimizer.task(), registry)?;
+        remove_covered(function, &mut targets, optimizer.task(), &space.registry)?;
     }
     while !targets.is_empty()
         && functions.len() < config.num_heuristics
@@ -1016,23 +951,23 @@ fn build_diverse_portfolio(
         let OptimizationOutcome::Optimal {
             function: mut candidate,
             ..
-        } = optimizer.optimize_for_samples(&states, registry)?
+        } = optimizer.optimize_for_samples(&states, &space.registry)?
         else {
             break;
         };
-        let covered = remove_covered(&candidate, &mut targets, optimizer.task(), registry)?;
+        let covered = remove_covered(&candidate, &mut targets, optimizer.task(), &space.registry)?;
         if covered == 0 {
             let target_id = match config.diverse_fallback {
-                DiverseFallback::Random => sampler.choose_index(targets.len()),
+                DiverseFallback::Random => space.sampler.choose_index(targets.len()),
                 DiverseFallback::LargestGap => {
-                    largest_gap_target(&functions, &targets, optimizer.task(), registry)?
+                    largest_gap_target(&functions, &targets, optimizer.task(), &space.registry)?
                 }
             };
             // C++ uses vector::erase here. Preserve the order of all
             // remaining targets because the same global RNG stream is reused
             // by later random fallback choices.
             candidate = targets.remove(target_id).optimum;
-            remove_covered(&candidate, &mut targets, optimizer.task(), registry)?;
+            remove_covered(&candidate, &mut targets, optimizer.task(), &space.registry)?;
         }
         functions.push(candidate);
     }

@@ -560,26 +560,27 @@ fn build_cpp_numeric_features(
                 used_comparison_vars.push(var);
             }
         };
-        // This is the C++ numeric_pdb_helper construction order: operator
-        // preconditions first, then the non-dummy propositional goal axioms.
+        // The C++ numeric_pdb_helper construction order: operator
+        // preconditions, then the axiom bodies, then the goal. The C++
+        // translator's goal was a derived atom whose axiom body named the
+        // goal comparisons; here the goal names them itself.
         //
-        // The task's axioms alone are enough, and issue454 did not change what
-        // this collects. Only the variable of a body fact matters here, and every
-        // variable a rule refuting `v` names comes from a body of a rule proving
-        // `v` -- so the refuting rules the translator used to add never
-        // contributed a variable, nor a position in the order, that the proving
-        // rules had not already contributed.
+        // Only the variable of a body fact matters here, and every variable a
+        // rule refuting `v` names comes from a body of a rule proving `v` --
+        // so refuting rules never contribute a variable, nor a position in
+        // the order, that the proving rules have not already contributed.
         for operator in task.get_operators() {
             for precondition in operator.preconditions() {
                 record_fact(precondition);
             }
         }
         for axiom in task.axioms() {
-            if !axiom.conditions().is_empty() {
-                for condition in axiom.conditions() {
-                    record_fact(condition);
-                }
+            for condition in axiom.conditions() {
+                record_fact(condition);
             }
+        }
+        for goal in task.goals() {
+            record_fact(goal);
         }
     }
     // The optimizer also materializes comparison facts implied by a

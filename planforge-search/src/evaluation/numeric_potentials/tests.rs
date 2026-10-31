@@ -6,9 +6,7 @@
 
 use std::sync::Arc;
 
-use planforge_sas::axioms::{
-    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
-};
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
@@ -303,7 +301,9 @@ fn thirty_deterministic_random_duality_instances() {
 }
 
 #[test]
-fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
+/// A goal of two comparisons keeps both as separate goal conditions: the
+/// potential needs `x >= 2` and `y >= 3`, five unit increments.
+fn a_conjunctive_numeric_goal_keeps_its_comparisons_separate() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(false, None),
@@ -324,10 +324,10 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
             ),
             ExplicitVariable::new(
                 2,
-                "numeric-goal".into(),
+                "constraint".into(),
                 vec!["true".into(), "false".into()],
-                Some(1),
-                ExplicitValueIndex::new(1),
+                None,
+                ExplicitValueIndex::new(0),
             ),
         ],
         numeric_variables: vec![
@@ -337,12 +337,15 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
             NumericVariable::new("three".into(), NumericType::Constant, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        goals: vec![ExplicitFact::propositional(2, 0)],
+        goals: vec![
+            ExplicitFact::propositional(0, 0),
+            ExplicitFact::propositional(1, 0),
+        ],
         mutexes: vec![],
         state: vec![
             ExplicitValueIndex::new(1),
             ExplicitValueIndex::new(1),
-            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
         ],
         numeric_state: vec![
             NumericValue::new(0.0),
@@ -379,15 +382,7 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
                 OperatorCost::new(1),
             ),
         ],
-        axioms: vec![PropositionalAxiom::new(
-            vec![
-                ExplicitFact::propositional(0, 0),
-                ExplicitFact::propositional(1, 0),
-            ],
-            VariableIndex::new(2),
-            ExplicitValueIndex::new(1),
-            ExplicitValueIndex::new(0),
-        )],
+        axioms: vec![],
         comparison_axioms: vec![
             ComparisonAxiom::new(
                 VariableIndex::new(0),
@@ -407,6 +402,82 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
     });
     let (value, _) = optimize_initial(task);
     assert!((value - 5.0).abs() < 1e-7, "got {value}");
+}
+
+/// A goal comparing a sum, `x + y >= 3`, is a feature of its own: the
+/// goal names the comparison, whose linear part no operator precondition or
+/// axiom body mentions.
+#[test]
+fn a_multivariate_goal_comparison_is_a_feature() {
+    let increment = |name: &str, var: usize| {
+        Operator::new(
+            name.into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                VariableIndex::new(var as u32),
+                AssignmentOperation::Plus,
+                VariableIndex::new(3),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
+        )
+    };
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(false, None),
+        variables: vec![
+            ExplicitVariable::new(
+                2,
+                "sum-at-least-three".into(),
+                vec!["true".into(), "false".into()],
+                Some(1),
+                ExplicitValueIndex::new(1),
+            ),
+            ExplicitVariable::new(
+                2,
+                "constraint".into(),
+                vec!["true".into(), "false".into()],
+                None,
+                ExplicitValueIndex::new(0),
+            ),
+        ],
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("y".into(), NumericType::Regular, None),
+            NumericVariable::new("three".into(), NumericType::Constant, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("x+y".into(), NumericType::Derived, Some(0)),
+        ],
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(3.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+        ],
+        operators: vec![increment("increment-x", 0), increment("increment-y", 1)],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(4),
+            VariableIndex::new(2),
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::new(4),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        )],
+        global_constraint: ExplicitFact::propositional(1, 0),
+    });
+    let (value, _) = optimize_initial(task);
+    assert!((value - 3.0).abs() < 1e-7, "got {value}");
 }
 
 #[test]
@@ -856,7 +927,10 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
 }
 
 #[test]
-fn affine_auxiliary_features_match_cpp_numeric_proxy() {
+/// The task's linear normal form turns the comparison `(x + y) - z >= 0` over
+/// two arithmetic axioms into one linear part, whose bounds follow from the
+/// effects: only increases, from `-2` in the initial state.
+fn an_affine_comparison_is_one_linear_feature() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(false, None),
@@ -984,7 +1058,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
             .iter()
             .map(|feature| feature.name.as_str())
             .collect::<Vec<_>>(),
-        ["z", "y", "x", "x+y", "x+y-z"]
+        ["z", "y", "x", "linear-part-7"]
     );
     assert_eq!(
         potential_task
@@ -992,7 +1066,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
             .iter()
             .filter(|bounds| bounds.lower.is_finite())
             .count(),
-        4
+        3
     );
     assert_eq!(
         potential_task
@@ -1006,7 +1080,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
     let mut config = NumericPotentialConfig::default();
     config.bounds = BoundsProvider::All;
     let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
-    assert_eq!(optimizer.num_columns(), 17);
+    assert_eq!(optimizer.num_columns(), 15);
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let OptimizationOutcome::Optimal { value, .. } = optimizer
