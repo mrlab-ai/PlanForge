@@ -238,7 +238,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
             .map_err(|error| anyhow!("failed to expand state {state_id}: {error:?}"))?;
         let task = core.task.clone();
         for &operator_id in expansion.applicable_operators() {
-            let operator = &task.get_operators()[operator_id.index()];
+            let operator = &task.operators()[operator_id.index()];
             let (successor, metric_cost) = expansion
                 .successor(&mut core.registry, operator)
                 .map_err(|error| {

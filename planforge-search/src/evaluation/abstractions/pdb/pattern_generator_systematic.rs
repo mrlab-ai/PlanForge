@@ -4,7 +4,7 @@ mod tests;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, VariableIndex};
 
 use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use super::pattern_collection::PatternCollection;
@@ -227,12 +227,10 @@ pub(super) fn goal_variables(
 ) -> Vec<CausalGraphVariable> {
     let mut seed_variables = Vec::new();
     let mut seen = BTreeSet::new();
-    let goal_var_ids: BTreeSet<VariableIndex> = (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var_index())
-        .collect();
+    let goal_var_ids: BTreeSet<VariableIndex> =
+        task.goals().iter().map(ExplicitFact::var_index).collect();
 
-    for goal_index in 0..task.get_num_goals() {
-        let goal = task.get_goal_fact(goal_index);
+    for goal in task.goals() {
         // A comparison goal enters the pattern through its numeric operands, in
         // the loop below, rather than as a propositional variable of its own.
         if !goal.is_condition() {

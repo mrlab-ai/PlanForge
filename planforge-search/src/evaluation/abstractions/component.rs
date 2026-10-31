@@ -120,7 +120,7 @@ impl<'task> AbstractionComponent<'task> {
             Self::Cegar(abstraction) => abstraction.relevant_operator_ids().to_vec(),
             Self::PatternDatabase(pdb) => pdb.relevant_operator_ids().to_vec(),
         };
-        let operator_count = task.get_operators().len();
+        let operator_count = task.operators().len();
         if let Some(operator_id) = ids.iter().copied().find(|id| id.index() >= operator_count) {
             return Err(format!(
                 "{} references operator {operator_id}, but task has {operator_count} operators",

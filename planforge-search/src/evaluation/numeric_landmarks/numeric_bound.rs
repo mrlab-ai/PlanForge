@@ -82,7 +82,7 @@ impl NumericBound {
             NumericTaskHelper::new_lmcut(task, default_value_axioms, precision, epsilon, false);
         self.numeric_variable_ids = task.regular_numeric_variable_ids();
         self.num_numeric_variables = self.numeric_variable_ids.len();
-        self.num_actions = task.get_operators().len();
+        self.num_actions = task.operators().len();
         self.operator_conditions = (0..self.num_actions)
             .map(|operator_id| self.extract_operator_conditions(task, operator_id))
             .collect();
@@ -756,7 +756,7 @@ impl NumericBound {
 
     fn extract_operator_effects(&mut self, task: &dyn AbstractNumericTask) {
         for operator_id in 0..self.num_actions {
-            let operator = task.get_operators().get(operator_id).unwrap_or_else(|| {
+            let operator = task.operators().get(operator_id).unwrap_or_else(|| {
                 panic!("operator id {operator_id} is out of bounds for numeric bound effects")
             });
             let linearized_effects = task
@@ -846,7 +846,7 @@ impl NumericBound {
         task: &dyn AbstractNumericTask,
         operator_id: usize,
     ) -> Vec<BoundCondition> {
-        let operator = task.get_operators().get(operator_id).unwrap_or_else(|| {
+        let operator = task.operators().get(operator_id).unwrap_or_else(|| {
             panic!("operator id {operator_id} is out of bounds for numeric bound extraction")
         });
         let mut conditions = Vec::new();

@@ -43,8 +43,8 @@ fn region_stolen_costs_accept_transition_free_components() {
         region_stolen_costs(
             &components,
             &[
-                vec![f64::NEG_INFINITY; task.get_operators().len()],
-                vec![f64::NEG_INFINITY; task.get_operators().len()],
+                vec![f64::NEG_INFINITY; task.operators().len()],
+                vec![f64::NEG_INFINITY; task.operators().len()],
             ],
             &[2.0, 3.0],
         )
@@ -63,7 +63,7 @@ fn region_stolen_costs_reject_missing_source_sets() {
     let components = vec![AbstractionComponent::from(abstraction)];
     let error = region_stolen_costs(
         &components,
-        &[vec![f64::NEG_INFINITY; task.get_operators().len()]],
+        &[vec![f64::NEG_INFINITY; task.operators().len()]],
         &[2.0, 3.0],
     )
     .unwrap_err();

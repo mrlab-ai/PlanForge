@@ -24,7 +24,7 @@ impl NumericSizeEstimator {
     pub fn new(task: &dyn AbstractNumericTask) -> Self {
         validate_restricted_task(task)
             .expect("numeric PDB size estimation requires a restricted task");
-        let base_initial_numeric_values = task.get_initial_numeric_state_values().to_vec();
+        let base_initial_numeric_values = task.initial_numeric_values().to_vec();
         let conditions = collect_numeric_conditions(task, &base_initial_numeric_values);
 
         Self {
@@ -64,7 +64,7 @@ fn collect_numeric_conditions(
     }
 
     let mut conditions = Vec::new();
-    for operator in task.get_operators() {
+    for operator in task.operators() {
         for fact in operator.preconditions() {
             let fact_var_id = fact.var_index();
             if !numeric_condition_vars.contains(&fact_var_id) {
@@ -79,8 +79,7 @@ fn collect_numeric_conditions(
         }
     }
 
-    for goal_id in 0..task.get_num_goals() {
-        let goal = task.get_goal_fact(goal_id);
+    for goal in task.goals() {
         let goal_var_id = goal.var_index();
         if !numeric_condition_vars.contains(&goal_var_id) {
             continue;
@@ -149,7 +148,7 @@ fn estimate_numeric_domain_size(
     let mut max_pos_change = 0.0_f64;
     let mut max_neg_change = 0.0_f64;
 
-    for operator in task.get_operators() {
+    for operator in task.operators() {
         let mut additive_change = 0.0;
         let mut assigned_value = None;
         for effect in operator

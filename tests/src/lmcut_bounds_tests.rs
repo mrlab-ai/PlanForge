@@ -43,10 +43,10 @@ fn initial_h(task: &NumericRootTask, bound_iterations: usize) -> f64 {
 #[test]
 fn bounds_price_a_linear_cost_operator_at_the_lower_bound_of_its_variables() {
     let task = load_dependent_cost_task();
-    let deliver = (0..task.get_operators().len())
+    let deliver = (0..task.operators().len())
         .map(OperatorIndex::from_usize)
         .find(|&op_id| {
-            task.get_operators()[op_id.index()]
+            task.operators()[op_id.index()]
                 .name()
                 .starts_with("deliver")
         })

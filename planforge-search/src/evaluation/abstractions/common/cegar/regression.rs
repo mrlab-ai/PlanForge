@@ -120,7 +120,7 @@ pub(crate) fn ensure_regressable(
     task: &dyn AbstractNumericTask,
     coordinates: &Coordinates<'_>,
 ) -> Result<()> {
-    let mut derived = vec![false; task.get_num_variables()];
+    let mut derived = vec![false; task.variables().len()];
     for axiom in task.axioms() {
         derived[axiom.var_id().index()] = true;
     }
@@ -140,7 +140,7 @@ pub(crate) fn ensure_regressable(
         }
         Ok(())
     };
-    for (op_id, op) in task.get_operators().iter().enumerate() {
+    for (op_id, op) in task.operators().iter().enumerate() {
         for fact in op.preconditions() {
             check(fact, &|| format!("operator {op_id} ({})", op.name()))?;
         }
@@ -163,7 +163,7 @@ struct PartialState {
 impl PartialState {
     fn unconstrained(task: &dyn AbstractNumericTask) -> Self {
         Self {
-            propositions: vec![None; task.get_num_variables()],
+            propositions: vec![None; task.variables().len()],
             numeric: vec![Interval::unbounded(); task.numeric_variables().len()],
         }
     }
@@ -239,7 +239,7 @@ pub(crate) fn find_regression_flaws(
             found: Vec::new(),
         },
         preconditions: PartialState::unconstrained(task),
-        written: vec![false; task.get_num_variables()],
+        written: vec![false; task.variables().len()],
     };
     let mut predecessor = PartialState::unconstrained(task);
     for step in (1..=operators.len()).rev() {
@@ -299,7 +299,7 @@ impl Regression<'_> {
             preconditions,
             written,
         } = self;
-        let op = &task.get_operators()[op_id.index()];
+        let op = &task.operators()[op_id.index()];
 
         // Propositional effects falsify p_step (case 1) or free their
         // variable; past the flaw, the effect is regressed anyway and frees

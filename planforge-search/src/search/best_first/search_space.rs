@@ -186,7 +186,7 @@ impl SearchSpace {
             if let (Some(parent_state), Some(operator_id)) =
                 (node_info.parent_state, node_info.parent_operator_id)
             {
-                plan.push(task.get_operators()[operator_id.index()].clone());
+                plan.push(task.operators()[operator_id.index()].clone());
                 current_state = parent_state;
             } else {
                 break; // Reached initial state

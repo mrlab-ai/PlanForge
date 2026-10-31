@@ -99,7 +99,7 @@ pub(crate) fn split_deviation_candidates(
         source_numeric,
         successor_numeric,
     } = witness;
-    let op = &semantics.task().get_operators()[op_id.index()];
+    let op = &semantics.task().operators()[op_id.index()];
     let target = view.region(target_state_id);
     let mut candidates = Vec::new();
     for (var_id, allowed) in target.propositions().iter().enumerate() {

@@ -459,7 +459,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             self.artificial_goal_id,
             "goal".to_string(),
         ));
-        self.num_variables = self.task.get_num_variables();
+        self.num_variables = self.task.variables().len();
         self.proposition_index = vec![Vec::new(); self.num_variables];
 
         self.num_propositions = 2;
@@ -470,7 +470,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.prepare_goal_preconditions();
         // Operator costs read the bounds of the variables before each operator.
         if self.use_bounds {
-            let initial_numeric_values = self.task.get_initial_numeric_state_values();
+            let initial_numeric_values = self.task.initial_numeric_values();
             self.numeric_bound
                 .calculate_bounds(initial_numeric_values, self.config.bound_iterations);
         }
@@ -718,8 +718,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
         for variable_id in 0..self.num_variables {
             let domain_size = self
                 .task
-                .get_variable_domain_size(VariableIndex::from_usize(variable_id))
-                .expect("variable id must be valid");
+                .variable(VariableIndex::from_usize(variable_id))
+                .domain_size();
             self.proposition_index[variable_id].reserve(domain_size);
             for value in 0..domain_size {
                 let helper_proposition_id = self
@@ -768,7 +768,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn build_relaxed_operators(&mut self) {
         let task = Arc::clone(&self.task);
-        let operators = task.get_operators();
+        let operators = task.operators();
         for (operator_id, operator) in operators.iter().enumerate() {
             let operator_id = OperatorIndex::from_usize(operator_id);
             let base_cost = self.calculate_base_operator_cost(operator_id);
@@ -798,7 +798,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn prune_infinite_effects_for_supported_sose(&mut self) {
-        let operator_count = self.task.get_operators().len();
+        let operator_count = self.task.operators().len();
         for relaxed_operator in &mut self.relaxed_operators {
             if !relaxed_operator.infinite {
                 continue;
@@ -847,8 +847,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
     fn prepare_goal_preconditions(&mut self) {
         let mut goal_preconditions = Vec::new();
         let mut seen = BTreeSet::new();
-        for goal_index in 0..self.task.get_num_goals() {
-            let goal = self.task.get_goal_fact(goal_index);
+        for goal_index in 0..self.task.goals().len() {
+            let goal = self.task.goals()[goal_index];
             let helper_propositional_ids = self
                 .numeric_helper
                 .get_propositional_goals(goal_index)
@@ -879,7 +879,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 // numeric goal condition directly) maps to its numeric
                 // conditions exactly as a precondition does. Dropping it would
                 // leave the goal operator without the goal: h = 0.
-                let goal_proposition_ids = self.precondition_proposition_ids(goal);
+                let goal_proposition_ids = self.precondition_proposition_ids(&goal);
                 assert!(
                     !goal_proposition_ids.is_empty()
                         || self.config.ignore_numeric
@@ -1011,7 +1011,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn build_original_to_relaxed_index(&mut self) {
-        let operator_count = self.task.get_operators().len() + self.relaxed_axioms.len();
+        let operator_count = self.task.operators().len() + self.relaxed_axioms.len();
         self.original_to_relaxed_operators = vec![Vec::new(); operator_count];
         for (relaxed_operator_id, operator) in self.relaxed_operators.iter().enumerate() {
             let relaxed_operator_id = OperatorIndex::from_usize(relaxed_operator_id);
@@ -1790,10 +1790,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn calculate_base_operator_cost(&self, operator_id: OperatorIndex) -> f64 {
         assert!(
-            operator_id.index() < self.task.get_operators().len(),
+            operator_id.index() < self.task.operators().len(),
             "base operator cost is only defined for concrete operators"
         );
-        let mut operator_cost = self.task.abstract_operator_cost(operator_id);
+        let mut operator_cost = self.task.operator_cost(operator_id);
 
         if self.task.is_linear_cost_operator(operator_id) && self.use_bounds {
             let coefficients = self.task.operator_cost_coefficients(operator_id);
@@ -1961,7 +1961,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn build_simple_effects(&mut self) -> Result<(), String> {
-        let operator_count = self.task.get_operators().len();
+        let operator_count = self.task.operators().len();
 
         for relaxed_operator_id in 0..self.relaxed_operators.len() {
             let original_op_id: OperatorIndex = {
@@ -2299,7 +2299,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn build_supported_sose_operators(&mut self) -> Result<(), String> {
-        let operator_count = self.task.get_operators().len();
+        let operator_count = self.task.operators().len();
         self.operator_condition_eval =
             vec![vec![OperatorConditionEval::default(); self.conditions.len()]; operator_count];
         if !self.config.use_second_order_simple {
@@ -3112,10 +3112,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
 
         let task = Arc::clone(&self.task);
-        self.linear_effect_to_conditions_plus = vec![Vec::new(); task.get_operators().len()];
-        self.linear_effect_to_conditions_minus = vec![Vec::new(); task.get_operators().len()];
+        self.linear_effect_to_conditions_plus = vec![Vec::new(); task.operators().len()];
+        self.linear_effect_to_conditions_minus = vec![Vec::new(); task.operators().len()];
 
-        for (operator_id, operator) in task.get_operators().iter().enumerate() {
+        for (operator_id, operator) in task.operators().iter().enumerate() {
             let helper_conditional_fact_effects = self
                 .numeric_helper
                 .get_action_conditional_fact_effects(operator_id)

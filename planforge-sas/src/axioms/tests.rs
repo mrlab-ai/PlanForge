@@ -114,7 +114,7 @@ fn complete_evaluation_runs_arithmetic_before_comparisons() {
     }));
     let state_packer = std::sync::Arc::new(StatePacker::new(&[ConditionValue::DOMAIN_SIZE as u64]));
     let result_var = problem.comparison_axioms()[0].get_left_var_id();
-    let mut numeric_state = problem.get_initial_numeric_state_values().to_vec();
+    let mut numeric_state = problem.initial_numeric_values().to_vec();
     numeric_state[result_var.index()] = ZERO_VALUE;
     let axiom_evaluator = AxiomEvaluator::new(problem, state_packer.clone());
     let mut buffer = vec![0; state_packer.num_bins()];
@@ -148,7 +148,7 @@ fn test_axiom_evaluator_creation() {
     // The task's initial state is already closed under its axioms: var0 is
     // derived by the unconditional propositional axiom, var1 keeps its value
     // and var2 holds the verdict of `1.0 > total_cost`, true initially.
-    let init_state = problem.get_initial_propositional_state_values();
+    let init_state = problem.initial_propositional_values();
     assert_eq!(
         *init_state,
         vec![
@@ -220,7 +220,7 @@ fn test_example1_axiom_evaluation() {
     // );
     //
     // // Set up initial state buffer
-    // let init_state = problem.get_initial_propositional_state_values();
+    // let init_state = problem.initial_propositional_values();
     // let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins() as usize];
     //
     // // Pack initial propositional state into buffer
@@ -239,7 +239,7 @@ fn test_example1_axiom_evaluation() {
     // }
     //
     // // Set up initial numeric state
-    // let mut numeric_state = problem.get_initial_numeric_state_values().clone();
+    // let mut numeric_state = problem.initial_numeric_values().clone();
     // println!("Initial numeric state:");
     // for (i, val) in numeric_state.iter().enumerate() {
     //     println!("  numeric_var_{} = {}", i, val);
@@ -278,7 +278,7 @@ fn test_example1_axiom_evaluation() {
     // }
     //
     // // Test complete axiom evaluation
-    // let mut numeric_state_copy = problem.get_initial_numeric_state_values().clone();
+    // let mut numeric_state_copy = problem.initial_numeric_values().clone();
     // let mut buffer_copy = vec![0; axiom_evaluator.state_packer.num_bins() as usize];
     // for (i, value) in init_state.iter().enumerate() {
     //     axiom_evaluator

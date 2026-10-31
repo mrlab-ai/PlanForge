@@ -72,7 +72,7 @@ impl DomainAbstractionFunction {
         Self::new(
             semantics,
             domain_mapping,
-            vec![1; task.get_num_variables()],
+            vec![1; task.variables().len()],
             NumericPartitions::trivial(task),
         )
     }
@@ -91,11 +91,11 @@ impl DomainAbstractionFunction {
         let task = semantics.task();
         ensure!(
             domain_mapping.len() == domain_sizes.len()
-                && domain_sizes.len() == task.get_num_variables(),
+                && domain_sizes.len() == task.variables().len(),
             "the domain mapping covers {} and the domain sizes {} of {} variables",
             domain_mapping.len(),
             domain_sizes.len(),
-            task.get_num_variables()
+            task.variables().len()
         );
         for (var, &abs_size) in domain_sizes.iter().enumerate() {
             ensure!(

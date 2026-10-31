@@ -52,7 +52,7 @@ pub fn validate_abstractable_goal(
                 "abstractions support conjunctive goals only: goal fact {fact:?} names the \
                  derived variable {:?} ({:?}) in axiom layer {layer}, which no operator writes",
                 variable.name(),
-                task.get_fact_name(fact)
+                task.fact_name(fact)
             ));
         }
     }

@@ -21,7 +21,7 @@ struct NumericInvariant {
 
 impl Coordinates<'_> {
     pub(crate) fn value_lattices(&self) -> Vec<ValueLattice> {
-        let initial = self.task.get_initial_numeric_state_values();
+        let initial = self.task.initial_numeric_values();
         let mut generators = vec![Vec::new(); initial.len()];
         let mut invariant = NumericInvariant {
             bounds: initial.iter().copied().map(Interval::singleton).collect(),
@@ -50,7 +50,7 @@ impl Coordinates<'_> {
                 .collect(),
             resource_bound: None,
         };
-        for operator in self.task.get_operators() {
+        for operator in self.task.operators() {
             let mut targets = HashSet::new();
             for effect in operator.assignment_effects() {
                 let target = effect.affected_var_id().index();
@@ -166,7 +166,7 @@ impl Coordinates<'_> {
             };
             let nominal = ValueLattice::from_generators(
                 view.evaluate(initial),
-                (0..self.task.get_operators().len()).map(|operator| {
+                (0..self.task.operators().len()).map(|operator| {
                     view.operator_delta(OperatorIndex::from_usize(operator))
                         .grid_units()
                 }),
@@ -217,7 +217,7 @@ impl Coordinates<'_> {
 
     /// An inductive nonnegative, nonincreasing sum of integer resources.
     fn resource_bound(&self, resources: &[bool]) -> Option<NumericValue> {
-        for operator in self.task.get_operators() {
+        for operator in self.task.operators() {
             let delta: i128 = operator
                 .assignment_effects()
                 .iter()
@@ -237,7 +237,7 @@ impl Coordinates<'_> {
         }
         let total: i128 = self
             .task
-            .get_initial_numeric_state_values()
+            .initial_numeric_values()
             .iter()
             .zip(resources)
             .filter(|(_, resource)| **resource)
@@ -282,7 +282,7 @@ impl Coordinates<'_> {
         if !affine_grid_is_exact(magnitude, terms.len()) {
             return false;
         }
-        self.task.get_operators().iter().all(|operator| {
+        self.task.operators().iter().all(|operator| {
             let magnitude: f64 = terms
                 .iter()
                 .map(|(source, coefficient)| {

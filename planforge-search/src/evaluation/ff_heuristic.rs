@@ -66,8 +66,8 @@ use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_a
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
-    ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericTaskExt, NumericType, NumericValue,
-    Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericType, NumericValue, Operator,
+    OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -390,7 +390,7 @@ impl FactUniverse {
 
 /// One entry of [`RelaxedOperators`], as the collection stage builds it.
 struct RelaxedOperator {
-    /// Index into `task.get_operators()` for real operators; `None` for
+    /// Index into `task.operators()` for real operators; `None` for
     /// synthetic conditional-effect and propositional-axiom pseudo-ops.
     task_idx: Option<usize>,
     /// Real operator whose cost this synthetic op charges; `None` for real
@@ -441,7 +441,7 @@ impl RelaxedOperators {
 fn constant_numeric_values(
     task: &dyn AbstractNumericTask,
 ) -> Result<Vec<Option<NumericValue>>, String> {
-    let initial_numeric = task.get_initial_numeric_state_values();
+    let initial_numeric = task.initial_numeric_values();
     task.numeric_variables()
         .iter()
         .enumerate()
@@ -558,7 +558,7 @@ fn add_task_operator(
     let parent_op_id = ops.push(RelaxedOperator {
         task_idx: Some(op_idx),
         parent: None,
-        cost: task.abstract_operator_cost(OperatorIndex::from_usize(op_idx)),
+        cost: task.operator_cost(OperatorIndex::from_usize(op_idx)),
         preconditions: parent_preconds.clone(),
         state_deps: parent_state_deps.clone(),
         effects: parent_effects,
@@ -686,7 +686,7 @@ fn collect_relaxed_operators(
     constant_value: &[Option<NumericValue>],
 ) -> Result<RelaxedOperators, String> {
     let mut ops = RelaxedOperators::default();
-    for (op_idx, op) in task.get_operators().iter().enumerate() {
+    for (op_idx, op) in task.operators().iter().enumerate() {
         add_task_operator(&mut ops, universe, constant_value, task, op_idx, op)?;
     }
     let default_value_axioms =
@@ -876,7 +876,7 @@ fn build_consumer_index(operators: &RelaxedOperators, num_facts: usize) -> Vec<V
 
 pub struct FfHeuristic {
     /// For each (real or synthetic) operator in `op_preconditions`, the
-    /// index into `task.get_operators()` if it's a real operator (used for
+    /// index into `task.operators()` if it's a real operator (used for
     /// helpful-action reporting), `None` for synthetic conditional-effect
     /// pseudo-ops and propositional-axiom pseudo-ops (neither corresponds
     /// to a task operator the search engine can execute directly).

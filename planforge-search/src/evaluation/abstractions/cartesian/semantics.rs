@@ -96,9 +96,9 @@ impl<'task> CartesianSemantics<'task> {
         let cegar = CegarSemantics::for_options(task, &config.cegar)?;
         let regions = cegar.regions();
         let additive_numeric_views = cegar.coordinates().views();
-        let mut memo = vec![None; task.get_num_variables()];
-        let mut visiting = vec![false; task.get_num_variables()];
-        let variable_dimensions = (0..task.get_num_variables())
+        let mut memo = vec![None; task.variables().len()];
+        let mut visiting = vec![false; task.variables().len()];
+        let variable_dimensions = (0..task.variables().len())
             .map(|var_id| {
                 variable_dimensions(
                     task,
@@ -109,15 +109,15 @@ impl<'task> CartesianSemantics<'task> {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
-        let operator_count = task.get_operators().len();
-        let mut prop_split_dependent_operators = (0..task.get_num_variables())
+        let operator_count = task.operators().len();
+        let mut prop_split_dependent_operators = (0..task.variables().len())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();
         let mut numeric_split_dependent_operators = (0..task.numeric_variables().len())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();
         let mut dimensions = Vec::new();
-        for (op_id, op) in task.get_operators().iter().enumerate() {
+        for (op_id, op) in task.operators().iter().enumerate() {
             let op_id = OperatorIndex::from_usize(op_id);
             dimensions.clear();
             for precondition in op.preconditions() {

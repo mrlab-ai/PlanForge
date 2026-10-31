@@ -119,7 +119,7 @@ fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>(
         return NumericValue::new(operator.cost().value() as f64);
     }
 
-    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let initial_numeric_values = task.initial_numeric_values();
     let mut numeric_values = initial_numeric_values.to_vec();
     let old_metric = evaluate_metric_from_values(task, &numeric_values);
 

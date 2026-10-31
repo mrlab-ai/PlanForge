@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitStateSpace;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, NumericTaskExt, NumericType, NumericValue, OperatorIndex,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, NumericValue, OperatorIndex};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -76,14 +74,14 @@ impl<'task> CegarSemantics<'task> {
         split_options: SplitOptions,
     ) -> Result<Self> {
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
-        for (op_id, op) in task.get_operators().iter().enumerate() {
+        for (op_id, op) in task.operators().iter().enumerate() {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
         let regions = RegionSemantics::new(task)?;
         // Tasks reject negative operator costs when they are constructed.
-        let operator_costs = (0..task.get_operators().len())
+        let operator_costs = (0..task.operators().len())
             .map(|op_id| {
-                let cost = task.abstract_operator_cost(OperatorIndex::from_usize(op_id));
+                let cost = task.operator_cost(OperatorIndex::from_usize(op_id));
                 assert!(cost >= 0.0, "operator {op_id} has the negative cost {cost}");
                 cost
             })
@@ -93,7 +91,7 @@ impl<'task> CegarSemantics<'task> {
             .iter()
             .enumerate()
             .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
-            .map(|(numeric_var_id, _)| task.get_initial_numeric_state_values()[numeric_var_id])
+            .map(|(numeric_var_id, _)| task.initial_numeric_values()[numeric_var_id])
             .filter(|value| value.is_finite())
             .collect::<Vec<_>>();
         wanted_split_boundaries.sort();

@@ -122,18 +122,15 @@ fn initial_state_registration_does_not_mutate_shared_task() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
-    let original_propositions = task.get_initial_propositional_state_values().to_vec();
-    let original_numeric = task.get_initial_numeric_state_values().to_vec();
+    let original_propositions = task.initial_propositional_values().to_vec();
+    let original_numeric = task.initial_numeric_values().to_vec();
     let mut registry = StateRegistry::for_task(task.clone());
 
     let initial = registry.get_initial_state();
 
     assert_eq!(initial.get_state(&registry), [ExplicitValueIndex::new(1)]);
-    assert_eq!(
-        task.get_initial_propositional_state_values(),
-        original_propositions
-    );
-    assert_eq!(task.get_initial_numeric_state_values(), original_numeric);
+    assert_eq!(task.initial_propositional_values(), original_propositions);
+    assert_eq!(task.initial_numeric_values(), original_numeric);
 }
 
 #[test]
@@ -224,10 +221,10 @@ fn duplicate_state_keeps_better_metric_cost_information() {
 
     let initial_state = state_registry.get_initial_state();
     let expensive_successor = state_registry
-        .get_successor_state(&initial_state, &task.get_operators()[0])
+        .get_successor_state(&initial_state, &task.operators()[0])
         .unwrap();
     let cheap_successor = state_registry
-        .get_successor_state(&initial_state, &task.get_operators()[1])
+        .get_successor_state(&initial_state, &task.operators()[1])
         .unwrap();
 
     assert_eq!(expensive_successor.get_id(), cheap_successor.get_id());
@@ -301,10 +298,10 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
 
     let initial = state_registry.get_initial_state();
     let first = state_registry
-        .get_successor_state(&initial, &task.get_operators()[0])
+        .get_successor_state(&initial, &task.operators()[0])
         .unwrap();
     let second = state_registry
-        .get_successor_state(&initial, &task.get_operators()[1])
+        .get_successor_state(&initial, &task.operators()[1])
         .unwrap();
 
     assert_eq!(first.get_id(), second.get_id());
@@ -394,7 +391,7 @@ fn distinct_states_with_the_same_hash_remain_distinguishable() {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let successor = registry
-        .get_successor_state(&initial, &task.get_operators()[0])
+        .get_successor_state(&initial, &task.operators()[0])
         .unwrap();
     assert_ne!(initial.get_id(), successor.get_id());
 
@@ -479,7 +476,7 @@ fn a_maximised_metric_charges_its_decrease() {
     let (_, step_cost) = registry
         .get_successor_state_with_buffers_and_cost(
             &initial,
-            &task.get_operators()[0],
+            &task.operators()[0],
             &mut Vec::new(),
             &mut Vec::new(),
         )

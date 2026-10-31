@@ -4,8 +4,8 @@ use planforge_sas::axioms::{
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, VariableIndex,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
+    Operator, OperatorCost, VariableIndex,
 };
 
 use super::*;
@@ -89,14 +89,14 @@ fn projection_builds_a_compact_restricted_transition_system() {
     )
     .unwrap();
 
-    assert_eq!(projected.get_num_variables(), 2);
+    assert_eq!(projected.variables().len(), 2);
     assert_eq!(projected.numeric_variables().len(), 2);
-    assert_eq!(projected.get_operators().len(), 1);
+    assert_eq!(projected.operators().len(), 1);
     assert_eq!(projected.comparison_axioms().len(), 1);
     assert_eq!(projected.axioms().len(), 0);
-    assert_eq!(projected.get_num_goals(), 1);
+    assert_eq!(projected.goals().len(), 1);
     assert_eq!(
-        projected.get_initial_numeric_state_values(),
+        projected.initial_numeric_values(),
         &[NumericValue::new(0.0), NumericValue::new(10.0)]
     );
 }
@@ -120,15 +120,15 @@ fn borrowed_task_extension_methods_preserve_projected_overrides() {
         projected.evaluate_initial_state_values().unwrap()
     );
     assert_eq!(
-        forwarded.abstract_operator_cost(OperatorIndex::new(0)),
-        projected.abstract_operator_cost(OperatorIndex::new(0))
+        forwarded.operator_cost(OperatorIndex::new(0)),
+        projected.operator_cost(OperatorIndex::new(0))
     );
 }
 
 #[test]
 fn projection_rejects_an_unrestricted_task() {
     let task = restricted_sample_task();
-    let mut numeric_variables = task.numeric_variables().clone();
+    let mut numeric_variables = task.numeric_variables().to_vec();
     numeric_variables.push(NumericVariable::new(
         "derived-x".to_string(),
         NumericType::Derived,
@@ -148,14 +148,14 @@ fn projection_rejects_an_unrestricted_task() {
         numeric_variables,
         goals: vec![ExplicitFact::propositional(2, 0)],
         mutexes: vec![],
-        state: task.get_initial_propositional_state_values().to_vec(),
+        state: task.initial_propositional_values().to_vec(),
         numeric_state: vec![
             NumericValue::new(10.0),
             NumericValue::new(0.0),
             NumericValue::new(0.0),
         ],
-        operators: task.get_operators().clone(),
-        axioms: task.axioms().clone(),
+        operators: task.operators().to_vec(),
+        axioms: task.axioms().to_vec(),
         comparison_axioms: vec![ComparisonAxiom::new(
             VariableIndex::new(1),
             VariableIndex::new(2),
@@ -274,7 +274,7 @@ fn projection_closes_over_numeric_effect_sources() {
     .unwrap();
 
     assert_eq!(projected.numeric_variables().len(), 2);
-    let effect = &projected.get_operators()[0].assignment_effects()[0];
+    let effect = &projected.operators()[0].assignment_effects()[0];
     assert_eq!(effect.affected_var_id(), VariableIndex::from_usize(0));
     assert_eq!(effect.var_id(), VariableIndex::from_usize(1));
 }
@@ -342,9 +342,9 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
     .unwrap();
 
     assert_eq!(projected.numeric_variables().len(), 3);
-    assert_eq!(projected.get_operators().len(), 2);
+    assert_eq!(projected.operators().len(), 2);
     assert_eq!(
-        projected.get_operators()[0].assignment_effects()[0].var_id(),
+        projected.operators()[0].assignment_effects()[0].var_id(),
         VariableIndex::from_usize(2)
     );
 }
@@ -392,7 +392,7 @@ fn projection_closes_over_selected_comparison_operands() {
 
     assert_eq!(projected.numeric_variables().len(), 2);
     assert_eq!(projected.comparison_axioms().len(), 1);
-    assert_eq!(projected.get_num_goals(), 1);
+    assert_eq!(projected.goals().len(), 1);
 }
 
 /// A task whose comparison verdict is *false* in the initial state, read at that
@@ -568,8 +568,8 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
 
     // Only `derived`: the pattern holds it, and the goal names `target`, which
     // the pattern omits, so the projected task keeps no goal at all.
-    assert_eq!(projected.get_num_variables(), 1);
-    assert_eq!(projected.get_num_goals(), 0);
+    assert_eq!(projected.variables().len(), 1);
+    assert_eq!(projected.goals().len(), 0);
     assert_eq!(projected.axioms().len(), 1);
     assert!(projected.axioms()[0].conditions().is_empty());
 }
@@ -690,10 +690,10 @@ fn projection_keeps_preconditions_on_comparisons_over_its_numeric_variables() {
     )
     .unwrap();
 
-    assert_eq!(projected.get_num_variables(), 2);
+    assert_eq!(projected.variables().len(), 2);
     assert_eq!(projected.comparison_axioms().len(), 1);
     let use_operator = projected
-        .get_operators()
+        .operators()
         .iter()
         .find(|operator| operator.name() == "use")
         .unwrap();
@@ -709,7 +709,7 @@ fn projection_without_the_comparison_operand_drops_the_precondition() {
     )
     .unwrap();
 
-    assert_eq!(projected.get_num_variables(), 1);
+    assert_eq!(projected.variables().len(), 1);
     assert!(projected.comparison_axioms().is_empty());
-    assert!(projected.get_operators()[0].preconditions().is_empty());
+    assert!(projected.operators()[0].preconditions().is_empty());
 }

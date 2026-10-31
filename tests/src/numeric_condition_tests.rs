@@ -69,7 +69,7 @@ fn a_guarded_numeric_effect_survives_the_whole_pipeline() {
     let task = fixture_task("conditional-numeric-effect");
 
     let moves: Vec<&planforge_sas::numeric_task::Operator> = task
-        .get_operators()
+        .operators()
         .iter()
         .filter(|op| op.name().starts_with("move "))
         .collect();
@@ -77,7 +77,7 @@ fn a_guarded_numeric_effect_survives_the_whole_pipeline() {
         moves.len(),
         2,
         "expected `move l0 l1` and `move l1 l2`, got {:?}",
-        task.get_operators()
+        task.operators()
             .iter()
             .map(|op| op.name())
             .collect::<Vec<_>>()

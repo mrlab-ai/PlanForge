@@ -549,7 +549,7 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
         .generate(&task)
         .expect("goal-focused collection should build on prob_1b4p_axes");
 
-    for goal_id in 0..task.get_num_goals() {
+    for goal_id in 0..task.goals().len() {
         let variants = abstractions
             .iter()
             .filter_map(|abstraction| abstraction.metadata().collection_membership())

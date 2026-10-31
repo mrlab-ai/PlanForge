@@ -106,7 +106,7 @@ pub(in super::super) fn desired_comparison_interval(
     let right_is_coordinate = right_type == &NumericType::Regular
         || (right_type == &NumericType::Derived
             && semantics.additive_numeric_views()[right_id.index()].is_some());
-    let initial = semantics.task().get_initial_numeric_state_values();
+    let initial = semantics.task().initial_numeric_values();
     let (numeric_var_id, threshold, mut operator) = match (
         left_is_coordinate,
         right_is_coordinate,

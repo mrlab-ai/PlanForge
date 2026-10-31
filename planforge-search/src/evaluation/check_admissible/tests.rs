@@ -161,7 +161,7 @@ fn goal_distance_is_computed_per_state() {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();
     let successor = registry
-        .get_successor_state(&initial_state, &task.get_operators()[0])
+        .get_successor_state(&initial_state, &task.operators()[0])
         .expect("`step_0_1` is applicable in the initial state");
 
     let oracle = &mut heuristic.oracle;

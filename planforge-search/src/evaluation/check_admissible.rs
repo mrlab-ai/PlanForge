@@ -249,7 +249,7 @@ impl<'task> GoalDistanceOracle<'task> {
             })?;
             for &applicable_id in expansion.applicable_operators() {
                 let operator_id = applicable_id.index();
-                let operator = &task.get_operators()[operator_id];
+                let operator = &task.operators()[operator_id];
                 let (successor, _) = expansion.successor(registry, operator).map_err(|error| {
                     format!(
                         "the admissibility oracle could not apply `{}`: {}",

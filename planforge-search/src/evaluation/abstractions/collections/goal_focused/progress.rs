@@ -57,7 +57,7 @@ impl<'task> ProgressStates<'task> {
         Ok(Self {
             states,
             initial_state,
-            goal_count: task.get_num_goals(),
+            goal_count: task.goals().len(),
             variants,
             continuation_queue: VecDeque::new(),
         })

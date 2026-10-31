@@ -75,7 +75,7 @@ impl CausalGraph {
             }
         }
 
-        for operator in task.get_operators() {
+        for operator in task.operators() {
             let precondition_sources = graph.precondition_sources(task, operator.preconditions());
             let effect_targets: Vec<CausalGraphVariable> = operator
                 .effects()
@@ -223,7 +223,7 @@ fn numeric_effect_target(
         .get(effect.var_id().index())
         .is_some_and(|variable| variable.get_type() == &NumericType::Constant)
         && task
-            .get_initial_numeric_state_values()
+            .initial_numeric_values()
             .get(effect.var_id().index())
             .copied()
             == Some(ZERO_VALUE)
@@ -234,8 +234,6 @@ fn numeric_effect_target(
 }
 
 fn is_regular_propositional_var(task: &dyn AbstractNumericTask, var_id: VariableIndex) -> bool {
-    task.get_variable_axiom_layer(var_id)
-        .unwrap_or(None)
-        .is_none()
+    task.variable(var_id).axiom_layer().is_none()
         && !task.numeric_conditions().is_condition_var(var_id)
 }

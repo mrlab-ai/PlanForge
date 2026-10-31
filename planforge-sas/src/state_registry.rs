@@ -581,7 +581,7 @@ impl<'a> StateRegistry<'a> {
 
         let numeric_var_types: Vec<NumericType> =
             numeric_vars.iter().map(|var| *var.get_type()).collect();
-        let initial_numeric_values = task.get_initial_numeric_state_values();
+        let initial_numeric_values = task.initial_numeric_values();
         assert_eq!(
             initial_numeric_values.len(),
             numeric_var_types.len(),
@@ -638,8 +638,8 @@ impl<'a> StateRegistry<'a> {
         let mut has_propositional_derived = false;
         for var_id in 0..numeric_slot_offset {
             let axiom_layer = task
-                .get_variable_axiom_layer(VariableIndex::from_usize(var_id))
-                .expect("variable id below the packer's numeric offset must exist in the task");
+                .variable(VariableIndex::from_usize(var_id))
+                .axiom_layer();
             match axiom_layer {
                 None => non_derived_var_ids.push(var_id),
                 Some(_) => has_propositional_derived = true,
@@ -868,9 +868,8 @@ impl<'a> StateRegistry<'a> {
         let mut init_buffer = vec![0u64; self.global_state_packer.num_bins()];
 
         // Get copies of initial state values to avoid borrowing conflicts.
-        let initial_propositional_values =
-            self.task.get_initial_propositional_state_values().to_vec();
-        let initial_numeric_values = self.task.get_initial_numeric_state_values().to_vec();
+        let initial_propositional_values = self.task.initial_propositional_values().to_vec();
+        let initial_numeric_values = self.task.initial_numeric_values().to_vec();
 
         // Pack propositional variables.
         self.pack_propositional_variables(&mut init_buffer, &initial_propositional_values);

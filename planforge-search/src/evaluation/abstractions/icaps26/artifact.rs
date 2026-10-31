@@ -107,7 +107,7 @@ pub(super) fn add_icaps26_propositional_loop_replacements(
     old_state_id: usize,
     new_state_id: usize,
 ) {
-    let op = &semantics.task.get_operators()[op_id.index()];
+    let op = &semantics.task.operators()[op_id.index()];
     let pre: Option<ExplicitValueIndex> = op
         .preconditions()
         .iter()

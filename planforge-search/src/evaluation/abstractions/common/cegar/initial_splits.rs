@@ -118,7 +118,7 @@ pub(crate) fn initial_splits(
         }
         return vec![InitialSplit::Propositional {
             var_id: var,
-            initial_value: task.get_initial_propositional_state_values()[var.index()],
+            initial_value: task.initial_propositional_values()[var.index()],
         }];
     }
     assert!(

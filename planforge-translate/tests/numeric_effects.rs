@@ -46,7 +46,7 @@ fn a_transfer_onto_itself_has_one_effect_per_fluent() {
     .expect("translation failed");
     std::fs::remove_dir_all(domain.parent().expect("fixture directory")).expect("remove fixture");
 
-    let initial = task.get_initial_numeric_state_values();
+    let initial = task.initial_numeric_values();
     // Effects on the fluent `x`, not the `total-cost` bookkeeping.
     let fluent_effects = |effects: &[AssignmentEffect]| -> Vec<AssignmentEffect> {
         effects
@@ -59,7 +59,7 @@ fn a_transfer_onto_itself_has_one_effect_per_fluent() {
             .collect()
     };
     let mut checked = HashSet::new();
-    for operator in task.get_operators() {
+    for operator in task.operators() {
         let effects = fluent_effects(operator.assignment_effects());
         let mut affected = HashSet::new();
         for effect in &effects {

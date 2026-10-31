@@ -210,11 +210,8 @@ fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
         parse_numeric_sas_output(INTERLEAVED_CONDITIONS_SAS).expect("the fixture parses");
     assert_eq!(rest, "");
 
-    let names: Vec<&str> = (0..task.get_num_variables() as u32)
-        .map(|var_id| {
-            task.get_variable_name(VariableIndex::new(var_id))
-                .expect("variable in range")
-        })
+    let names: Vec<&str> = (0..task.variables().len() as u32)
+        .map(|var_id| task.variable(VariableIndex::new(var_id)).name())
         .collect();
     assert_eq!(names, ["var0", "var1", "var2", "var3", "var4", "var5"]);
     let conditions = task.numeric_conditions();
@@ -239,24 +236,21 @@ fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
     // is two-valued and its `<none of those>` default collapses onto
     // `False`. `var5` is the derived one.
     assert_eq!(
-        task.get_variable_domain_size(VariableIndex::new(1)),
-        Ok(ConditionValue::DOMAIN_SIZE)
+        task.variable(VariableIndex::new(1)).domain_size(),
+        ConditionValue::DOMAIN_SIZE
     );
     assert_eq!(
-        task.get_variable_default_axiom_value(VariableIndex::new(1)),
-        Ok(ExplicitValueIndex::new(ConditionValue::False.as_u32()))
+        task.variable(VariableIndex::new(1)).axiom_default_value(),
+        ExplicitValueIndex::new(ConditionValue::False.as_u32())
     );
-    assert_eq!(
-        task.get_variable_axiom_layer(VariableIndex::new(5)),
-        Ok(Some(1))
-    );
-    assert_eq!(task.get_variable_name(VariableIndex::new(5)), Ok("var5"));
+    assert_eq!(task.variable(VariableIndex::new(5)).axiom_layer(), Some(1));
+    assert_eq!(task.variable(VariableIndex::new(5)).name(), "var5");
 
     // The initial state is the file's, closed under the axioms: `cond_ge`
     // holds, `cond_lt` does not, and `d` is proven by the rule that reads
     // `cond_ge`.
     assert_eq!(
-        task.get_initial_propositional_state_values(),
+        task.initial_propositional_values(),
         // a=0, cond_ge=true, b=0, cond_lt=false, c=0, d=true
         [
             ExplicitValueIndex::new(0),
@@ -292,7 +286,7 @@ fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
     // Operator preconditions and effects, including the effect condition and
     // the guard of an assignment effect. `raise_x` gains a precondition on
     // its effect variable from the `0` precondition value in `0 4 0 1`.
-    let raise_x = &task.get_operators()[0];
+    let raise_x = &task.operators()[0];
     assert_eq!(raise_x.name(), "raise_x");
     assert_eq!(
         raise_x.preconditions(),
@@ -307,7 +301,7 @@ fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
         VariableIndex::new(0)
     );
 
-    let guarded = &task.get_operators()[1];
+    let guarded = &task.operators()[1];
     assert_eq!(
         guarded.effects()[0].conditions(),
         &vec![ExplicitFact::condition(3, 0)]

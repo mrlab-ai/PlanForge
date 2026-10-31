@@ -23,7 +23,7 @@ pub(crate) fn print_projection_summary(
     );
     info!(
         "  goals/operators:    goals={} operators={}",
-        projected_task.get_num_goals(),
-        projected_task.get_operators().len()
+        projected_task.goals().len(),
+        projected_task.operators().len()
     );
 }

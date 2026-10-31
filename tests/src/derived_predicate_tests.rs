@@ -166,10 +166,10 @@ fn comparison_heads(task: &NumericRootTask) -> BTreeSet<usize> {
 
 fn derived_propositional_variables(task: &NumericRootTask) -> Vec<usize> {
     let comparisons = comparison_heads(task);
-    (0..task.get_num_variables())
+    (0..task.variables().len())
         .filter(|&var| {
-            task.get_variable_axiom_layer(VariableIndex::from_usize(var))
-                .expect("variable is in range")
+            task.variable(VariableIndex::from_usize(var))
+                .axiom_layer()
                 .is_some()
                 && !comparisons.contains(&var)
         })
@@ -183,14 +183,14 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
         .iter()
         .map(|&var| {
             assert_eq!(
-                task.get_variable_domain_size(VariableIndex::from_usize(var)),
-                Ok(2),
+                task.variable(VariableIndex::from_usize(var)).domain_size(),
+                2,
                 "{name}: derived variable {var} is not binary, so it has no single \
                  negation-by-failure value"
             );
             let default = task
-                .get_variable_default_axiom_value(VariableIndex::from_usize(var))
-                .expect("variable is in range");
+                .variable(VariableIndex::from_usize(var))
+                .axiom_default_value();
             (var, default.index())
         })
         .collect();
@@ -230,9 +230,9 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
         layers: derived
             .iter()
             .map(|&var| {
-                task.get_variable_axiom_layer(VariableIndex::from_usize(var))
-                    .expect("variable is in range")
-                    .expect("derived variable has a layer")
+                task.variable(VariableIndex::from_usize(var))
+                    .axiom_layer()
+                    .expect("a derived variable has an axiom layer")
             })
             .collect::<BTreeSet<usize>>()
             .len(),
@@ -551,7 +551,7 @@ fn a_derived_closure_grows_when_an_operator_extends_the_graph() {
     let arc = Arc::new(&task);
     let mut registry = StateRegistry::for_task(arc.clone());
     let build_link = task
-        .get_operators()
+        .operators()
         .iter()
         .find(|operator| operator.name() == "build-link n4 n5")
         .expect("the fixture has a `build-link n4 n5` operator");
@@ -570,8 +570,8 @@ fn a_derived_closure_grows_when_an_operator_extends_the_graph() {
             .filter(|&var| {
                 propositional[var]
                     != task
-                        .get_variable_default_axiom_value(VariableIndex::from_usize(var))
-                        .expect("variable is in range")
+                        .variable(VariableIndex::from_usize(var))
+                        .axiom_default_value()
             })
             .collect()
     };

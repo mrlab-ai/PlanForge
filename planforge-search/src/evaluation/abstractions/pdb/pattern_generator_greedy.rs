@@ -72,9 +72,7 @@ pub fn generate_greedy_pattern(
                 .estimate_domain_size(next_var_id)
                 .max(1)
         } else {
-            task.get_variable_domain_size(next_var_id)
-                .expect("variable order must contain valid propositional IDs")
-                .max(1)
+            task.variable(next_var_id).domain_size().max(1)
         };
 
         if size.saturating_mul(next_var_size) > config.max_pdb_states {

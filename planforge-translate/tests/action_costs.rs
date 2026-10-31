@@ -41,7 +41,7 @@ fn operator_costs(name: &str, problem_text: &str) -> Vec<(String, f64)> {
     std::fs::remove_dir_all(&dir).expect("remove fixture");
 
     let mut costs: Vec<(String, f64)> = task
-        .get_operators()
+        .operators()
         .iter()
         .map(|operator| operator.name().to_string())
         .zip(metric_operator_costs(&task))

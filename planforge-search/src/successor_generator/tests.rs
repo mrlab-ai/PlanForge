@@ -209,7 +209,7 @@ fn test_generate_immediate_successor_of_init_state() {
     let mut applicable_operators = Vec::new();
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);
 
-    let op = &task.get_operators()[applicable_operators[0].index()];
+    let op = &task.operators()[applicable_operators[0].index()];
 
     let successor = state_registry
         .get_successor_state(&initial_state, op)
@@ -233,7 +233,7 @@ fn test_duplicate_successor_should_not_generate_new_id() {
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);
 
     // Get the first applicable operator
-    let op = &task.get_operators()[applicable_operators[0].index()];
+    let op = &task.operators()[applicable_operators[0].index()];
 
     assert_eq!(op.name(), "drop");
     assert_eq!(initial_state.get_id(), 0);
@@ -279,7 +279,7 @@ fn registry_expander_matches_registry_successors() {
     );
     assert_eq!(expansion.applicable_operators(), [OperatorIndex::new(0)]);
     for &operator_id in expansion.applicable_operators() {
-        let operator = &task.get_operators()[operator_id.index()];
+        let operator = &task.operators()[operator_id.index()];
         let (successor, cost) = expansion.successor(&mut registry, operator).unwrap();
         let (reference_successor, reference_cost) = reference
             .get_successor_state_with_buffers_and_cost(

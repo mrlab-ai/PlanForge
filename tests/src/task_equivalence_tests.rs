@@ -131,7 +131,7 @@ fn tagged_facts(task: &NumericRootTask) -> Vec<TaggedSection> {
     for (mutex_id, mutex) in task.mutexes().iter().enumerate() {
         sections.push((format!("mutex group {mutex_id}"), tagged(mutex)));
     }
-    for (operator_id, operator) in task.get_operators().iter().enumerate() {
+    for (operator_id, operator) in task.operators().iter().enumerate() {
         sections.push((
             format!("operator {operator_id} preconditions"),
             tagged(operator.preconditions()),
@@ -177,8 +177,12 @@ fn assert_tasks_are_equivalent(direct: &NumericRootTask, parsed: &NumericRootTas
             "{what}: variable {var_id}"
         );
         assert_eq!(
-            direct.get_variable_default_axiom_value(VariableIndex::from_usize(var_id)),
-            parsed.get_variable_default_axiom_value(VariableIndex::from_usize(var_id)),
+            direct
+                .variable(VariableIndex::from_usize(var_id))
+                .axiom_default_value(),
+            parsed
+                .variable(VariableIndex::from_usize(var_id))
+                .axiom_default_value(),
             "{what}: axiom default of variable {var_id}"
         );
     }
@@ -189,14 +193,14 @@ fn assert_tasks_are_equivalent(direct: &NumericRootTask, parsed: &NumericRootTas
     );
 
     assert_eq!(
-        direct.get_operators().len(),
-        parsed.get_operators().len(),
+        direct.operators().len(),
+        parsed.operators().len(),
         "{what}: number of operators"
     );
     for (operator_id, (direct_operator, parsed_operator)) in direct
-        .get_operators()
+        .operators()
         .iter()
-        .zip(parsed.get_operators())
+        .zip(parsed.operators())
         .enumerate()
     {
         assert_eq!(
@@ -229,14 +233,14 @@ fn assert_tasks_are_equivalent(direct: &NumericRootTask, parsed: &NumericRootTas
         "{what}: global constraint"
     );
     assert_eq!(
-        direct.get_num_goals(),
-        parsed.get_num_goals(),
+        direct.goals().len(),
+        parsed.goals().len(),
         "{what}: number of goals"
     );
-    for index in 0..direct.get_num_goals() {
+    for index in 0..direct.goals().len() {
         assert_eq!(
-            direct.get_goal_fact(index),
-            parsed.get_goal_fact(index),
+            direct.goals()[index],
+            parsed.goals()[index],
             "{what}: goal {index}"
         );
     }
@@ -244,13 +248,13 @@ fn assert_tasks_are_equivalent(direct: &NumericRootTask, parsed: &NumericRootTas
     // Both halves of the initial state, already closed under the axioms, so this
     // compares what the axiom closure made of the two tasks as well.
     assert_eq!(
-        direct.get_initial_propositional_state_values(),
-        parsed.get_initial_propositional_state_values(),
+        direct.initial_propositional_values(),
+        parsed.initial_propositional_values(),
         "{what}: initial propositional state"
     );
     assert_eq!(
-        direct.get_initial_numeric_state_values(),
-        parsed.get_initial_numeric_state_values(),
+        direct.initial_numeric_values(),
+        parsed.initial_numeric_values(),
         "{what}: initial numeric state"
     );
 

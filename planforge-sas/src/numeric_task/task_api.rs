@@ -8,10 +8,15 @@ use super::*;
 /// That is what lets the trait require `Send + Sync`, which in turn makes
 /// [`TaskRef`] shareable across threads.
 pub trait AbstractNumericTask: Send + Sync {
-    fn variables(&self) -> &Vec<ExplicitVariable>;
-    fn numeric_variables(&self) -> &Vec<NumericVariable>;
-    fn assignment_axioms(&self) -> &Vec<AssignmentAxiom>;
-    fn comparison_axioms(&self) -> &Vec<ComparisonAxiom>;
+    fn variables(&self) -> &[ExplicitVariable];
+    fn numeric_variables(&self) -> &[NumericVariable];
+
+    /// The propositional variable `var`.
+    fn variable(&self, var: VariableIndex) -> &ExplicitVariable {
+        &self.variables()[var.index()]
+    }
+    fn assignment_axioms(&self) -> &[AssignmentAxiom];
+    fn comparison_axioms(&self) -> &[ComparisonAxiom];
     /// The task's numeric conditions, one per comparison axiom, built once
     /// when the task is constructed. This is the only place the
     /// "propositional variable -> comparison axiom" mapping lives.
@@ -21,33 +26,23 @@ pub trait AbstractNumericTask: Send + Sync {
     /// of rebuilding or deep-copying them. Method calls auto-deref, so
     /// `task.numeric_conditions().for_var(v)` reads as usual.
     fn numeric_conditions(&self) -> &Arc<NumericConditions>;
-    fn axioms(&self) -> &Vec<PropositionalAxiom>;
+    fn axioms(&self) -> &[PropositionalAxiom];
     fn metric(&self) -> &Metric;
 
-    fn get_num_variables(&self) -> usize;
-    fn get_variable_name(&self, index: VariableIndex) -> Result<&str, &str>;
-    fn get_variable_domain_size(&self, index: VariableIndex) -> Result<usize, &str>;
-    fn get_variable_axiom_layer(&self, index: VariableIndex) -> Result<Option<usize>, &str>;
-    fn get_variable_default_axiom_value(
-        &self,
-        index: VariableIndex,
-    ) -> Result<ExplicitValueIndex, &str>;
-    fn get_fact_name(&self, fact: &ExplicitFact) -> &str;
+    fn fact_name(&self, fact: &ExplicitFact) -> &str;
 
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool;
 
-    fn get_operators(&self) -> &Vec<Operator>;
+    fn operators(&self) -> &[Operator];
 
     fn goals(&self) -> &[ExplicitFact];
-    fn get_num_goals(&self) -> usize;
-    fn get_goal_fact(&self, index: usize) -> &ExplicitFact;
 
     /// The initial values of the propositional variables, already closed
     /// under the task's axioms.
-    fn get_initial_propositional_state_values(&self) -> &[ExplicitValueIndex];
+    fn initial_propositional_values(&self) -> &[ExplicitValueIndex];
     /// The initial values of the numeric variables, already closed under the
     /// task's axioms.
-    fn get_initial_numeric_state_values(&self) -> &[NumericValue];
+    fn initial_numeric_values(&self) -> &[NumericValue];
 
     /// The initial state closed under the task's axioms.
     fn evaluate_initial_state_values(
@@ -57,13 +52,14 @@ pub trait AbstractNumericTask: Send + Sync {
     /// Effective operator costs in task order. Root tasks compute these once
     /// when closing the initial state; views can expose the same stored table.
     fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
-        (0..self.get_operators().len())
-            .map(|id| self.operator_cost_for_abstraction(OperatorIndex::from_usize(id)))
+        (0..self.operators().len())
+            .map(|id| self.operator_cost(OperatorIndex::from_usize(id)))
             .collect()
     }
 
-    /// Customization hook used by [`NumericTaskExt::abstract_operator_cost`].
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64;
+    /// What applying `operator_id` costs: its declared cost, or the metric
+    /// increase it causes in the initial state.
+    fn operator_cost(&self, operator_id: OperatorIndex) -> f64;
 }
 
 /// Derived task operations shared by every [`AbstractNumericTask`].
@@ -72,10 +68,6 @@ pub trait AbstractNumericTask: Send + Sync {
 /// wrappers from accidentally inheriting a default instead of forwarding an
 /// implementor's projection or cost semantics.
 pub trait NumericTaskExt: AbstractNumericTask {
-    fn abstract_operator_cost(&self, operator_id: OperatorIndex) -> f64 {
-        self.operator_cost_for_abstraction(operator_id)
-    }
-
     fn assignment_axiom_lookup(&self) -> Result<Vec<Option<AxiomIndex>>, NumericConditionError> {
         assignment_axiom_lookup(self.numeric_variables().len(), self.assignment_axioms())
     }
@@ -180,7 +172,7 @@ pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
 pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
     if !task.metric().use_metric() {
         return task
-            .get_operators()
+            .operators()
             .iter()
             .map(|operator| operator.cost().value() as f64)
             .collect();
@@ -191,7 +183,7 @@ pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
         .unwrap_or_else(|error| panic!("the initial state violates the axioms: {error}"));
     let initial_metric = evaluate_metric_from_values(task, &initial_state.numeric);
     let mut successor = ExplicitState::default();
-    task.get_operators()
+    task.operators()
         .iter()
         .map(|operator| {
             states
@@ -231,7 +223,7 @@ fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
     }
 
     let operator = task
-        .get_operators()
+        .operators()
         .get(operator_id.index())
         .unwrap_or_else(|| {
             panic!("operator id {operator_id} is out of bounds for linear metric-cost extraction")
@@ -298,69 +290,47 @@ pub type TaskRef<'a> = Arc<dyn AbstractNumericTask + 'a>;
 /// in the single [`NumericTaskExt`] blanket implementation, so there are no
 /// default methods here that a reference wrapper can accidentally inherit.
 impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
-    fn variables(&self) -> &Vec<ExplicitVariable> {
+    fn variables(&self) -> &[ExplicitVariable] {
         (**self).variables()
     }
-    fn numeric_variables(&self) -> &Vec<NumericVariable> {
+    fn numeric_variables(&self) -> &[NumericVariable] {
         (**self).numeric_variables()
     }
-    fn assignment_axioms(&self) -> &Vec<AssignmentAxiom> {
+    fn assignment_axioms(&self) -> &[AssignmentAxiom] {
         (**self).assignment_axioms()
     }
-    fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
+    fn comparison_axioms(&self) -> &[ComparisonAxiom] {
         (**self).comparison_axioms()
     }
     fn numeric_conditions(&self) -> &Arc<NumericConditions> {
         (**self).numeric_conditions()
     }
-    fn axioms(&self) -> &Vec<PropositionalAxiom> {
+    fn axioms(&self) -> &[PropositionalAxiom] {
         (**self).axioms()
     }
     fn metric(&self) -> &Metric {
         (**self).metric()
     }
-    fn get_num_variables(&self) -> usize {
-        (**self).get_num_variables()
-    }
-    fn get_variable_name(&self, index: VariableIndex) -> Result<&str, &str> {
-        (**self).get_variable_name(index)
-    }
-    fn get_variable_domain_size(&self, index: VariableIndex) -> Result<usize, &str> {
-        (**self).get_variable_domain_size(index)
-    }
-    fn get_variable_axiom_layer(&self, index: VariableIndex) -> Result<Option<usize>, &str> {
-        (**self).get_variable_axiom_layer(index)
-    }
-    fn get_variable_default_axiom_value(
-        &self,
-        index: VariableIndex,
-    ) -> Result<ExplicitValueIndex, &str> {
-        (**self).get_variable_default_axiom_value(index)
-    }
-    fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
-        (**self).get_fact_name(fact)
+
+    fn fact_name(&self, fact: &ExplicitFact) -> &str {
+        (**self).fact_name(fact)
     }
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
         (**self).are_facts_mutex(fact1, fact2)
     }
-    fn get_operators(&self) -> &Vec<Operator> {
-        (**self).get_operators()
+    fn operators(&self) -> &[Operator] {
+        (**self).operators()
     }
 
     fn goals(&self) -> &[ExplicitFact] {
         (**self).goals()
     }
-    fn get_num_goals(&self) -> usize {
-        (**self).get_num_goals()
+
+    fn initial_propositional_values(&self) -> &[ExplicitValueIndex] {
+        (**self).initial_propositional_values()
     }
-    fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
-        (**self).get_goal_fact(index)
-    }
-    fn get_initial_propositional_state_values(&self) -> &[ExplicitValueIndex] {
-        (**self).get_initial_propositional_state_values()
-    }
-    fn get_initial_numeric_state_values(&self) -> &[NumericValue] {
-        (**self).get_initial_numeric_state_values()
+    fn initial_numeric_values(&self) -> &[NumericValue] {
+        (**self).initial_numeric_values()
     }
 
     fn evaluate_initial_state_values(
@@ -371,8 +341,8 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
         (**self).effective_operator_costs()
     }
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64 {
-        (**self).operator_cost_for_abstraction(operator_id)
+    fn operator_cost(&self, operator_id: OperatorIndex) -> f64 {
+        (**self).operator_cost(operator_id)
     }
 }
 
@@ -407,7 +377,7 @@ pub fn assert_fact_namespaces(task: &dyn AbstractNumericTask) {
         );
     };
 
-    for (operator_id, operator) in task.get_operators().iter().enumerate() {
+    for (operator_id, operator) in task.operators().iter().enumerate() {
         let origin = format_args!("operator {operator_id}").to_string();
         for precondition in operator.preconditions() {
             check(precondition, &origin);
@@ -718,8 +688,8 @@ impl NumericRootTask {
     ///
     /// The values a SAS file gives a derived variable are not its initial
     /// values but its axiom *defaults*; the real ones follow from the axioms.
-    /// Running the closure once here means `get_initial_propositional_state_values`
-    /// and `get_initial_numeric_state_values` describe a state the search can
+    /// Running the closure once here means `initial_propositional_values`
+    /// and `initial_numeric_values` describe a state the search can
     /// use as it stands, instead of one every consumer has to finish for
     /// itself.
     ///
@@ -785,19 +755,19 @@ impl NumericRootTask {
 }
 
 impl AbstractNumericTask for NumericRootTask {
-    fn variables(&self) -> &Vec<ExplicitVariable> {
+    fn variables(&self) -> &[ExplicitVariable] {
         &self.variables
     }
 
-    fn numeric_variables(&self) -> &Vec<NumericVariable> {
+    fn numeric_variables(&self) -> &[NumericVariable] {
         &self.numeric_variables
     }
 
-    fn assignment_axioms(&self) -> &Vec<AssignmentAxiom> {
+    fn assignment_axioms(&self) -> &[AssignmentAxiom] {
         &self.assignment_axioms
     }
 
-    fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
+    fn comparison_axioms(&self) -> &[ComparisonAxiom] {
         &self.comparison_axioms
     }
 
@@ -805,7 +775,7 @@ impl AbstractNumericTask for NumericRootTask {
         &self.numeric_conditions
     }
 
-    fn get_operators(&self) -> &Vec<Operator> {
+    fn operators(&self) -> &[Operator] {
         &self.operators
     }
 
@@ -813,7 +783,7 @@ impl AbstractNumericTask for NumericRootTask {
         &self.goals
     }
 
-    fn axioms(&self) -> &Vec<PropositionalAxiom> {
+    fn axioms(&self) -> &[PropositionalAxiom] {
         &self.axioms
     }
 
@@ -821,42 +791,7 @@ impl AbstractNumericTask for NumericRootTask {
         &self.metric
     }
 
-    fn get_num_variables(&self) -> usize {
-        self.variables.len()
-    }
-
-    fn get_variable_name(&self, index: VariableIndex) -> Result<&str, &str> {
-        if index.index() >= (self.variables.len()) {
-            return Err("Index out of bounds");
-        }
-        Ok(&self.variables[index.index()].name)
-    }
-
-    fn get_variable_domain_size(&self, index: VariableIndex) -> Result<usize, &str> {
-        if index.index() >= (self.variables.len()) {
-            return Err("Index out of bounds");
-        }
-        Ok(self.variables[index.index()].domain_size)
-    }
-
-    fn get_variable_axiom_layer(&self, index: VariableIndex) -> Result<Option<usize>, &str> {
-        if index.index() >= (self.variables.len()) {
-            return Err("Index out of bounds");
-        }
-        Ok(self.variables[index.index()].axiom_layer)
-    }
-
-    fn get_variable_default_axiom_value(
-        &self,
-        index: VariableIndex,
-    ) -> Result<ExplicitValueIndex, &str> {
-        if index.index() >= (self.variables.len()) {
-            return Err("Index out of bounds");
-        }
-        Ok(self.variables[index.index()].axiom_default_value)
-    }
-
-    fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
+    fn fact_name(&self, fact: &ExplicitFact) -> &str {
         // Only facts on genuine propositional variables name a ground atom. A
         // condition fact carries a numeric condition's truth value and a
         // numeric-variable fact a partition index; both reuse the variable-id
@@ -895,26 +830,15 @@ impl AbstractNumericTask for NumericRootTask {
         std::borrow::Cow::Borrowed(&self.operator_costs)
     }
 
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64 {
+    fn operator_cost(&self, operator_id: OperatorIndex) -> f64 {
         self.operator_costs[operator_id.index()]
     }
 
-    fn get_num_goals(&self) -> usize {
-        self.goals.len()
-    }
-
-    fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
-        if index >= self.goals.len() {
-            panic!("Goal index {} out of bounds", index);
-        }
-        &self.goals[index]
-    }
-
-    fn get_initial_propositional_state_values(&self) -> &[ExplicitValueIndex] {
+    fn initial_propositional_values(&self) -> &[ExplicitValueIndex] {
         &self.state
     }
 
-    fn get_initial_numeric_state_values(&self) -> &[NumericValue] {
+    fn initial_numeric_values(&self) -> &[NumericValue] {
         &self.numeric_state
     }
 
@@ -924,8 +848,8 @@ impl AbstractNumericTask for NumericRootTask {
         // Initial values are canonical by construction, as are
         // `ExplicitStateSpace::initial_state`.
         let mut state = ExplicitState {
-            propositional: self.get_initial_propositional_state_values().to_vec(),
-            numeric: self.get_initial_numeric_state_values().to_vec(),
+            propositional: self.initial_propositional_values().to_vec(),
+            numeric: self.initial_numeric_values().to_vec(),
         };
         ExplicitStateSpace::new(self)
             .close_under_axioms(&mut state)
@@ -1054,7 +978,7 @@ mod root_task_invariants {
         parts.numeric_state = vec![off_lattice];
         let task = NumericRootTask::new(parts);
         assert_eq!(
-            task.get_initial_numeric_state_values()[0].to_bits(),
+            task.initial_numeric_values()[0].to_bits(),
             off_lattice.to_bits()
         );
     }

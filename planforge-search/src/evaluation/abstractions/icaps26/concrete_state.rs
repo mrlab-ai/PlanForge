@@ -24,14 +24,10 @@ pub(super) fn get_initial_state(
     axiom_evaluator: &AxiomEvaluator,
 ) -> Result<(Vec<u64>, Vec<NumericValue>)> {
     let mut buffer = vec![0u64; state_packer.num_bins()];
-    for (var_id, &val) in task
-        .get_initial_propositional_state_values()
-        .iter()
-        .enumerate()
-    {
+    for (var_id, &val) in task.initial_propositional_values().iter().enumerate() {
         state_packer.set(&mut buffer, var_id, val.index() as u64);
     }
-    let mut numeric_state: Vec<NumericValue> = task.get_initial_numeric_state_values().to_vec();
+    let mut numeric_state: Vec<NumericValue> = task.initial_numeric_values().to_vec();
 
     axiom_evaluator
         .evaluate(&mut buffer, &mut numeric_state)

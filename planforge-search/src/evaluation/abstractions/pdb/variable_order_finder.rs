@@ -50,8 +50,8 @@ impl VariableOrderFinder {
         }
         for var_id in 0..task.variables().len() {
             if task
-                .get_variable_axiom_layer(VariableIndex::from_usize(var_id))
-                .unwrap_or(None)
+                .variable(VariableIndex::from_usize(var_id))
+                .axiom_layer()
                 .is_none()
                 && !task
                     .comparison_axioms()
@@ -71,8 +71,7 @@ impl VariableOrderFinder {
         }
 
         let mut is_goal_variable = vec![false; task.variables().len()];
-        for goal_index in 0..task.get_num_goals() {
-            let goal = task.get_goal_fact(goal_index);
+        for goal in task.goals() {
             is_goal_variable[goal.var()] = true;
         }
 

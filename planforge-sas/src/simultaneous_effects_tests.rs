@@ -73,14 +73,14 @@ fn successor_values(effects: Vec<AssignmentEffect>) -> Vec<NumericValue> {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let successor = registry
-        .get_successor_state(&initial, &task.get_operators()[0])
+        .get_successor_state(&initial, &task.operators()[0])
         .expect("operator applies to the initial state");
     let values = registry
         .get_numeric_vars(&successor)
         .expect("successor has numeric values");
     let space = ExplicitStateSpace::new(&*task);
     let explicit = space
-        .successor(&space.initial_state().unwrap(), &task.get_operators()[0])
+        .successor(&space.initial_state().unwrap(), &task.operators()[0])
         .unwrap();
     assert_eq!(explicit.numeric, values, "explicit successor differs");
     values
@@ -224,7 +224,7 @@ fn effect_conditions_are_read_from_the_parent_state() {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let successor = registry
-        .get_successor_state(&initial, &task.get_operators()[0])
+        .get_successor_state(&initial, &task.operators()[0])
         .expect("operator applies to the initial state");
 
     let values = registry
@@ -243,7 +243,7 @@ fn effect_conditions_are_read_from_the_parent_state() {
     );
     let space = ExplicitStateSpace::new(&*task);
     let explicit = space
-        .successor(&space.initial_state().unwrap(), &task.get_operators()[0])
+        .successor(&space.initial_state().unwrap(), &task.operators()[0])
         .unwrap();
     assert_eq!(explicit.propositional, [ExplicitValueIndex::new(1)]);
     assert_eq!(explicit.numeric, values);

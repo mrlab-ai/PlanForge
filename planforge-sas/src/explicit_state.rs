@@ -85,8 +85,8 @@ impl<'task> ExplicitStateSpace<'task> {
     /// registry.
     pub fn initial_state(&self) -> Result<ExplicitState, AxiomEvalError> {
         let mut state = ExplicitState {
-            propositional: self.task.get_initial_propositional_state_values().to_vec(),
-            numeric: self.task.get_initial_numeric_state_values().to_vec(),
+            propositional: self.task.initial_propositional_values().to_vec(),
+            numeric: self.task.initial_numeric_values().to_vec(),
         };
         self.close_under_axioms(&mut state)?;
         Ok(state)
@@ -148,7 +148,7 @@ impl<'task> ExplicitStateSpace<'task> {
         state: &ExplicitState,
         plan: &[OperatorIndex],
     ) -> Result<ExplicitState, AxiomEvalError> {
-        let operators = self.task.get_operators();
+        let operators = self.task.operators();
         let mut current = state.clone();
         let mut successor = state.clone();
         for &operator_id in plan {
@@ -160,7 +160,7 @@ impl<'task> ExplicitStateSpace<'task> {
 
     /// Whether `goal_id` holds in `state`.
     pub fn satisfies_goal(&self, state: &ExplicitState, goal_id: usize) -> bool {
-        state.holds(self.task.get_goal_fact(goal_id))
+        state.holds(&self.task.goals()[goal_id])
     }
 
     /// How many goals hold in `state`.
@@ -200,7 +200,7 @@ impl<'task> ExplicitStateSpace<'task> {
     fn assert_layout(&self, state: &ExplicitState) {
         assert_eq!(
             state.propositional.len(),
-            self.task.get_num_variables(),
+            self.task.variables().len(),
             "state has the wrong number of propositional values"
         );
         assert_eq!(

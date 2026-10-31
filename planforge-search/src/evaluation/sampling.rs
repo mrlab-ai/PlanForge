@@ -2,7 +2,7 @@
 //! diversification of saturated cost partitioning (Seipp et al. 2020) sample
 //! states with.
 
-use planforge_sas::numeric_task::{NumericTaskExt, OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::{OperatorIndex, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use rand::Rng;
@@ -26,12 +26,12 @@ impl<'task> RandomWalkSampler<'task> {
     pub(crate) fn new(task: TaskRef<'task>) -> Self {
         let mut registry = StateRegistry::for_task(task.clone());
         let initial_state = registry.get_initial_state();
-        let num_operators = task.get_operators().len();
+        let num_operators = task.operators().len();
         let average_operator_cost = if num_operators == 0 {
             0.0
         } else {
             (0..num_operators)
-                .map(|id| task.abstract_operator_cost(OperatorIndex::from_usize(id)))
+                .map(|id| task.operator_cost(OperatorIndex::from_usize(id)))
                 .sum::<f64>()
                 / num_operators as f64
         };
@@ -85,7 +85,7 @@ impl<'task> RandomWalkSampler<'task> {
             let Some(&operator_id) = expansion.applicable_operators().choose(rng) else {
                 break;
             };
-            let operator = &self.task.get_operators()[operator_id.index()];
+            let operator = &self.task.operators()[operator_id.index()];
             let (successor, _) =
                 expansion
                     .successor(&mut self.registry, operator)

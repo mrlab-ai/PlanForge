@@ -233,8 +233,7 @@ fn translated_tasks_satisfy_the_axiom_layering_contract() {
 
 pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask) {
     let layer_of = |var: usize| -> Option<usize> {
-        task.get_variable_axiom_layer(VariableIndex::from_usize(var))
-            .unwrap_or_else(|e| panic!("{name}: variable {var} out of range: {e}"))
+        task.variable(VariableIndex::from_usize(var)).axiom_layer()
     };
     let numeric_count = task.numeric_variables().len();
 
@@ -303,15 +302,13 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
             // never look satisfied. Interval-based abstractions rely on exactly
             // that, and on there being no third value to mean anything else.
             assert_eq!(
-                task.get_variable_domain_size(head),
-                Ok(ConditionValue::DOMAIN_SIZE),
+                task.variable(head).domain_size(),
+                ConditionValue::DOMAIN_SIZE,
                 "{name}: comparison-axiom head {head} is not a two-valued condition variable"
             );
             assert_eq!(
-                task.get_variable_default_axiom_value(head),
-                Ok(ExplicitValueIndex::from_usize(
-                    ConditionValue::False.as_usize()
-                )),
+                task.variable(head).axiom_default_value(),
+                ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
                 "{name}: comparison-axiom head {head} must default to `False`"
             );
             for operand in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
@@ -332,7 +329,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
     );
 
     let derived_propositional_layers: BTreeSet<usize> =
-        (0..task.get_num_variables()).filter_map(layer_of).collect();
+        (0..task.variables().len()).filter_map(layer_of).collect();
     if let Some(&comparison_layer) = comparison_layers.iter().next() {
         assert_eq!(
             derived_propositional_layers.iter().next(),
@@ -374,7 +371,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
 
     // Derived variables are the axioms' business alone: no operator may write
     // one, or the axiom layer it was computed at would be silently invalidated.
-    for operator in task.get_operators() {
+    for operator in task.operators() {
         for effect in operator.effects() {
             assert!(
                 layer_of(effect.var_id().index()).is_none(),
@@ -418,9 +415,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
 fn assert_every_axiom_proves_its_head(name: &str, task: &dyn AbstractNumericTask) {
     for (axiom_id, axiom) in task.axioms().iter().enumerate() {
         let head = axiom.var_id();
-        let default = task
-            .get_variable_default_axiom_value(head)
-            .unwrap_or_else(|e| panic!("{name}: variable {head} out of range: {e}"));
+        let default = task.variable(head).axiom_default_value();
         assert_ne!(
             axiom.effect_value(),
             default,
@@ -454,8 +449,8 @@ fn assert_negation_by_failure_reads_a_settled_layer(
 ) {
     let derived_layer = |var: usize| -> Option<usize> {
         let layer = task
-            .get_variable_axiom_layer(VariableIndex::from_usize(var))
-            .unwrap_or_else(|e| panic!("{name}: variable {var} out of range: {e}"))?;
+            .variable(VariableIndex::from_usize(var))
+            .axiom_layer()?;
         // A comparison head also carries a layer, but its value comes from the
         // numeric pass rather than from Horn rules, and its `unknown` default is
         // never derived, so it is not a negation-by-failure literal.
@@ -473,8 +468,8 @@ fn assert_negation_by_failure_reads_a_settled_layer(
                 continue;
             };
             let default = task
-                .get_variable_default_axiom_value(VariableIndex::from_usize(read))
-                .unwrap_or_else(|e| panic!("{name}: variable {read} out of range: {e}"));
+                .variable(VariableIndex::from_usize(read))
+                .axiom_default_value();
             if condition.value_index() != default {
                 continue;
             }
@@ -500,7 +495,7 @@ fn numeric_effect_shapes_are_pinned_per_benchmark() {
     for (name, _, task) in translated_benchmarks() {
         let mut repeated = false;
         let mut conditional = false;
-        for operator in task.get_operators() {
+        for operator in task.operators() {
             let mut targets = BTreeSet::new();
             for effect in operator.assignment_effects() {
                 repeated |= !targets.insert(effect.affected_var_id());

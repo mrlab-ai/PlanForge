@@ -9,8 +9,7 @@ use std::sync::Arc;
 
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue,
-    OperatorIndex, TaskRef,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
@@ -168,9 +167,8 @@ impl<'task> PatternDatabase<'task> {
                 seeds.push((state_id, h.max(min_operator_cost)));
             }
         }
-        let distances = transitions.backward_dijkstra(&seeds, |operator_id| {
-            task.abstract_operator_cost(operator_id)
-        });
+        let distances =
+            transitions.backward_dijkstra(&seeds, |operator_id| task.operator_cost(operator_id));
 
         let mut relevant_operator_ids: Vec<OperatorIndex> = if exhausted {
             transitions
@@ -604,7 +602,7 @@ fn explore(
     inner: &mut InnerHeuristics<'_>,
 ) -> Result<Exploration, String> {
     let mut expander = RegistryExpander::new(task);
-    let operators = task.get_operators();
+    let operators = task.operators();
     let initial_state = registry.get_initial_state();
     assert_eq!(
         initial_state.get_id(),
@@ -665,7 +663,7 @@ fn explore(
             let Some(h) = inner.estimate(heuristic, successor_id, registry) else {
                 continue;
             };
-            let g = entry.g.into_inner() + task.abstract_operator_cost(operator_id);
+            let g = entry.g.into_inner() + task.operator_cost(operator_id);
             let h = match heuristic {
                 PdbInternalHeuristic::Zero | PdbInternalHeuristic::Blind => 0.0,
                 PdbInternalHeuristic::Lmcut => h,

@@ -87,7 +87,7 @@ impl CartesianSemantics<'_> {
         dimension: SplitDimension,
     ) -> Result<bool> {
         let regions = self.cegar.regions();
-        for precondition in self.task().get_operators()[op_id.index()].preconditions() {
+        for precondition in self.task().operators()[op_id.index()].preconditions() {
             if self.variable_dimensions[precondition.var_index().index()]
                 .binary_search(&dimension)
                 .is_ok()

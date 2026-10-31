@@ -15,9 +15,9 @@ impl Icaps26CartesianGenerator {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
         let initial_region = semantics.trivial_region()?;
-        let operator_count = semantics.task.get_operators().len();
+        let operator_count = semantics.task.operators().len();
         let mut working = WorkingAbstraction::new_icaps26(initial_region, operator_count);
-        for op_id in 0..task.get_operators().len() {
+        for op_id in 0..task.operators().len() {
             if semantics.may_transition(
                 &working.states[0],
                 OperatorIndex::from_usize(op_id),

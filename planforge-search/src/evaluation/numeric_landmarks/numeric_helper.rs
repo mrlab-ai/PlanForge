@@ -201,7 +201,7 @@ impl NumericTaskHelper {
         build_bound_metadata: bool,
     ) -> Self {
         let mut helper = Self {
-            fact_to_axiom_marker: vec![None; task.get_num_variables()],
+            fact_to_axiom_marker: vec![None; task.variables().len()],
             numeric_variable_index_by_task_id: vec![None; task.numeric_variables().len()],
             ..Self::default()
         };
@@ -220,7 +220,7 @@ impl NumericTaskHelper {
             helper.build_actions(task, &[], precision, false);
             helper.build_propositions(task);
             helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
-            helper.calculate_epsilons(task.get_operators().len(), precision, default_epsilon);
+            helper.calculate_epsilons(task.operators().len(), precision, default_epsilon);
         }
         helper
     }
@@ -234,7 +234,7 @@ impl NumericTaskHelper {
         build_bound_metadata: bool,
     ) -> Self {
         let mut helper = Self {
-            fact_to_axiom_marker: vec![None; task.get_num_variables()],
+            fact_to_axiom_marker: vec![None; task.variables().len()],
             numeric_variable_index_by_task_id: vec![None; task.numeric_variables().len()],
             ..Self::default()
         };
@@ -262,7 +262,7 @@ impl NumericTaskHelper {
         if build_bound_metadata {
             helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
         }
-        helper.calculate_epsilons(task.get_operators().len(), precision, default_epsilon);
+        helper.calculate_epsilons(task.operators().len(), precision, default_epsilon);
         helper
     }
 
@@ -856,7 +856,7 @@ impl NumericTaskHelper {
         separate_constant_assignment: bool,
     ) {
         self.action_models.clear();
-        for (operator_id, operator) in task.get_operators().iter().enumerate() {
+        for (operator_id, operator) in task.operators().iter().enumerate() {
             let action_model = self.build_action(
                 task,
                 operator,
@@ -877,10 +877,10 @@ impl NumericTaskHelper {
         self.proposition_facts.clear();
         self.proposition_var_ids.clear();
         self.proposition_names.clear();
-        for var_id in 0..task.get_num_variables() {
+        for var_id in 0..task.variables().len() {
             let domain_size = task
-                .get_variable_domain_size(VariableIndex::from_usize(var_id))
-                .expect("helper proposition domain size must exist");
+                .variable(VariableIndex::from_usize(var_id))
+                .domain_size();
             let mut ids = Vec::with_capacity(domain_size);
             for value in 0..domain_size {
                 let proposition_id = self.proposition_facts.len();
@@ -889,7 +889,7 @@ impl NumericTaskHelper {
                 self.proposition_facts.push(fact);
                 self.proposition_var_ids.push(var_id);
                 self.proposition_names
-                    .push(task.get_fact_name(&fact).to_string());
+                    .push(task.fact_name(&fact).to_string());
             }
             self.proposition_ids_by_var_value.push(ids);
         }
@@ -911,7 +911,7 @@ impl NumericTaskHelper {
             simple_effects: vec![0.0; self.numeric_variable_ids.len()],
             is_assignment: vec![false; self.numeric_variable_ids.len()],
             assignment_values: vec![0.0; self.numeric_variable_ids.len()],
-            cost: task.abstract_operator_cost(operator_id),
+            cost: task.operator_cost(operator_id),
             ..HelperActionModel::default()
         };
 
@@ -1108,7 +1108,7 @@ impl NumericTaskHelper {
         precision: f64,
         infinity: f64,
     ) {
-        let initial_numeric_values = task.get_initial_numeric_state_values();
+        let initial_numeric_values = task.initial_numeric_values();
         self.numeric_variable_lower_bounds = self
             .numeric_variable_ids
             .iter()
@@ -1123,7 +1123,7 @@ impl NumericTaskHelper {
         self.numeric_variable_upper_bounds = self.numeric_variable_lower_bounds.clone();
 
         for local_var_id in 0..self.numeric_variable_ids.len() {
-            for action_model in self.action_models.iter().take(task.get_operators().len()) {
+            for action_model in self.action_models.iter().take(task.operators().len()) {
                 let effect = action_model.simple_effects[local_var_id];
                 if effect.abs() < precision {
                     continue;
@@ -1251,7 +1251,7 @@ impl NumericTaskHelper {
     }
 
     fn build_numeric_goals(&mut self, task: &dyn AbstractNumericTask, precision: f64) {
-        self.goal_models = vec![HelperPreconditionLists::default(); task.get_num_goals()];
+        self.goal_models = vec![HelperPreconditionLists::default(); task.goals().len()];
         let mut axiom_table: BTreeMap<VariableIndex, Vec<VariableIndex>> = BTreeMap::new();
         let mut fact_table: BTreeMap<VariableIndex, Vec<ExplicitFact>> = BTreeMap::new();
 
@@ -1273,8 +1273,7 @@ impl NumericTaskHelper {
             }
         }
 
-        for goal_index in 0..task.get_num_goals() {
-            let goal = task.get_goal_fact(goal_index);
+        for (goal_index, goal) in task.goals().iter().enumerate() {
             let goal_var_id = goal.var_index();
             let Some(helper_numeric_vars) = axiom_table.get(&goal_var_id) else {
                 continue;
@@ -1353,17 +1352,19 @@ impl NumericTaskHelper {
         // the axiom encoding did, so they also get their pairwise redundant
         // conditions. Only the goal models change: the variables stay ordinary
         // comparison variables for the preconditions that use them.
-        let direct_goal_indices = (0..task.get_num_goals())
-            .filter(|&goal_index| {
-                self.is_comparison_axiom_var(task.get_goal_fact(goal_index).var_index())
-            })
+        let direct_goal_indices = task
+            .goals()
+            .iter()
+            .enumerate()
+            .filter(|(_, goal)| self.is_comparison_axiom_var(goal.var_index()))
+            .map(|(goal_index, _)| goal_index)
             .collect::<Vec<_>>();
         if direct_goal_indices.is_empty() {
             return;
         }
         let mut group_ids = Vec::new();
         for &goal_index in &direct_goal_indices {
-            let goal = task.get_goal_fact(goal_index);
+            let goal = task.goals()[goal_index];
             let goal_group_ids = self
                 .comparison_fact_condition_group_ids(goal.var_index(), goal.value_index())
                 .unwrap_or_else(|| {
@@ -1411,7 +1412,7 @@ impl NumericTaskHelper {
         // A comparison axiom's affected variable is by definition the carrier of
         // a numeric condition.
         let fact = ExplicitFact::condition(affected_var_id.index(), fact_value.index());
-        let fact_name = match task.get_fact_name(&fact) {
+        let fact_name = match task.fact_name(&fact) {
             "" => format!("comparison fact {affected_var_id}={fact_value}"),
             name => name.to_string(),
         };

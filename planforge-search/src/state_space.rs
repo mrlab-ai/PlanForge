@@ -231,7 +231,7 @@ pub fn enumerate_state_space(
     check_time_limit(deadline, limits.max_time, 0, 0)?;
 
     let mut expander = RegistryExpander::new(&*task);
-    let operators = task.get_operators();
+    let operators = task.operators();
     let num_propositional_variables = task.variables().len();
     let num_numeric_variables = task.numeric_variables().len();
     let mut registry = StateRegistry::for_task(task.clone());

@@ -77,7 +77,7 @@ struct LeafEntry {
 }
 
 /// Decision tree returning the ids of the operators applicable in a given
-/// state. Callers resolve ids to `&Operator` via `task.get_operators()`.
+/// state. Callers resolve ids to `&Operator` via `task.operators()`.
 ///
 /// All nodes live in two `Vec`s on the same heap allocation each, so
 /// constructing the tree on tasks with hundreds of thousands of operators
@@ -109,7 +109,7 @@ impl Debug for SuccessorTree {
 impl SuccessorTree {
     pub fn new(task: &dyn AbstractNumericTask) -> Self {
         let mut builder = TreeBuilder::new(task);
-        let mut queue: VecDeque<OperatorIndex> = (0..task.get_operators().len() as u32)
+        let mut queue: VecDeque<OperatorIndex> = (0..task.operators().len() as u32)
             .map(OperatorIndex::new)
             .collect();
         let root = builder
@@ -287,7 +287,7 @@ struct TreeBuilder<'a> {
 
 impl<'a> TreeBuilder<'a> {
     fn new(task: &'a dyn AbstractNumericTask) -> Self {
-        let operators = task.get_operators();
+        let operators = task.operators();
         let mut conditions = Vec::with_capacity(operators.len());
         let mut next_condition_by_operator = Vec::with_capacity(operators.len());
 

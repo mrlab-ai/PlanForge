@@ -27,7 +27,7 @@ fn initial_state_and_successor_agree_with_the_registry() {
     let initial = space.initial_state().unwrap();
     assert_eq!(initial, registry_values(&registry, &registered_initial));
 
-    let operator = &task.get_operators()[0];
+    let operator = &task.operators()[0];
     assert!(initial.is_applicable(operator));
     let registered_successor = registry
         .get_successor_state(&registered_initial, operator)
@@ -49,7 +49,7 @@ fn a_state_of_another_layout_is_rejected() {
     let space = ExplicitStateSpace::new(&task);
     let mut state = space.initial_state().unwrap();
     state.propositional.pop();
-    let _ = space.successor(&state, &task.get_operators()[0]);
+    let _ = space.successor(&state, &task.operators()[0]);
 }
 
 #[test]

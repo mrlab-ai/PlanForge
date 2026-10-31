@@ -33,7 +33,7 @@ pub(crate) fn trivial_interval(task: &dyn AbstractNumericTask, var_id: VariableI
     if variable.get_type() != &NumericType::Constant {
         return Interval::unbounded();
     }
-    let value = task.get_initial_numeric_state_values()[var_id.index()];
+    let value = task.initial_numeric_values()[var_id.index()];
     assert!(
         value.is_finite(),
         "constant numeric variable {} has the non-finite value {value}",
@@ -63,7 +63,7 @@ pub struct RegionSemantics<'task> {
 
 impl<'task> RegionSemantics<'task> {
     pub(crate) fn new(task: &'task dyn AbstractNumericTask) -> Result<Self> {
-        let mut axioms_by_var = vec![Vec::new(); task.get_num_variables()];
+        let mut axioms_by_var = vec![Vec::new(); task.variables().len()];
         for (axiom_id, axiom) in task.axioms().iter().enumerate() {
             let var_id = axiom.var_id();
             ensure!(
@@ -95,7 +95,7 @@ impl<'task> RegionSemantics<'task> {
                 && axioms_by_var[var_id.index()].is_empty()
         };
         let successor_values = task
-            .get_operators()
+            .operators()
             .iter()
             .enumerate()
             .map(|(op_id, op)| {
@@ -154,7 +154,7 @@ impl<'task> RegionSemantics<'task> {
     /// The region of every state: all propositional values, unbounded
     /// numeric coordinates, constants at their values.
     pub(crate) fn trivial_region(&self) -> Result<CartesianSet> {
-        let propositions = (0..self.task.get_num_variables())
+        let propositions = (0..self.task.variables().len())
             .map(|var_id| {
                 let size = self.task.variables()[var_id].domain_size();
                 ensure!(size > 0, "propositional var {var_id} has an empty domain");
@@ -239,7 +239,7 @@ impl<'task> RegionSemantics<'task> {
     ) -> Result<bool> {
         let op = self
             .task
-            .get_operators()
+            .operators()
             .get(op_id.index())
             .with_context(|| format!("missing operator {op_id}"))?;
         self.admits_all(source, op.preconditions())

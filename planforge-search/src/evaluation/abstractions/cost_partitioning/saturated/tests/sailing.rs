@@ -167,8 +167,8 @@ fn initial_cartesian_scp_value(
     abstractions: Vec<CartesianAbstraction>,
     partitioning: bool,
 ) -> f64 {
-    let initial_prop = task.get_initial_propositional_state_values();
-    let initial_numeric = task.get_initial_numeric_state_values();
+    let initial_prop = task.initial_propositional_values();
+    let initial_numeric = task.initial_numeric_values();
     let abstract_state_ids = abstractions
         .iter()
         .map(|abstraction| {
@@ -375,11 +375,11 @@ fn build_handcrafted_abstraction(
         .iter()
         .map(ExplicitFact::var)
         .collect::<HashSet<_>>();
-    let domain_mapping = (0..transformed_task.get_num_variables())
+    let domain_mapping = (0..transformed_task.variables().len())
         .map(|var_id| {
             let domain_size = transformed_task
-                .get_variable_domain_size(VariableIndex::from_usize(var_id))
-                .expect("valid transformed prop var id");
+                .variable(VariableIndex::from_usize(var_id))
+                .domain_size();
             if goal_vars.contains(&var_id) {
                 (0..domain_size)
                     .map(ExplicitValueIndex::from_usize)
@@ -440,8 +440,8 @@ fn initial_abstract_state_ids(
     task: &dyn AbstractNumericTask,
 ) -> Vec<Option<usize>> {
     let values = ExplicitState {
-        propositional: task.get_initial_propositional_state_values().to_vec(),
-        numeric: task.get_initial_numeric_state_values().to_vec(),
+        propositional: task.initial_propositional_values().to_vec(),
+        numeric: task.initial_numeric_values().to_vec(),
     };
     heuristic
         .components
@@ -490,7 +490,7 @@ fn find_sailing_view(
 fn find_saved_goal_fact(task: &dyn AbstractNumericTask, person: &str) -> ExplicitFact {
     let suffix = format!(" {person}");
     let mut candidates = task
-        .get_operators()
+        .operators()
         .iter()
         .filter(|operator| operator.name().starts_with("save_person "))
         .filter(|operator| operator.name().ends_with(&suffix))
@@ -509,7 +509,7 @@ fn find_saved_goal_fact(task: &dyn AbstractNumericTask, person: &str) -> Explici
 }
 
 fn route_seed_splits(task: &dyn AbstractNumericTask, view_ids: &[usize]) -> Vec<NumericSeed> {
-    let initial = task.get_initial_numeric_state_values();
+    let initial = task.initial_numeric_values();
     let mut seeds = Vec::new();
     for &view_id in view_ids {
         add_split(

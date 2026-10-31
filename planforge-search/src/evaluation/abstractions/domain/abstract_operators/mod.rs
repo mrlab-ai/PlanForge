@@ -173,7 +173,7 @@ pub(super) fn build_abstract_operators(
     let mut skeletons = PropositionalSkeletons::new(function, task);
     let mut combiner = LabelCombiner::new(combine_labels, function.layout());
     let mut candidate = AbstractOperatorCandidate::default();
-    for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
+    for (concrete_op_id, op) in task.operators().iter().enumerate() {
         deadline.ensure(OPERATOR_GENERATION)?;
         let concrete_op_id = OperatorIndex::from_usize(concrete_op_id);
         let op_skeletons = skeletons.of_operator(task, op);
