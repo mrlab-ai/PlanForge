@@ -29,6 +29,17 @@ impl Metric {
     pub fn use_metric(&self) -> bool {
         self.var_id.is_some()
     }
+
+    /// The cost of a transition that takes the metric from `parent` to
+    /// `successor`: the increase of a minimised metric, the decrease of a
+    /// maximised one.
+    pub fn step_cost(&self, parent: f64, successor: f64) -> f64 {
+        if self.is_min {
+            successor - parent
+        } else {
+            parent - successor
+        }
+    }
 }
 
 #[allow(unused)]

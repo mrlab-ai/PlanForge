@@ -299,11 +299,9 @@ pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
                     )
                 });
             let metric = evaluate_metric_from_values(task, &successor.numeric);
-            let cost = if task.metric().is_min() {
-                metric.value() - initial_metric.value()
-            } else {
-                initial_metric.value() - metric.value()
-            };
+            let cost = task
+                .metric()
+                .step_cost(initial_metric.value(), metric.value());
             assert!(
                 cost >= 0.0,
                 "operator {} has negative metric cost {cost}, which search does not support",

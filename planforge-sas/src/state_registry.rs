@@ -1363,7 +1363,9 @@ impl<'a> StateRegistry<'a> {
             NumericValue::new(0.0)
         };
         let op_cost = if self.metric_use_metric {
-            new_metric.value() - ctx.parent_metric.value()
+            self.task
+                .metric()
+                .step_cost(ctx.parent_metric.value(), new_metric.value())
         } else {
             1.0
         };
