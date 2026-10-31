@@ -588,19 +588,25 @@ fn translate_strips_operator_aux(
         if eff_condition_list.is_none() {
             continue; // Impossible condition
         }
-        if let Some(pairs) = translation.dictionary.get(fact) {
-            for &(var, val) in pairs {
-                effects_by_variable
-                    .entry(var)
-                    .or_default()
-                    .entry(val)
-                    .or_default()
-                    .extend(eff_condition_list.clone().unwrap());
-                add_conds_by_variable
-                    .entry(var)
-                    .or_default()
-                    .push(conditions_list.clone());
-            }
+        // An add effect of a reachable operator is a reachable atom, which
+        // the dictionary encodes.
+        let pairs = translation.dictionary.get(fact).unwrap_or_else(|| {
+            panic!(
+                "add effect {fact} of operator {} has no SAS encoding",
+                operator.name
+            )
+        });
+        for &(var, val) in pairs {
+            effects_by_variable
+                .entry(var)
+                .or_default()
+                .entry(val)
+                .or_default()
+                .extend(eff_condition_list.clone().unwrap());
+            add_conds_by_variable
+                .entry(var)
+                .or_default()
+                .push(conditions_list.clone());
         }
     }
 
@@ -613,6 +619,8 @@ fn translate_strips_operator_aux(
         if eff_condition_list.is_none() {
             continue;
         }
+        // An atom without an encoding is never true, so deleting it does
+        // nothing.
         if let Some(pairs) = translation.dictionary.get(fact) {
             for &(var, val) in pairs {
                 del_effects_by_variable
