@@ -183,7 +183,7 @@ pub fn reserve_memory_padding(
     if padding.is_some() {
         return Ok(());
     }
-    let current_rss = current_rss_bytes().unwrap_or(0);
+    let current_rss = resident_memory_bytes().unwrap_or(0);
     let desired_bytes = mib_to_bytes("DA_MEMORY_PADDING_MB", padding_mib)?;
     let padding_bytes = bounded_padding_size(desired_bytes, release_threshold, current_rss);
     let Ok(padding_bytes) = usize::try_from(padding_bytes) else {
@@ -236,24 +236,24 @@ pub fn release_padding_for_oom() -> bool {
     was_reserved
 }
 
-fn current_rss_bytes() -> Option<u64> {
-    #[cfg(target_os = "linux")]
-    {
-        let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        status.lines().find_map(|line| {
-            line.strip_prefix("VmRSS:").and_then(|value| {
-                value
-                    .split_whitespace()
-                    .next()
-                    .and_then(|kilobytes| kilobytes.parse::<u64>().ok())
-                    .map(|kilobytes| kilobytes * 1024)
-            })
-        })
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        None
-    }
+/// The resident memory of the process in bytes; `None` where it is not
+/// measured, which is everywhere but Linux.
+#[cfg(target_os = "linux")]
+pub fn resident_memory_bytes() -> Option<u64> {
+    let status =
+        std::fs::read_to_string("/proc/self/status").expect("/proc/self/status is readable");
+    let kilobytes: u64 = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|kilobytes| kilobytes.parse().ok())
+        .expect("/proc/self/status reports VmRSS in KB");
+    Some(kilobytes * 1024)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn resident_memory_bytes() -> Option<u64> {
+    None
 }
 
 /// Returns false after releasing the padding because the configured RSS
@@ -265,7 +265,7 @@ pub fn poll_and_release_if_exceeded() -> bool {
     if !padding_is_reserved() {
         return false;
     }
-    if let Some(rss) = current_rss_bytes()
+    if let Some(rss) = resident_memory_bytes()
         && rss >= limit_bytes
     {
         // Routine: the padding exists so a memory-out is reported cleanly.

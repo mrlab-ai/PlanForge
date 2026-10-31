@@ -63,7 +63,7 @@ fn external_heuristic_is_visible_to_every_registry_path() {
         "/../tests/assets/numeric_sas/example2.sas"
     )));
     let heuristic = external.build(&BuildContext::new(&task)).unwrap();
-    assert_eq!(heuristic.heuristic_name(), "blind_heuristic");
+    assert_eq!(heuristic.name(), "blind_heuristic");
     assert!(BUILD_CALLED.load(Ordering::SeqCst));
 
     let error = config("unknown()").unwrap_err().to_string();

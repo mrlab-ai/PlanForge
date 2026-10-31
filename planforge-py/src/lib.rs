@@ -23,7 +23,8 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::search::{
-    AStarSearch, GreedyBestFirstSearch, SearchEngine, SearchResult, SearchStatus,
+    AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchOutcome, SearchParams, SearchResult,
+    parse_search_spec,
 };
 use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,
@@ -968,10 +969,7 @@ struct PyHeuristic {
 }
 
 impl Heuristic for PyHeuristic {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         // If a previous call already failed, stop doing work.
         if self.error.borrow().is_some() {
             return Err(EvaluationError::ComputationFailed(
@@ -998,7 +996,7 @@ impl Heuristic for PyHeuristic {
         }
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }
@@ -1020,7 +1018,7 @@ unsafe impl Send for GilReleasedTask {}
 impl GilReleasedTask {
     fn solve(
         self,
-        spec: &planforge_search::config::SearchConfig,
+        spec: &SearchConfig,
         time_limit: Option<Duration>,
         max_memory: Option<u64>,
     ) -> std::io::Result<SearchResult> {
@@ -1483,8 +1481,7 @@ impl Task {
         max_memory: Option<u64>,
     ) -> PyResult<PySearchResult> {
         let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-        let spec =
-            planforge_search::config::parse_search_spec(&search).map_err(SpecError::new_err)?;
+        let spec = parse_search_spec(&search).map_err(SpecError::new_err)?;
         let time_limit = max_time.map(Duration::from_secs_f64);
         let task = GilReleasedTask(self.task.clone());
         let result = py
@@ -1508,7 +1505,6 @@ impl Task {
         max_time: Option<f64>,
         max_memory: Option<u64>,
     ) -> PyResult<PySearchResult> {
-        let registry = StateRegistry::for_task(self.task.clone());
         let error = Rc::new(RefCell::new(None));
         let heur: Box<dyn Heuristic> = Box::new(PyHeuristic {
             callable: heuristic.clone_ref(py),
@@ -1518,32 +1514,15 @@ impl Task {
         let time_limit = max_time.map(Duration::from_secs_f64);
         // GIL is held for the whole search: the heuristic calls back into Python
         // once per evaluated state. This is intentionally NOT allow_threads.
+        let params = SearchParams {
+            time_limit,
+            max_memory_bytes: max_memory,
+            ..SearchParams::new(heur)
+        };
         let result = if greedy {
-            GreedyBestFirstSearch::new(
-                &*self.task,
-                registry,
-                planforge_search::search::SearchParams {
-                    heuristic: heur,
-                    lazy: None,
-                    reevaluate_dynamic: false,
-                    time_limit,
-                    max_memory_bytes: max_memory,
-                },
-            )
-            .search()
+            GreedyBestFirstSearch::new(self.task.clone(), params).run()
         } else {
-            AStarSearch::new(
-                &*self.task,
-                registry,
-                planforge_search::search::SearchParams {
-                    heuristic: heur,
-                    lazy: None,
-                    reevaluate_dynamic: false,
-                    time_limit,
-                    max_memory_bytes: max_memory,
-                },
-            )
-            .search()
+            AStarSearch::new(self.task.clone(), params).run()
         };
         if let Some(err) = error.borrow_mut().take() {
             return Err(err);
@@ -1681,7 +1660,7 @@ fn solve(
     }
 
     let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-    let spec = planforge_search::config::parse_search_spec(&search).map_err(SpecError::new_err)?;
+    let spec = parse_search_spec(&search).map_err(SpecError::new_err)?;
 
     let time_limit = max_time.map(Duration::from_secs_f64);
     let memory_limit = max_memory;
@@ -1724,38 +1703,34 @@ fn solve(
     Ok(search_result_to_py(py, result))
 }
 
-fn status_str(status: &SearchStatus) -> &'static str {
-    match status {
-        SearchStatus::Solved(_) => "solved",
-        SearchStatus::Failed => "unsolvable",
-        SearchStatus::Timeout => "timeout",
-        SearchStatus::MemoryLimitReached => "memory_limit",
-        SearchStatus::InProgress => "in_progress",
-    }
-}
-
 fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
-    let plan = result.plan.as_ref().map(|operators| {
-        operators
-            .iter()
-            .map(|operator: &Operator| {
-                operator_to_py(py, operator, None, None, operator.cost().value() as f64)
-                    .expect("creating a Python Operator should not fail")
-            })
-            .collect()
-    });
-
+    let (status, plan, cost) = match &result.outcome {
+        SearchOutcome::Solved { plan, cost } => {
+            let plan = plan
+                .iter()
+                .map(|operator: &Operator| {
+                    operator_to_py(py, operator, None, None, operator.cost().value() as f64)
+                        .expect("creating a Python Operator should not fail")
+                })
+                .collect();
+            ("solved", Some(plan), Some(*cost))
+        }
+        SearchOutcome::Unsolvable => ("unsolvable", None, None),
+        SearchOutcome::Timeout => ("timeout", None, None),
+        SearchOutcome::OutOfMemory => ("memory_limit", None, None),
+    };
+    let statistics = &result.statistics;
     PySearchResult {
-        status: status_str(&result.status).to_string(),
+        status: status.to_owned(),
         plan,
-        cost: result.solution_cost,
-        nodes_expanded: result.nodes_expanded,
-        nodes_reopened: result.nodes_reopened,
-        nodes_evaluated: result.nodes_evaluated,
-        evaluations: result.evaluations,
-        nodes_generated: result.nodes_generated,
-        dead_ends: result.dead_ends,
-        registered_states: result.registered_states,
+        cost,
+        nodes_expanded: statistics.nodes.expanded,
+        nodes_reopened: statistics.nodes.reopened,
+        nodes_evaluated: statistics.nodes.evaluated,
+        evaluations: statistics.evaluations,
+        nodes_generated: statistics.nodes.generated,
+        dead_ends: statistics.dead_ends,
+        registered_states: statistics.registered_states,
         search_time: result.search_time.as_secs_f64(),
     }
 }

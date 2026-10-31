@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use planforge_sas::utils::float_tolerance;
 use tracing::{debug, info};
 
-use super::SaturatedCostPartitioningHeuristic;
+use super::ScpBuilder;
 use super::config::CostPartitioningMethod;
 use super::diagnostics::{log_abstract_source_set_summary, log_transition_residual_summary};
 use super::lookup::{CostPartitioningHeuristic, current_h_for_distances};
@@ -108,7 +108,7 @@ pub(super) enum Completion {
     Truncated,
 }
 
-impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+impl<'task> ScpBuilder<'task> {
     /// The cost partitioning of `order`: every component in turn saturates
     /// what the ones before it left, until the order or `deadline` ends.
     pub(super) fn build_cp(

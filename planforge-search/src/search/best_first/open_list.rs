@@ -1,14 +1,18 @@
+//! The open lists of best-first search.
+
 use ordered_float::OrderedFloat;
 use planforge_sas::state_registry::StateID;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+/// A queued search node. Entries pop by smallest priority, then smallest
+/// heuristic estimate, then first in.
 #[derive(Debug, Clone, Copy)]
 pub struct OpenEntry {
-    pub(crate) f_value: OrderedFloat<f64>,
-    pub(crate) h_value: OrderedFloat<f64>,
-    pub(crate) g_value: f64,
-    pub(crate) insertion_order: u32,
+    pub(super) priority: OrderedFloat<f64>,
+    pub(super) h_value: OrderedFloat<f64>,
+    pub(super) g_value: f64,
+    pub(super) insertion_order: u32,
     /// Compact state ID plus the preferred and lazy-evaluated flags in
     /// its two high bits. Keeping all priority values as `f64` while packing
     /// these booleans makes an entry 32 rather than 40 bytes.
@@ -20,25 +24,48 @@ const LAZY_EVALUATED_FLAG: u32 = 1 << 30;
 const STATE_ID_MASK: u32 = LAZY_EVALUATED_FLAG - 1;
 
 impl OpenEntry {
-    pub(crate) fn state_id(self) -> StateID {
+    pub(super) fn new(state_id: StateID, g: f64, h: f64, priority: f64, preferred: bool) -> Self {
+        let compact = u32::try_from(state_id).expect("open-list state id exceeds u32");
+        assert!(
+            compact <= STATE_ID_MASK,
+            "open-list state id exceeds the 30-bit compact representation"
+        );
+        Self {
+            priority: OrderedFloat(priority),
+            h_value: OrderedFloat(h),
+            g_value: g,
+            insertion_order: 0,
+            tagged_state_id: compact | if preferred { PREFERRED_FLAG } else { 0 },
+        }
+    }
+
+    pub(super) fn state_id(self) -> StateID {
         (self.tagged_state_id & STATE_ID_MASK) as StateID
     }
 
-    pub(crate) fn is_preferred(self) -> bool {
+    /// Whether a preferred operator of its parent generated the node.
+    pub(super) fn is_preferred(self) -> bool {
         self.tagged_state_id & PREFERRED_FLAG != 0
     }
 
-    pub(crate) fn is_lazy_evaluated(self) -> bool {
+    pub(super) fn is_lazy_evaluated(self) -> bool {
         self.tagged_state_id & LAZY_EVALUATED_FLAG != 0
+    }
+
+    pub(super) fn with_estimate(mut self, h: f64, priority: f64) -> Self {
+        self.h_value = OrderedFloat(h);
+        self.priority = OrderedFloat(priority);
+        self
+    }
+
+    pub(super) fn mark_lazy_evaluated(&mut self) {
+        self.tagged_state_id |= LAZY_EVALUATED_FLAG;
     }
 }
 
 impl PartialEq for OpenEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.f_value == other.f_value
-            && self.h_value == other.h_value
-            && self.is_preferred() == other.is_preferred()
-            && self.insertion_order == other.insertion_order
+        self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -52,20 +79,21 @@ impl PartialOrd for OpenEntry {
 
 impl Ord for OpenEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // BinaryHeap is a max-heap; we invert so smaller `f` pops first.
-        // `is_preferred` is a *forward* comparison: `true > false`, so a
-        // preferred entry compares greater (pops sooner) at equal `f`.
+        // `BinaryHeap` is a max-heap, so the comparison is inverted: the
+        // smaller entry compares greater and pops first.
         other
-            .f_value
-            .cmp(&self.f_value)
-            .then_with(|| self.is_preferred().cmp(&other.is_preferred()))
+            .priority
+            .cmp(&self.priority)
             .then_with(|| other.h_value.cmp(&self.h_value))
             .then_with(|| other.insertion_order.cmp(&self.insertion_order))
     }
 }
 
-/// Storage discipline for best-first search. Entry ordering is shared by all queues.
+/// The queue discipline of best-first search over [`OpenEntry`]'s order.
 pub trait OpenList: Default {
+    /// Whether the list treats preferred nodes differently, and the search
+    /// must therefore ask its heuristic for preferred operators.
+    const USES_PREFERRED_OPERATORS: bool;
     fn push(&mut self, entry: OpenEntry);
     fn pop(&mut self) -> Option<OpenEntry>;
     fn len(&self) -> usize;
@@ -74,10 +102,11 @@ pub trait OpenList: Default {
     }
 }
 
-/// One heap ordered by priority, preference, heuristic value and FIFO insertion.
+/// One heap; preferred nodes are not distinguished.
 #[derive(Debug, Default)]
 pub struct TieBreakingOpenList(BinaryHeap<OpenEntry>);
 impl OpenList for TieBreakingOpenList {
+    const USES_PREFERRED_OPERATORS: bool = false;
     fn push(&mut self, entry: OpenEntry) {
         self.0.push(entry);
     }
@@ -89,13 +118,14 @@ impl OpenList for TieBreakingOpenList {
     }
 }
 
-/// GBFS drains the preferred heap strictly before the regular heap.
+/// Two heaps; the preferred one is drained strictly before the regular one.
 #[derive(Debug, Default)]
 pub struct PreferredFirstOpenList {
     preferred: BinaryHeap<OpenEntry>,
     regular: BinaryHeap<OpenEntry>,
 }
 impl OpenList for PreferredFirstOpenList {
+    const USES_PREFERRED_OPERATORS: bool = true;
     fn push(&mut self, entry: OpenEntry) {
         if entry.is_preferred() {
             self.preferred.push(entry);
@@ -108,33 +138,6 @@ impl OpenList for PreferredFirstOpenList {
     }
     fn len(&self) -> usize {
         self.preferred.len() + self.regular.len()
-    }
-}
-
-impl OpenEntry {
-    pub(crate) fn new(state_id: StateID, g: f64, h: f64, priority: f64, preferred: bool) -> Self {
-        let compact = u32::try_from(state_id).expect("open-list state id exceeds u32");
-        assert!(
-            compact <= STATE_ID_MASK,
-            "open-list state id exceeds the 30-bit compact representation"
-        );
-        Self {
-            f_value: OrderedFloat(priority),
-            h_value: OrderedFloat(h),
-            g_value: g,
-            insertion_order: 0,
-            tagged_state_id: compact | if preferred { PREFERRED_FLAG } else { 0 },
-        }
-    }
-
-    pub(crate) fn with_estimate(mut self, h: f64, priority: f64) -> Self {
-        self.h_value = OrderedFloat(h);
-        self.f_value = OrderedFloat(priority);
-        self
-    }
-
-    pub(crate) fn mark_lazy_evaluated(&mut self) {
-        self.tagged_state_id |= LAZY_EVALUATED_FLAG;
     }
 }
 
@@ -155,18 +158,18 @@ mod tests {
         assert!(entry.is_lazy_evaluated());
         assert_eq!(entry.g_value, 2.0);
         assert_eq!(entry.h_value.into_inner(), 3.0);
-        assert_eq!(entry.f_value.into_inner(), 5.0);
+        assert_eq!(entry.priority.into_inner(), 5.0);
     }
 
     #[test]
-    fn tie_breaking_preserves_priority_preference_estimate_and_fifo() {
+    fn tie_breaking_orders_by_priority_then_estimate_then_fifo() {
         let mut open = TieBreakingOpenList::default();
         for (order, (f, preferred, h)) in [
             (5.0, true, 3.0),
             (4.0, false, 2.0),
             (5.0, false, 1.0),
             (5.0, true, 2.0),
-            (5.0, true, 2.0),
+            (5.0, false, 2.0),
         ]
         .into_iter()
         .enumerate()
@@ -178,7 +181,7 @@ mod tests {
         let ids = std::iter::from_fn(|| open.pop())
             .map(OpenEntry::state_id)
             .collect::<Vec<_>>();
-        assert_eq!(ids, [1, 3, 4, 0, 2]);
+        assert_eq!(ids, [1, 2, 3, 4, 0]);
     }
 
     #[test]

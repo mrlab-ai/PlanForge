@@ -16,11 +16,12 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitValueIndex, NumericRootTask, NumericType, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
     LandmarkCutNumericHeuristic, LmCutNumericConfig,
 };
 use planforge_search::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
-use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 
 use crate::corpus::{
     self, Scratch, Solution, assert_fixture_set_is_pinned, blind_astar, problem_file, single_file,
@@ -550,25 +551,16 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     let task = translate_to_disk(&dir.join("domain.pddl"), &problem_file(&dir), &scratch);
 
     let blind_plan = {
-        let registry = StateRegistry::for_task(Arc::new(&task));
-        let mut search = AStarSearch::new(
-            &task,
-            registry,
-            planforge_search::search::SearchParams {
-                heuristic: Box::new(
-                    planforge_search::evaluation::heuristic::BlindHeuristic::for_task(&task),
-                ),
-                lazy: None,
-                reevaluate_dynamic: false,
-                time_limit: None,
-                max_memory_bytes: None,
-            },
-        );
-        let result = search.search().expect("blind A* search failed");
-        match (&result.status, result.plan) {
-            (SearchStatus::Solved(_), Some(plan)) => plan,
-            (status, _) => {
-                panic!("blind Plant Watering search should solve the task, got {status:?}")
+        let result = AStarSearch::new(
+            Arc::new(&task),
+            SearchParams::new(Box::new(BlindHeuristic::for_task(&task))),
+        )
+        .run()
+        .expect("blind A* search failed");
+        match result.outcome {
+            SearchOutcome::Solved { plan, .. } => plan,
+            outcome => {
+                panic!("blind Plant Watering search should solve the task, got {outcome:?}")
             }
         }
     };
@@ -622,37 +614,28 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     }
 
     // The full search with the heuristic must still return the optimum.
-    let registry = StateRegistry::for_task(Arc::new(&task));
     let heuristic = LandmarkCutNumericHeuristic::from_config(
         &task as &dyn AbstractNumericTask,
         LmCutNumericConfig::default(),
     )
     .expect("default lmcutnumeric config should be supported");
-    let mut search = AStarSearch::new(
-        &task,
-        registry,
-        planforge_search::search::SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
-            reevaluate_dynamic: false,
-            time_limit: None,
-            max_memory_bytes: None,
-        },
-    );
-    let result = search.search().expect("LM-cut A* search failed");
+    let result = AStarSearch::new(Arc::new(&task), SearchParams::new(Box::new(heuristic)))
+        .run()
+        .expect("LM-cut A* search failed");
 
-    let plan = match (&result.status, &result.plan) {
-        (SearchStatus::Solved(_), Some(plan)) => plan,
-        (status, _) => {
-            panic!("Plant Watering lmcutnumeric search should solve the task, got {status:?}")
-        }
+    let SearchOutcome::Solved {
+        plan,
+        cost: solution_cost,
+    } = &result.outcome
+    else {
+        panic!(
+            "Plant Watering lmcutnumeric search should solve the task, got {:?}",
+            result.outcome
+        );
     };
-    let solution_cost = result
-        .solution_cost
-        .unwrap_or_else(|| plan.iter().map(|op| op.cost().value() as f64).sum());
 
     assert_eq!(
-        result.dead_ends, 0,
+        result.statistics.dead_ends, 0,
         "Plant Watering lmcutnumeric search must not mark any state as a dead end"
     );
     assert_eq!(

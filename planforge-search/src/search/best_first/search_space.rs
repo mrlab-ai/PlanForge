@@ -1,19 +1,21 @@
+//! Per-state bookkeeping of best-first search.
+
 #[cfg(test)]
 mod tests;
 
-use super::Plan;
+use crate::search::Plan;
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use planforge_sas::state_registry::StateID;
 
 /// Simple search node information for tracking parent relationships.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct SearchNodeInfo {
-    pub(crate) parent_state: Option<StateID>,
-    pub(crate) parent_operator_id: Option<OperatorIndex>,
-    pub(crate) g_value: f64,
-    pub(crate) is_dead_end: bool,
-    pub(crate) is_closed: bool,
-    pub(crate) is_goal: bool,
+pub(super) struct SearchNodeInfo {
+    pub(super) parent_state: Option<StateID>,
+    pub(super) parent_operator_id: Option<OperatorIndex>,
+    pub(super) g_value: f64,
+    pub(super) is_dead_end: bool,
+    pub(super) is_closed: bool,
+    pub(super) is_goal: bool,
 }
 
 const NO_COMPACT_ID: u32 = u32::MAX;
@@ -22,37 +24,35 @@ const NODE_PRESENT: u8 = 1 << 0;
 const NODE_DEAD_END: u8 = 1 << 1;
 const NODE_CLOSED: u8 = 1 << 2;
 const NODE_GOAL: u8 = 1 << 3;
-const NO_PREFERRED_RANGE: (OperatorIndex, OperatorIndex) =
-    (OperatorIndex::new(u32::MAX), OperatorIndex::new(0));
+
+/// The preferred operators of one state: a slice of the search space's arena.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct PreferredRange {
+    start: u32,
+    len: u32,
+}
 
 /// Per-state search bookkeeping: the node table (parents, g-values,
 /// dead-end/closed flags) and the per-state preferred-operator snapshots.
 /// Both tables are indexed by `StateID`.
 #[derive(Debug, Default)]
-pub(crate) struct SearchSpace {
+pub(super) struct SearchSpace {
     // Structure-of-arrays storage keeps ordinary A* bookkeeping at 17 bytes
     // per registered node instead of padding Option<SearchNodeInfo> to 48.
     parent_states: Vec<u32>,
     parent_operator_ids: Vec<OperatorIndex>,
     g_values: Vec<f64>,
     node_status: Vec<u8>,
-    /// Per-state cache of preferred operator IDs reported by the
-    /// heuristic for that state, indexed by `state_id`. Populated right
-    /// after `evaluate_state` returns `Ok` (so the snapshot is captured
-    /// before the heuristic's internal cache is overwritten by the next
-    /// state's evaluation). Read back when the state is *expanded* — we
-    /// then mark each successor's open-list entry as preferred iff the
-    /// operator that generated it is in this set.
-    preferred_pool: Vec<OperatorIndex>,
-    preferred_ranges: Vec<(OperatorIndex, OperatorIndex)>,
+    /// The preferred operators the heuristic reported for each evaluated
+    /// state, read back when the state is expanded to mark the successors
+    /// they generate as preferred. The ranges index the arena, which only
+    /// grows: a state's operators are stored once per evaluation.
+    preferred_arena: Vec<OperatorIndex>,
+    preferred_ranges: Vec<PreferredRange>,
 }
 
 impl SearchSpace {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    pub(crate) fn node(&self, state_id: StateID) -> Option<SearchNodeInfo> {
+    pub(super) fn node(&self, state_id: StateID) -> Option<SearchNodeInfo> {
         let &status = self.node_status.get(state_id)?;
         if status & NODE_PRESENT == 0 {
             return None;
@@ -67,13 +67,22 @@ impl SearchSpace {
         })
     }
 
-    pub(crate) fn contains_node(&self, state_id: StateID) -> bool {
+    /// The cost of the cheapest path found to `state_id`.
+    pub(super) fn g_value(&self, state_id: StateID) -> f64 {
+        assert!(
+            self.contains_node(state_id),
+            "missing search node for state {state_id}"
+        );
+        self.g_values[state_id]
+    }
+
+    pub(super) fn contains_node(&self, state_id: StateID) -> bool {
         self.node_status
             .get(state_id)
             .is_some_and(|status| status & NODE_PRESENT != 0)
     }
 
-    pub(crate) fn mark_dead_end(&mut self, state_id: StateID) {
+    pub(super) fn mark_dead_end(&mut self, state_id: StateID) {
         let status = self
             .node_status
             .get_mut(state_id)
@@ -85,7 +94,7 @@ impl SearchSpace {
         *status |= NODE_DEAD_END;
     }
 
-    pub(crate) fn mark_closed(&mut self, state_id: StateID) {
+    pub(super) fn mark_closed(&mut self, state_id: StateID) {
         let status = self
             .node_status
             .get_mut(state_id)
@@ -97,7 +106,7 @@ impl SearchSpace {
         *status |= NODE_CLOSED;
     }
 
-    pub(crate) fn is_goal(&self, state_id: StateID) -> bool {
+    pub(super) fn is_goal(&self, state_id: StateID) -> bool {
         let status = self
             .node_status
             .get(state_id)
@@ -109,7 +118,7 @@ impl SearchSpace {
         status & NODE_GOAL != 0
     }
 
-    pub(crate) fn set_node(&mut self, state_id: StateID, info: SearchNodeInfo) {
+    pub(super) fn set_node(&mut self, state_id: StateID, info: SearchNodeInfo) {
         if state_id >= self.node_status.len() {
             let new_len = state_id
                 .checked_add(1)
@@ -128,57 +137,48 @@ impl SearchSpace {
             | if info.is_goal { NODE_GOAL } else { 0 };
     }
 
-    pub(crate) fn store_preferred(&mut self, state_id: StateID, ids: &[OperatorIndex]) {
-        if ids.is_empty() {
-            if let Some(snapshot) = self.preferred_ranges.get_mut(state_id) {
-                *snapshot = NO_PREFERRED_RANGE;
+    /// Record `operators` as the preferred operators of `state_id`,
+    /// replacing those of an earlier evaluation.
+    pub(super) fn store_preferred(&mut self, state_id: StateID, operators: &[OperatorIndex]) {
+        if operators.is_empty() {
+            if let Some(range) = self.preferred_ranges.get_mut(state_id) {
+                *range = PreferredRange::default();
             }
             return;
         }
         if state_id >= self.preferred_ranges.len() {
             self.preferred_ranges
-                .resize(state_id + 1, NO_PREFERRED_RANGE);
+                .resize(state_id + 1, PreferredRange::default());
         }
-        let start = OperatorIndex::new(
-            u32::try_from(self.preferred_pool.len())
+        self.preferred_ranges[state_id] = PreferredRange {
+            start: u32::try_from(self.preferred_arena.len())
                 .expect("preferred operator arena offset must fit in u32"),
-        );
-        let len = OperatorIndex::new(
-            u32::try_from(ids.len()).expect("preferred operator list length must fit in u32"),
-        );
-        self.preferred_pool.extend_from_slice(ids);
-        self.preferred_ranges[state_id] = (start, len);
+            len: u32::try_from(operators.len())
+                .expect("preferred operator list length must fit in u32"),
+        };
+        self.preferred_arena.extend_from_slice(operators);
     }
 
-    /// Remove and return the cached preferred-op range for `state_id`, if any.
-    pub(crate) fn take_preferred(
-        &mut self,
-        state_id: StateID,
-    ) -> Option<(OperatorIndex, OperatorIndex)> {
-        let range = self.preferred_ranges.get_mut(state_id)?;
-        let result = *range;
-        *range = NO_PREFERRED_RANGE;
-        (result != NO_PREFERRED_RANGE).then_some(result)
+    /// The preferred operators of `state_id`, which the search expands now
+    /// and only evaluates again (storing new ones) if it reopens it.
+    pub(super) fn take_preferred(&mut self, state_id: StateID) -> PreferredRange {
+        self.preferred_ranges
+            .get_mut(state_id)
+            .map(std::mem::take)
+            .unwrap_or_default()
     }
 
-    pub(crate) fn preferred_contains(
+    pub(super) fn preferred_contains(
         &self,
-        range: (OperatorIndex, OperatorIndex),
+        range: PreferredRange,
         operator_id: OperatorIndex,
     ) -> bool {
-        let (start, len) = range;
-        let start = start.index();
-        let end = start
-            .checked_add(len.index())
-            .expect("preferred operator range overflow");
-        self.preferred_pool
-            .get(start..end)
-            .expect("preferred operator range must lie in the arena")
-            .contains(&operator_id)
+        let start = range.start as usize;
+        self.preferred_arena[start..start + range.len as usize].contains(&operator_id)
     }
 
     /// Trace back the path from goal state to initial state.
-    pub(crate) fn extract_plan(&self, goal_state: StateID, task: &dyn AbstractNumericTask) -> Plan {
+    pub(super) fn extract_plan(&self, goal_state: StateID, task: &dyn AbstractNumericTask) -> Plan {
         let mut plan = Vec::new();
         let mut current_state = goal_state;
 

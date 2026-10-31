@@ -30,7 +30,6 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
 use planforge_cplex::{
@@ -57,10 +56,11 @@ pub struct PostHocOptimizationHeuristic<'task> {
     /// appear with coefficient 1 in that constraint. Constraint right-hand
     /// side is uniformly 1.
     constraints: Vec<Vec<usize>>,
-    lp_model: RefCell<LpModel>,
-    state_value_cache: RefCell<StateValueCache>,
-    values: RefCell<ExplicitState>,
-    diagnostics_logged: Cell<bool>,
+    lp_model: LpModel,
+    /// Estimates by the state ids of the search's registry.
+    state_value_cache: StateValueCache,
+    values: ExplicitState,
+    h_values: Vec<f64>,
 }
 
 impl<'task> PostHocOptimizationHeuristic<'task> {
@@ -101,31 +101,34 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             name: name.unwrap_or_else(|| "posthoc_optimization".to_string()),
             components,
             constraints,
-            lp_model: RefCell::new(lp_model),
-            state_value_cache: RefCell::new(StateValueCache::default()),
-            values: RefCell::default(),
-            diagnostics_logged: Cell::new(false),
+            lp_model,
+            state_value_cache: StateValueCache::default(),
+            values: ExplicitState::default(),
+            h_values: Vec::new(),
         })
     }
 
-    fn evaluate_lp(&self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        let mut values = self.values.borrow_mut();
-        eval_state.fill_values(&mut values)?;
-        let mut h_values = Vec::with_capacity(self.components.len());
+    fn evaluate_lp(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
+        eval_state.fill_values(&mut self.values)?;
+        let mut h_values = std::mem::take(&mut self.h_values);
+        h_values.clear();
         for (component_id, component) in self.components.iter().enumerate() {
-            let value = standalone_estimate(component, component_id, &values)?;
+            let value = standalone_estimate(component, component_id, &self.values)?;
             if value == f64::INFINITY {
-                self.log_diagnostics_once(&h_values);
+                self.h_values = h_values;
                 return Ok(f64::INFINITY);
             }
             h_values.push(value);
         }
-
-        self.log_diagnostics_once(&h_values);
-        self.solve_dual(&h_values)
+        let value = self.solve_dual(&h_values);
+        self.h_values = h_values;
+        value
     }
 
-    fn solve_dual(&self, h_values: &[f64]) -> Result<f64, EvaluationError> {
+    fn solve_dual(&mut self, h_values: &[f64]) -> Result<f64, EvaluationError> {
         // Drop abstractions with h_i = 0: their dual variable is fixed at 0
         // in any optimum (positive value can only tighten a packing
         // constraint shared with a strictly-helpful abstraction).
@@ -153,7 +156,7 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             "posthoc_optimization: active set {active:?} produced no LP rows; \
              this indicates a bug in `build_constraints`",
         );
-        let mut model = self.lp_model.borrow_mut();
+        let model = &mut self.lp_model;
         assert_eq!(
             h_values.len(),
             model.num_columns(),
@@ -181,27 +184,6 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
                 active.len(),
                 self.constraints.len(),
             ))),
-        }
-    }
-
-    fn log_diagnostics_once(&self, h_values: &[f64]) {
-        if self.diagnostics_logged.replace(true) {
-            return;
-        }
-
-        let positive: Vec<_> = h_values
-            .iter()
-            .enumerate()
-            .filter(|(_, h)| **h > float_tolerance::SEARCH_EPSILON)
-            .collect();
-        info!(
-            "posthoc_optimization first-state diagnostics: abstractions={}, with_positive_h={}, lp_constraints={}",
-            self.components.len(),
-            positive.len(),
-            self.constraints.len(),
-        );
-        for (id, h) in positive {
-            info!("posthoc abstraction {id}: h={h}");
         }
     }
 }
@@ -234,21 +216,18 @@ fn lp_evaluation_error(error: planforge_cplex::Error) -> EvaluationError {
 }
 
 impl Heuristic for PostHocOptimizationHeuristic<'_> {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
-        if let Some(value) = self.state_value_cache.borrow().get(state_id) {
+        if let Some(value) = self.state_value_cache.get(state_id) {
             return Ok(value);
         }
 
         let value = self.evaluate_lp(eval_state)?;
-        self.state_value_cache.borrow_mut().insert(state_id, value);
+        self.state_value_cache.insert(state_id, value);
         Ok(value)
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }

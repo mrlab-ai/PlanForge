@@ -9,7 +9,7 @@ fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
     for saturator in [Saturator::All, Saturator::Perim, Saturator::Perimstar] {
         for abstract_operator in [false, true] {
             let component = AbstractionComponent::from(cartesian_abstraction(&task));
-            let heuristic = SaturatedCostPartitioningHeuristic::new(
+            let mut heuristic = SaturatedCostPartitioningHeuristic::new(
                 None,
                 vec![component],
                 scp_config(saturator, abstract_operator),
@@ -17,17 +17,18 @@ fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
                 Default::default(),
             )
             .unwrap();
-            assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
+            assert_eq!(evaluate_initial(&task, &mut heuristic).unwrap(), 5.0);
         }
     }
 }
 
 #[test]
-fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
+fn offline_scp_releases_cartesian_construction_data_after_construction() {
     let task = independent_goals_task();
     let component = AbstractionComponent::from(cartesian_abstraction(&task));
+    assert!(component.cegar().unwrap().retains_transitions());
     let config = scp_config(Saturator::All, true);
-    let heuristic = SaturatedCostPartitioningHeuristic::new(
+    let mut heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         vec![component],
         config,
@@ -37,20 +38,12 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
     .unwrap();
 
     assert!(
-        heuristic.state.borrow().components[0]
+        !heuristic.components[0]
             .cegar()
             .unwrap()
             .retains_transitions()
     );
-    assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
-    assert!(
-        !heuristic.state.borrow().components[0]
-            .cegar()
-            .unwrap()
-            .retains_transitions()
-    );
-    assert!(matches!(heuristic.state.borrow().phase, ScpPhase::Built(_)));
-    assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
+    assert_eq!(evaluate_initial(&task, &mut heuristic).unwrap(), 5.0);
 }
 
 #[test]
@@ -78,7 +71,7 @@ fn region_scp_combines_all_representations() {
         AbstractionComponent::from(cartesian_abstraction(&task)),
         AbstractionComponent::from(pdb),
     ];
-    let heuristic = SaturatedCostPartitioningHeuristic::new(
+    let mut heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components,
         scp_config(Saturator::All, true),
@@ -87,5 +80,5 @@ fn region_scp_combines_all_representations() {
     )
     .unwrap();
 
-    assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
+    assert_eq!(evaluate_initial(&task, &mut heuristic).unwrap(), 5.0);
 }

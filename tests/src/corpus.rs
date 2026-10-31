@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::NumericRootTask;
-use planforge_sas::state_registry::StateRegistry;
-use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_search::evaluation::heuristic::BlindHeuristic;
+use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 use planforge_translate::{translate_to_sas_to_path_fast, translate_to_task};
 
 /// Root of the checked-in fixture tree.
@@ -143,30 +143,19 @@ impl SearchRun {
 /// Runs blind A*, which is optimal, so the returned cost is the true optimum.
 /// `None` means the search terminated without a plan.
 pub fn blind_astar_run(task: &NumericRootTask) -> Option<SearchRun> {
-    let registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(
-        task,
-        registry,
-        planforge_search::search::SearchParams {
-            heuristic: Box::new(
-                planforge_search::evaluation::heuristic::BlindHeuristic::for_task(task),
-            ),
-            lazy: None,
-            reevaluate_dynamic: false,
-            time_limit: None,
-            max_memory_bytes: None,
-        },
-    );
-    let result = search.search().expect("blind A* search failed");
+    let result = AStarSearch::new(
+        Arc::new(task),
+        SearchParams::new(Box::new(BlindHeuristic::for_task(task))),
+    )
+    .run()
+    .expect("blind A* search failed");
 
-    match (&result.status, &result.plan) {
-        (SearchStatus::Solved(_), Some(plan)) => Some(SearchRun {
-            cost: result
-                .solution_cost
-                .unwrap_or_else(|| plan.iter().map(|op| op.cost().value() as f64).sum()),
+    match result.outcome {
+        SearchOutcome::Solved { plan, cost } => Some(SearchRun {
+            cost,
             plan: plan.iter().map(|op| op.name().to_owned()).collect(),
-            expanded: result.nodes_expanded,
-            generated: result.nodes_generated,
+            expanded: result.statistics.nodes.expanded,
+            generated: result.statistics.nodes.generated,
         }),
         _ => None,
     }

@@ -57,7 +57,6 @@
 //!   * Hoffmann, *The Metric-FF Planning System*, JAIR 2003.
 
 use planforge_sas::axioms::{AssignmentAxiom, NumericExpression};
-use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -172,7 +171,8 @@ struct ComparisonAxiomDesc {
     op: ComparisonOperator,
 }
 
-/// Per-state RPG buffers reused across `compute_heuristic` calls.
+/// Per-state RPG buffers reused from one evaluation to the next.
+#[derive(Default)]
 struct ScratchBuffers {
     fact_first_layer: Vec<i32>,
     op_remaining_preconditions: Vec<i32>,
@@ -923,14 +923,7 @@ pub struct FfHeuristic {
     /// comparison axioms after a numeric update.
     axioms_touching_var: Vec<Vec<AxiomIdx>>,
     num_numeric: usize,
-    scratch: RefCell<ScratchBuffers>,
-    /// Cache of the task-operator indices of helpful actions for the most
-    /// recently evaluated state. Populated at the end of every
-    /// `compute_heuristic`. The search engine reads it once per state via
-    /// `copy_preferred_operator_ids` and stores the IDs on the search node;
-    /// from there on it does integer-membership tests, not `Operator`
-    /// clones.
-    last_helpful_action_ids: RefCell<Vec<OperatorIndex>>,
+    scratch: ScratchBuffers,
 }
 
 impl FfHeuristic {
@@ -993,13 +986,7 @@ impl FfHeuristic {
             assignment_axioms,
             axioms_touching_var,
             num_numeric,
-            scratch: RefCell::new(ScratchBuffers::new(
-                num_facts,
-                num_ops,
-                num_numeric,
-                num_comparison_axioms,
-            )),
-            last_helpful_action_ids: RefCell::new(Vec::new()),
+            scratch: ScratchBuffers::new(num_facts, num_ops, num_numeric, num_comparison_axioms),
         })
     }
 
@@ -1386,7 +1373,7 @@ impl FfHeuristic {
     fn extract_relaxed_plan(
         &self,
         scratch: &mut ScratchBuffers,
-        helpful_action_ids: &mut Vec<OperatorIndex>,
+        mut helpful_action_ids: Option<&mut Vec<OperatorIndex>>,
     ) -> f64 {
         let max_layer = self.goal_max_layer(scratch);
         if max_layer < 0 {
@@ -1464,10 +1451,9 @@ impl FfHeuristic {
                 scratch.in_plan[op_id.index()] = true;
                 if (0..=1).contains(&scratch.op_first_layer[op_id.index()])
                     && let Some(task_idx) = self.op_task_idx[op_id.index()]
+                    && let Some(helpful) = helpful_action_ids.as_deref_mut()
                 {
-                    helpful_action_ids.push(OperatorIndex::new(
-                        u32::try_from(task_idx).expect("task operator id must fit in u32"),
-                    ));
+                    helpful.push(OperatorIndex::from_usize(task_idx));
                 }
                 plan_cost += self.op_cost[op_id.index()];
                 // Synthetic ops pull their parent in for cost accounting.
@@ -1477,10 +1463,9 @@ impl FfHeuristic {
                     scratch.in_plan[parent.index()] = true;
                     if (0..=1).contains(&scratch.op_first_layer[parent.index()])
                         && let Some(task_idx) = self.op_task_idx[parent.index()]
+                        && let Some(helpful) = helpful_action_ids.as_deref_mut()
                     {
-                        helpful_action_ids.push(OperatorIndex::new(
-                            u32::try_from(task_idx).expect("task operator id must fit in u32"),
-                        ));
+                        helpful.push(OperatorIndex::from_usize(task_idx));
                     }
                     plan_cost += self.op_cost[parent.index()];
                 }
@@ -1576,38 +1561,47 @@ fn axiom_needs_direction(
     }
 }
 
-impl Heuristic for FfHeuristic {
-    fn compute_heuristic(
-        &self,
+impl FfHeuristic {
+    /// The cost of a relaxed plan for the state, infinite when the delete
+    /// relaxation reaches no goal; with `helpful`, appending the plan's operators
+    /// applicable in the state.
+    fn relaxed_plan_cost(
+        &mut self,
         eval_state: &EvaluationState<'_, '_>,
+        helpful: Option<&mut Vec<OperatorIndex>>,
     ) -> Result<f64, EvaluationError> {
         if eval_state.is_goal() {
-            self.last_helpful_action_ids.borrow_mut().clear();
             return Ok(0.0);
         }
-        let mut scratch = self.scratch.borrow_mut();
+        let mut scratch = std::mem::take(&mut self.scratch);
         scratch.reset();
-        let goal_layer = self.build_rpg(eval_state, &mut scratch)?;
-        if goal_layer == i32::MAX {
-            self.last_helpful_action_ids.borrow_mut().clear();
-            return Err(EvaluationError::DeadEnd { reliable: false });
-        }
-        if goal_layer == 0 {
-            self.last_helpful_action_ids.borrow_mut().clear();
-            return Ok(0.0);
-        }
-        let mut helpful_action_ids = self.last_helpful_action_ids.borrow_mut();
-        helpful_action_ids.clear();
-        let cost = self.extract_relaxed_plan(&mut scratch, &mut helpful_action_ids);
-        Ok(cost)
+        let goal_layer = self.build_rpg(eval_state, &mut scratch);
+        let cost = match goal_layer {
+            Err(error) => Err(error),
+            // The delete relaxation reaches no goal: a dead end.
+            Ok(i32::MAX) => Ok(f64::INFINITY),
+            Ok(0) => Ok(0.0),
+            Ok(_) => Ok(self.extract_relaxed_plan(&mut scratch, helpful)),
+        };
+        self.scratch = scratch;
+        cost
+    }
+}
+
+impl Heuristic for FfHeuristic {
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        self.relaxed_plan_cost(eval_state, None)
     }
 
-    fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
-        out.clear();
-        out.extend_from_slice(&self.last_helpful_action_ids.borrow());
+    fn evaluate_with_preferred(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+        preferred: &mut Vec<OperatorIndex>,
+    ) -> Result<f64, EvaluationError> {
+        self.relaxed_plan_cost(eval_state, Some(preferred))
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         "ff"
     }
 }

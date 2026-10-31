@@ -21,7 +21,7 @@ fn load_dependent_cost_task() -> NumericRootTask {
 }
 
 fn initial_h(task: &NumericRootTask, bound_iterations: usize) -> f64 {
-    let heuristic = LandmarkCutNumericHeuristic::from_config(
+    let mut heuristic = LandmarkCutNumericHeuristic::from_config(
         task,
         LmCutNumericConfig {
             bound_iterations,
@@ -34,7 +34,7 @@ fn initial_h(task: &NumericRootTask, bound_iterations: usize) -> f64 {
     let mut eval = EvaluationState::new(&initial, task as &dyn AbstractNumericTask, &registry);
     eval.set_is_goal(false);
     heuristic
-        .compute_heuristic(&eval)
+        .evaluate(&eval)
         .expect("the initial state evaluates")
 }
 

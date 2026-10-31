@@ -1,8 +1,6 @@
 //! What every abstraction CEGAR builds offers and records about its
 //! construction and use, for domain and Cartesian abstractions alike.
 
-use std::cell::RefCell;
-
 use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex};
@@ -263,7 +261,7 @@ pub(crate) fn finish_abstraction(
 pub struct AbstractionHeuristic<A> {
     name: String,
     abstraction: A,
-    values: RefCell<ExplicitState>,
+    values: ExplicitState,
 }
 
 impl<A: CegarAbstraction> AbstractionHeuristic<A> {
@@ -271,7 +269,7 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
         Self {
             name: name.into(),
             abstraction,
-            values: RefCell::default(),
+            values: ExplicitState::default(),
         }
     }
 
@@ -281,14 +279,10 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
 }
 
 impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let mut values = self.values.borrow_mut();
-        eval_state.fill_values(&mut values)?;
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        eval_state.fill_values(&mut self.values)?;
         self.abstraction
-            .goal_distance(&values.propositional, &values.numeric)
+            .goal_distance(&self.values.propositional, &self.values.numeric)
             .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))
     }
 
@@ -296,7 +290,7 @@ impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
         self.abstraction.metadata().proves_initial_state_optimal()
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }

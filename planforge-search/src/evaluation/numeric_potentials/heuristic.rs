@@ -8,7 +8,6 @@
 //! sampler -- and want the same parameter struct the rest of the crate now uses;
 //! that is a change for someone who can run the tests against CPLEX.
 
-use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
@@ -30,24 +29,24 @@ use super::{
 
 pub struct NumericPotentialHeuristic {
     task: PotentialTask,
-    functions: RefCell<Vec<NumericPotentialFunction>>,
+    functions: Vec<NumericPotentialFunction>,
     conditioned_groups: Vec<Vec<NumericPotentialFunction>>,
     goal_cost_partitions: Vec<Vec<f64>>,
     goal_group_has_additive_share: Vec<bool>,
-    rays: RefCell<Vec<Ray>>,
-    ray_hit_counts: RefCell<Vec<usize>>,
-    states_pruned_by_rays: Cell<usize>,
-    ray_generator: RefCell<Option<RayGenerator>>,
+    rays: Vec<Ray>,
+    ray_hit_counts: Vec<usize>,
+    states_pruned_by_rays: usize,
+    ray_generator: Option<RayGenerator>,
     max_rays: usize,
     ray_epsilon: f64,
     cache_estimates: bool,
     invalidate_online_cache_on_growth: bool,
     dead_end_certified: bool,
-    online_optimizer: RefCell<Option<NumericPotentialOptimizer>>,
-    online_state: RefCell<OnlineState>,
-    revision: Cell<u64>,
-    prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
-    numeric_scratch: RefCell<Vec<NumericValue>>,
+    online_optimizer: Option<NumericPotentialOptimizer>,
+    online_state: OnlineState,
+    revision: u64,
+    prop_scratch: Vec<ExplicitValueIndex>,
+    numeric_scratch: Vec<NumericValue>,
 }
 
 struct OnlineState {
@@ -409,26 +408,26 @@ impl NumericPotentialHeuristic {
         let ray_count = rays.len();
         Ok(Self {
             task: potential_task,
-            functions: RefCell::new(functions),
+            functions,
             conditioned_groups,
             goal_cost_partitions,
             goal_group_has_additive_share,
-            rays: RefCell::new(rays),
-            ray_hit_counts: RefCell::new(vec![0; ray_count]),
-            states_pruned_by_rays: Cell::new(0),
-            ray_generator: RefCell::new(if enable_online && config.rays > 0 {
+            rays,
+            ray_hit_counts: vec![0; ray_count],
+            states_pruned_by_rays: 0,
+            ray_generator: if enable_online && config.rays > 0 {
                 Some(ray_generator.expect("online rays requested without a ray generator"))
             } else {
                 None
-            }),
+            },
             max_rays: config.rays,
             ray_epsilon: config.ray_epsilon,
             cache_estimates: config.cache_estimates,
             invalidate_online_cache_on_growth: config.invalidate_online_cache_on_growth
                 && config.cache_estimates,
             dead_end_certified,
-            online_optimizer: RefCell::new(enable_online.then_some(optimizer)),
-            online_state: RefCell::new(OnlineState {
+            online_optimizer: enable_online.then_some(optimizer),
+            online_state: OnlineState {
                 max_functions: if enable_online {
                     config.max_online_functions
                 } else {
@@ -452,41 +451,37 @@ impl NumericPotentialHeuristic {
                 cache_invalidations: 0,
                 cache_entries_examined: 0,
                 cache_entries_invalidated: 0,
-            }),
-            revision: Cell::new(0),
-            prop_scratch: RefCell::new(Vec::new()),
-            numeric_scratch: RefCell::new(Vec::new()),
+            },
+            revision: 0,
+            prop_scratch: Vec::new(),
+            numeric_scratch: Vec::new(),
         })
     }
 }
 
 impl Heuristic for NumericPotentialHeuristic {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         if self.dead_end_certified {
             return Ok(f64::INFINITY);
         }
         let registry = eval_state.state_registry();
         let state = registry.view(eval_state.state());
-        let mut prop_scratch = self.prop_scratch.borrow_mut();
-        let mut numeric_scratch = self.numeric_scratch.borrow_mut();
-        for (ray_id, ray) in self.rays.borrow().iter().enumerate() {
+        let prop_scratch = &mut self.prop_scratch;
+        let numeric_scratch = &mut self.numeric_scratch;
+        for (ray_id, ray) in self.rays.iter().enumerate() {
             let candidate = ray
-                .value(state, &self.task, &mut prop_scratch, &mut numeric_scratch)
+                .value(state, &self.task, prop_scratch, numeric_scratch)
                 .map_err(EvaluationError::ComputationFailed)?;
             if candidate > self.ray_epsilon {
-                self.ray_hit_counts.borrow_mut()[ray_id] += 1;
-                self.states_pruned_by_rays
-                    .set(self.states_pruned_by_rays.get() + 1);
+                self.ray_hit_counts[ray_id] += 1;
+                self.states_pruned_by_rays += 1;
                 return Ok(f64::INFINITY);
             }
         }
         let mut value: f64 = 0.0;
-        for function in self.functions.borrow().iter() {
+        for function in &self.functions {
             let candidate = function
-                .value(state, &self.task, &mut prop_scratch, &mut numeric_scratch)
+                .value(state, &self.task, prop_scratch, numeric_scratch)
                 .map_err(EvaluationError::ComputationFailed)?;
             value = value.max(candidate);
         }
@@ -495,7 +490,7 @@ impl Heuristic for NumericPotentialHeuristic {
             let mut group_value = f64::INFINITY;
             for function in group {
                 let candidate = function
-                    .value(state, &self.task, &mut prop_scratch, &mut numeric_scratch)
+                    .value(state, &self.task, prop_scratch, numeric_scratch)
                     .map_err(EvaluationError::ComputationFailed)?;
                 group_value = group_value.min(candidate);
                 if !self.goal_group_has_additive_share[group_id] && group_value <= value {
@@ -514,19 +509,17 @@ impl Heuristic for NumericPotentialHeuristic {
                 .sum::<f64>();
             value = value.max(additive_value);
         }
-        drop(prop_scratch);
-        drop(numeric_scratch);
         value = self.maybe_add_online_function(eval_state, value)?;
         self.track_online_cache_entry(eval_state.state().get_id());
         Ok(value)
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         "numeric_potential"
     }
 
     fn revision(&self) -> u64 {
-        self.revision.get()
+        self.revision
     }
 
     fn reevaluate_on_every_pop(&self) -> bool {
@@ -536,59 +529,46 @@ impl Heuristic for NumericPotentialHeuristic {
 
 impl NumericPotentialHeuristic {
     fn maybe_add_online_function(
-        &self,
+        &mut self,
         eval_state: &EvaluationState<'_, '_>,
         mut envelope_value: f64,
     ) -> Result<f64, EvaluationError> {
-        if self.online_optimizer.borrow().is_none() {
+        let Some(optimizer) = self.online_optimizer.as_mut() else {
             return Ok(envelope_value);
-        }
-        let should_solve = {
-            let mut online = self.online_state.borrow_mut();
-            let advance = if online.new_states_only {
-                online.seen_states.insert(eval_state.state().get_id())
-            } else {
-                true
-            };
-            if advance {
-                online.evaluations_since_solve += 1;
-                online.trigger_states += 1;
-            }
-            if online.evaluations_since_solve < online.current_interval {
-                false
-            } else {
-                online.evaluations_since_solve = 0;
-                online.lp_solves += 1;
-                true
-            }
         };
-        if !should_solve {
+        let online = &mut self.online_state;
+        let advance =
+            !online.new_states_only || online.seen_states.insert(eval_state.state().get_id());
+        if advance {
+            online.evaluations_since_solve += 1;
+            online.trigger_states += 1;
+        }
+        if online.evaluations_since_solve < online.current_interval {
             return Ok(envelope_value);
         }
-        let registry = eval_state.state_registry();
-        let outcome = self
-            .online_optimizer
-            .borrow_mut()
-            .as_mut()
-            .expect("online optimizer disappeared during evaluation")
-            .optimize_for_state(registry.view(eval_state.state()))
+        online.evaluations_since_solve = 0;
+        online.lp_solves += 1;
+
+        let state = eval_state.state_registry().view(eval_state.state());
+        let outcome = optimizer
+            .optimize_for_state(state)
             .map_err(EvaluationError::ComputationFailed)?;
         let mut useful = false;
         match outcome {
             OptimizationOutcome::Optimal { function, .. } => {
                 let online_value = function
                     .value(
-                        registry.view(eval_state.state()),
+                        state,
                         &self.task,
-                        &mut self.prop_scratch.borrow_mut(),
-                        &mut self.numeric_scratch.borrow_mut(),
+                        &mut self.prop_scratch,
+                        &mut self.numeric_scratch,
                     )
                     .map_err(EvaluationError::ComputationFailed)?
                     .max(0.0);
                 let tolerance = float_tolerance::LP_EPSILON * online_value.abs().max(1.0);
                 if online_value > envelope_value + tolerance {
                     envelope_value = online_value;
-                    self.functions.borrow_mut().push(function);
+                    self.functions.push(function);
                     self.invalidate_online_cache();
                     useful = true;
                 }
@@ -597,104 +577,94 @@ impl NumericPotentialHeuristic {
                 if self.max_rays == 0 {
                     return Ok(f64::INFINITY);
                 }
-                let mut optimizer = self.online_optimizer.borrow_mut();
-                let optimizer = optimizer
-                    .as_mut()
-                    .expect("online optimizer disappeared during ray certification");
-                let mut generator = self.ray_generator.borrow_mut();
-                let generator = generator
+                let generator = self
+                    .ray_generator
                     .as_mut()
                     .expect("ray-enabled online optimizer has no exact verifier");
                 let mut candidate = if primal_ray.is_empty() {
                     None
                 } else {
                     generator
-                        .certify_native(optimizer, primal_ray, registry.view(eval_state.state()))
+                        .certify_native(optimizer, primal_ray, state)
                         .map_err(EvaluationError::ComputationFailed)?
                 };
                 if candidate.is_none() {
                     candidate = generator
-                        .try_certify(optimizer, registry.view(eval_state.state()))
+                        .try_certify(optimizer, state)
                         .map_err(EvaluationError::ComputationFailed)?;
                 }
                 if let Some(ray) = candidate {
-                    let mut rays = self.rays.borrow_mut();
-                    if rays.len() < self.max_rays
-                        && !generator.is_duplicate(&ray, &rays, &self.task)
+                    if self.rays.len() < self.max_rays
+                        && !generator.is_duplicate(&ray, &self.rays, &self.task)
                     {
-                        rays.push(ray);
-                        self.ray_hit_counts.borrow_mut().push(0);
+                        self.rays.push(ray);
+                        self.ray_hit_counts.push(0);
                         self.invalidate_online_cache();
                     }
-                    self.online_state.borrow_mut().dead_end_certificates += 1;
+                    self.online_state.dead_end_certificates += 1;
                     return Ok(f64::INFINITY);
                 }
             }
             OptimizationOutcome::Infeasible | OptimizationOutcome::ResourceLimit(_) => {}
         }
 
-        let stop = {
-            let mut online = self.online_state.borrow_mut();
-            if useful {
-                online.functions_added += 1;
+        let online = &mut self.online_state;
+        if useful {
+            online.functions_added += 1;
+            online.consecutive_misses = 0;
+            online.current_interval = online.base_interval;
+        } else {
+            online.misses += 1;
+            online.consecutive_misses += 1;
+            if online.max_consecutive_misses > 0
+                && online.consecutive_misses >= online.max_consecutive_misses
+            {
+                online.current_interval = (online.current_interval * 10).min(10_000);
                 online.consecutive_misses = 0;
-                online.current_interval = online.base_interval;
-            } else {
-                online.misses += 1;
-                online.consecutive_misses += 1;
-                if online.max_consecutive_misses > 0
-                    && online.consecutive_misses >= online.max_consecutive_misses
-                {
-                    online.current_interval = (online.current_interval * 10).min(10_000);
-                    online.consecutive_misses = 0;
-                }
             }
-            online.functions_added >= online.max_functions
-                || (online.max_misses > 0 && online.misses >= online.max_misses)
-                || (online.max_lp_solves > 0 && online.lp_solves >= online.max_lp_solves)
-        };
-        if stop {
-            self.online_optimizer.borrow_mut().take();
+        }
+        if online.functions_added >= online.max_functions
+            || (online.max_misses > 0 && online.misses >= online.max_misses)
+            || (online.max_lp_solves > 0 && online.lp_solves >= online.max_lp_solves)
+        {
+            self.online_optimizer = None;
         }
         Ok(envelope_value)
     }
 
-    fn track_online_cache_entry(&self, state_id: usize) {
+    fn track_online_cache_entry(&mut self, state_id: usize) {
         if self.invalidate_online_cache_on_growth {
-            self.online_state
-                .borrow_mut()
-                .clean_cache_states
-                .insert(state_id);
+            self.online_state.clean_cache_states.insert(state_id);
         }
     }
 
-    fn invalidate_online_cache(&self) {
+    fn invalidate_online_cache(&mut self) {
         if !self.invalidate_online_cache_on_growth {
             return;
         }
-        let mut online = self.online_state.borrow_mut();
+        let online = &mut self.online_state;
         let examined = online.clean_cache_states.len();
         online.cache_invalidations += 1;
         online.cache_entries_examined += examined;
         online.cache_entries_invalidated += examined;
         online.clean_cache_states.clear();
-        self.revision.set(self.revision.get() + 1);
+        self.revision += 1;
     }
 }
 
 impl Drop for NumericPotentialHeuristic {
     fn drop(&mut self) {
         if self.max_rays > 0 {
-            info!("Numeric rays retained: {}", self.rays.get_mut().len());
+            info!("Numeric rays retained: {}", self.rays.len());
             info!(
                 "States pruned by numeric rays: {}",
-                self.states_pruned_by_rays.get()
+                self.states_pruned_by_rays
             );
-            for (ray_id, hits) in self.ray_hit_counts.get_mut().iter().enumerate() {
+            for (ray_id, hits) in self.ray_hit_counts.iter().enumerate() {
                 info!("Numeric ray {ray_id} hits: {hits}");
             }
         }
-        let online = self.online_state.get_mut();
+        let online = &self.online_state;
         if online.max_functions > 0 {
             info!(
                 "Online potential functions added: {}",

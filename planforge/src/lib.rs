@@ -17,8 +17,8 @@ pub mod portfolio;
 mod tests;
 
 pub use output::{
-    EXIT_TIMEOUT, EXIT_UNSUPPORTED, exit_code_for_search_status, print_plan_result,
-    print_search_result, write_plan_file,
+    EXIT_TIMEOUT, EXIT_UNSUPPORTED, exit_code_for_search_outcome, print_search_result,
+    write_plan_file,
 };
 pub use portfolio::PortfolioOptions;
 
@@ -29,9 +29,8 @@ use limits::{
     parse_time_limit,
 };
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
-use planforge_search::config::SearchConfig;
 use planforge_search::heuristic_factory::{HeuristicEntry, register_external_heuristics};
-use planforge_search::search::{SearchResult, solve_task};
+use planforge_search::search::{SearchConfig, SearchResult, solve_task};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
 use std::ffi::OsString;
@@ -113,7 +112,7 @@ pub fn run_with_heuristics(extra: Vec<HeuristicEntry>) -> std::io::Result<()> {
 
     install_process_hooks(cli.max_memory)?;
     match run_internal(&cli) {
-        Ok(result) => std::process::exit(exit_code_for_search_status(&result.status)),
+        Ok(result) => std::process::exit(exit_code_for_search_outcome(&result.outcome)),
         Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
             tracing::info!("Time limit reached during heuristic construction.");
             std::process::exit(EXIT_TIMEOUT);
@@ -154,8 +153,8 @@ pub struct PlannersCli {
         long,
         value_name = "SPEC",
         default_value = "astar(blind())",
-        value_parser = planforge_search::config::parse_search_spec,
-        long_help = planforge_search::config::search_algorithm_help()
+        value_parser = planforge_search::search::parse_search_spec,
+        long_help = planforge_search::search::search_algorithm_help()
     )]
     pub search: SearchConfig,
 

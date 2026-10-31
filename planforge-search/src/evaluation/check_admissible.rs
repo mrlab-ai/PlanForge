@@ -13,7 +13,6 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
@@ -37,11 +36,11 @@ const G_IMPROVEMENT_TOLERANCE: f64 = 1e-12;
 pub struct CheckAdmissibleHeuristic<'task> {
     inner: Box<dyn Heuristic + 'task>,
     name: String,
-    oracle: RefCell<GoalDistanceOracle<'task>>,
+    oracle: GoalDistanceOracle<'task>,
     /// True goal distances keyed by the id the *search's* registry gave the
     /// state. The oracle numbers its own states independently, so its ids
     /// cannot be used here.
-    goal_distances: RefCell<HashMap<StateID, f64>>,
+    goal_distances: HashMap<StateID, f64>,
 }
 
 impl<'task> CheckAdmissibleHeuristic<'task> {
@@ -50,47 +49,37 @@ impl<'task> CheckAdmissibleHeuristic<'task> {
         let oracle = GoalDistanceOracle::new(task)?;
         Ok(Self {
             // Keep the wrapper distinct from the heuristic it checks in diagnostics.
-            name: format!("check_admissible_{}", inner.heuristic_name()),
+            name: format!("check_admissible_{}", inner.name()),
             inner,
-            oracle: RefCell::new(oracle),
-            goal_distances: RefCell::new(HashMap::new()),
+            oracle,
+            goal_distances: HashMap::new(),
         })
     }
 
     /// True goal distance of the state under evaluation, memoized per state.
-    fn goal_distance(&self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn goal_distance(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         let state = eval_state.state();
-        if let Some(&distance) = self.goal_distances.borrow().get(&state.get_id()) {
+        if let Some(&distance) = self.goal_distances.get(&state.get_id()) {
             return Ok(distance);
         }
 
         let distance = self
             .oracle
-            .borrow_mut()
             .goal_distance(eval_state.state_registry().view(state), state.get_id())
             .map_err(EvaluationError::ComputationFailed)?;
-        self.goal_distances
-            .borrow_mut()
-            .insert(state.get_id(), distance);
+        self.goal_distances.insert(state.get_id(), distance);
         Ok(distance)
     }
 
-    fn inadmissible(&self, state_id: StateID, h_value: f64, goal_distance: f64) -> EvaluationError {
-        EvaluationError::ComputationFailed(format!(
-            "`{}` is inadmissible on state {state_id}: it returned h = {h_value} for a state \
-             whose true goal distance is h* = {goal_distance} (h - h* = {})",
-            self.inner.heuristic_name(),
-            h_value - goal_distance,
-        ))
-    }
-}
-
-impl Heuristic for CheckAdmissibleHeuristic<'_> {
-    fn compute_heuristic(
-        &self,
+    /// Reject `h_value` when it exceeds the true goal distance of the state.
+    fn check(
+        &mut self,
         eval_state: &EvaluationState<'_, '_>,
+        h_value: f64,
     ) -> Result<f64, EvaluationError> {
-        let h_value = self.inner.compute_heuristic(eval_state)?;
         let goal_distance = self.goal_distance(eval_state)?;
         if h_value > goal_distance + ADMISSIBILITY_TOLERANCE {
             return Err(self.inadmissible(eval_state.state().get_id(), h_value, goal_distance));
@@ -98,7 +87,32 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
         Ok(h_value)
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn inadmissible(&self, state_id: StateID, h_value: f64, goal_distance: f64) -> EvaluationError {
+        EvaluationError::ComputationFailed(format!(
+            "`{}` is inadmissible on state {state_id}: it returned h = {h_value} for a state \
+             whose true goal distance is h* = {goal_distance} (h - h* = {})",
+            self.inner.name(),
+            h_value - goal_distance,
+        ))
+    }
+}
+
+impl Heuristic for CheckAdmissibleHeuristic<'_> {
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        let h_value = self.inner.evaluate(eval_state)?;
+        self.check(eval_state, h_value)
+    }
+
+    fn evaluate_with_preferred(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+        preferred: &mut Vec<OperatorIndex>,
+    ) -> Result<f64, EvaluationError> {
+        let h_value = self.inner.evaluate_with_preferred(eval_state, preferred)?;
+        self.check(eval_state, h_value)
+    }
+
+    fn name(&self) -> &str {
         &self.name
     }
 
@@ -112,10 +126,6 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
 
     fn reevaluate_on_every_pop(&self) -> bool {
         self.inner.reevaluate_on_every_pop()
-    }
-
-    fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
-        self.inner.copy_preferred_operator_ids(out)
     }
 }
 

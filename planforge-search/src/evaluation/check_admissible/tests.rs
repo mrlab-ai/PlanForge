@@ -65,10 +65,7 @@ impl ConstantHeuristic {
 }
 
 impl Heuristic for ConstantHeuristic {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         Ok(if eval_state.is_goal() {
             0.0
         } else {
@@ -76,7 +73,7 @@ impl Heuristic for ConstantHeuristic {
         })
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }
@@ -85,13 +82,13 @@ fn evaluate_initial_state(
     task: TaskRef<'static>,
     inner: Box<dyn Heuristic + 'static>,
 ) -> Result<f64, EvaluationError> {
-    let heuristic = CheckAdmissibleHeuristic::new(inner, task.clone())
+    let mut heuristic = CheckAdmissibleHeuristic::new(inner, task.clone())
         .expect("the chain task has finite non-negative costs");
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();
     let mut eval_state = EvaluationState::new(&initial_state, &*task, &registry);
     eval_state.set_is_goal(false);
-    heuristic.compute_heuristic(&eval_state)
+    heuristic.evaluate(&eval_state)
 }
 
 #[test]
@@ -99,9 +96,7 @@ fn rejects_an_inadmissible_heuristic() {
     let error = evaluate_initial_state(chain_task(), ConstantHeuristic::boxed(1000.0, "huge"))
         .expect_err("h = 1000 must be rejected against a true goal distance of 2");
 
-    let EvaluationError::ComputationFailed(message) = error else {
-        panic!("expected a ComputationFailed error, got {error:?}");
-    };
+    let EvaluationError::ComputationFailed(message) = error;
     assert!(message.contains("huge"), "{message}");
     assert!(message.contains("inadmissible"), "{message}");
     assert!(message.contains("1000"), "{message}");
@@ -150,13 +145,13 @@ fn wrapper_name_differs_from_the_wrapped_name() {
     let heuristic =
         CheckAdmissibleHeuristic::new(ConstantHeuristic::boxed(1.0, "inner"), chain_task())
             .expect("the chain task has finite non-negative costs");
-    assert_eq!(heuristic.heuristic_name(), "check_admissible_inner");
+    assert_eq!(heuristic.name(), "check_admissible_inner");
 }
 
 #[test]
 fn goal_distance_is_computed_per_state() {
     let task = chain_task();
-    let heuristic = CheckAdmissibleHeuristic::new(
+    let mut heuristic = CheckAdmissibleHeuristic::new(
         Box::new(crate::evaluation::heuristic::BlindHeuristic::for_task(
             &*task,
         )),
@@ -169,7 +164,7 @@ fn goal_distance_is_computed_per_state() {
         .get_successor_state(&initial_state, &task.get_operators()[0])
         .expect("`step_0_1` is applicable in the initial state");
 
-    let mut oracle = heuristic.oracle.borrow_mut();
+    let oracle = &mut heuristic.oracle;
     assert_eq!(
         oracle
             .goal_distance(registry.view(&initial_state), initial_state.get_id())

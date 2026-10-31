@@ -14,7 +14,7 @@ use super::lookup::{
 };
 use super::partition::{Completion, PartitionedCollection};
 use super::scoring::compute_score;
-use super::{OrderSelection, SaturatedCostPartitioningHeuristic};
+use super::{OrderSelection, ScpBuilder};
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::evaluator::EvaluationError;
 use crate::resource_limits::Deadline;
@@ -27,12 +27,12 @@ pub(super) struct CandidateCostPartitions {
     pub(super) best_index: usize,
 }
 
-impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+impl<'task> ScpBuilder<'task> {
     /// The order SCP starts from at the evaluated state: the greedy order, or
     /// for region SCP over a goal-focused collection, its goal-cover order.
     pub(super) fn compute_order_for_state(
         &self,
-        state: &mut OrderSelection<'task>,
+        state: &mut OrderSelection,
         abstract_state_ids: &[Option<usize>],
         components: &[AbstractionComponent<'_>],
     ) -> Vec<usize> {
@@ -61,7 +61,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// also a random permutation.
     pub(super) fn diverse_orders_for_sample(
         &self,
-        state: &mut OrderSelection<'task>,
+        state: &mut OrderSelection,
         abstract_state_ids: &[Option<usize>],
     ) -> Vec<Vec<usize>> {
         let greedy = Self::compute_greedy_order_for_state(state, abstract_state_ids);
@@ -74,7 +74,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 
     pub(super) fn compute_greedy_order_for_state(
-        state: &mut OrderSelection<'task>,
+        state: &mut OrderSelection,
         abstract_state_ids: &[Option<usize>],
     ) -> Vec<usize> {
         let total = state.goal_distances_by_abstraction.len();

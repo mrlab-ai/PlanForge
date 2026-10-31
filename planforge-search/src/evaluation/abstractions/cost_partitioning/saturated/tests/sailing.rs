@@ -202,12 +202,9 @@ fn initial_cartesian_scp_value(
         Default::default(),
     )
     .expect("failed to construct oracle SCP heuristic");
-    let mut partitions = build_cost_partitionings(&heuristic, &abstract_state_ids);
+    let partitions = retained_cost_partitionings(&heuristic);
     assert_eq!(partitions.len(), 1);
-    partitions
-        .pop()
-        .expect("one oracle SCP partition")
-        .compute_heuristic(&abstract_state_ids)
+    partitions[0].compute_heuristic(&abstract_state_ids)
 }
 
 #[test]
@@ -271,16 +268,15 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     )
     .expect("failed to construct SCP heuristic");
     let abstract_state_ids = initial_abstract_state_ids(&heuristic, transformed_task);
-    let cp_heuristics = build_cost_partitionings(&heuristic, &abstract_state_ids);
+    let cp_heuristics = retained_cost_partitionings(&heuristic);
     assert_eq!(cp_heuristics.len(), 1);
 
-    let initial_h = compute_max_h(&cp_heuristics, &abstract_state_ids);
-    let state = heuristic.state.borrow();
-    let components = &state.components;
+    let initial_h = compute_max_h(cp_heuristics, &abstract_state_ids);
+    let components = &heuristic.components;
 
     println!("HANDCRAFTED_FULL_TASK_INITIAL_H {initial_h}");
     let mut contributions = vec![0.0; specs.len()];
-    for cp in &cp_heuristics {
+    for cp in cp_heuristics {
         for table in &cp.lookup_tables {
             let contribution = current_h_for_distances(
                 table.abstraction_id,
@@ -449,8 +445,6 @@ fn initial_abstract_state_ids(
         numeric: task.get_initial_numeric_state_values().to_vec(),
     };
     heuristic
-        .state
-        .borrow()
         .components
         .iter()
         .map(|component| {

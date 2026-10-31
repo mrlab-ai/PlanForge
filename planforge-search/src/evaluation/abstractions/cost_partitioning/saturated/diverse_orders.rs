@@ -5,18 +5,18 @@ use tracing::info;
 use super::deadline::deadline_from_now;
 use super::lookup::{CostPartitioningHeuristic, abstraction_heuristic_values};
 use super::partition::{Completion, PartitionedCollection};
-use super::{OrderSelection, SaturatedCostPartitioningHeuristic};
+use super::{OrderSelection, ScpBuilder};
 use crate::evaluation::evaluator::EvaluationError;
 use crate::resource_limits::Deadline;
 
-impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+impl<'task> ScpBuilder<'task> {
     /// The cost partitionings diversification retains, starting from
     /// `initial_candidates`, whose first is the best order's at the
     /// evaluated state.
     pub(super) fn select_diverse_orders(
         &self,
         collection: PartitionedCollection<'_, '_>,
-        state: &mut OrderSelection<'task>,
+        state: &mut OrderSelection,
         initial_candidates: Vec<CostPartitioningHeuristic>,
         budget: Deadline,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {

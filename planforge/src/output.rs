@@ -6,7 +6,7 @@
 
 use std::fs;
 
-use planforge_search::search::{SearchResult, SearchStatus};
+use planforge_search::search::{SearchOutcome, SearchResult};
 use tracing::info;
 
 pub const EXIT_SUCCESS: i32 = 0;
@@ -16,11 +16,11 @@ pub const EXIT_TIMEOUT: i32 = 7;
 /// Downward's `SEARCH_UNSUPPORTED`.
 pub const EXIT_UNSUPPORTED: i32 = 34;
 
-pub fn exit_code_for_search_status(status: &SearchStatus) -> i32 {
-    match status {
-        SearchStatus::Timeout => EXIT_TIMEOUT,
-        SearchStatus::MemoryLimitReached => EXIT_OUT_OF_MEMORY,
-        SearchStatus::InProgress | SearchStatus::Solved(_) | SearchStatus::Failed => EXIT_SUCCESS,
+pub fn exit_code_for_search_outcome(outcome: &SearchOutcome) -> i32 {
+    match outcome {
+        SearchOutcome::Timeout => EXIT_TIMEOUT,
+        SearchOutcome::OutOfMemory => EXIT_OUT_OF_MEMORY,
+        SearchOutcome::Solved { .. } | SearchOutcome::Unsolvable => EXIT_SUCCESS,
     }
 }
 
@@ -30,47 +30,58 @@ pub fn exit_code_for_search_status(status: &SearchStatus) -> i32 {
 /// failure has to reach the caller: exiting successfully with no plan on disk
 /// is worse than exiting with an error.
 pub fn write_plan_file(result: &SearchResult) -> std::io::Result<()> {
-    let Some(plan) = result.plan.as_ref() else {
+    let SearchOutcome::Solved { plan, .. } = &result.outcome else {
         return Ok(());
     };
-    if !matches!(result.status, SearchStatus::Solved(_)) {
-        return Ok(());
-    }
-
-    let mut plan_content = String::new();
-    for op in plan.iter() {
-        plan_content.push_str(&format!("({})\n", op.name()));
-    }
+    let plan_content: String = plan.iter().map(|op| format!("({})\n", op.name())).collect();
     fs::write("sas_plan", plan_content)
 }
 
+/// Print the outcome and Fast Downward's statistics block.
 pub fn print_search_result(result: &SearchResult) {
-    print_plan_result(result);
+    match &result.outcome {
+        SearchOutcome::Solved { plan, cost } => {
+            info!("Solution found!");
+            for (i, op) in plan.iter().enumerate() {
+                info!("  {}: {}", i + 1, op.name());
+            }
+            info!("Plan length: {} step(s).", plan.len());
+            info!("Plan cost: {cost:.6}");
+        }
+        SearchOutcome::Unsolvable => info!("No solution found"),
+        SearchOutcome::Timeout => info!("Search timed out"),
+        SearchOutcome::OutOfMemory => info!("Search stopped after reaching the memory limit"),
+    }
 
-    // Fast Downward-style statistics block.
-    info!("Expanded {} state(s).", result.nodes_expanded);
-    info!("Reopened {} state(s).", result.nodes_reopened);
-    info!("Evaluated {} state(s).", result.nodes_evaluated);
-    info!("Evaluations: {}", result.evaluations);
-    info!("Generated {} state(s).", result.nodes_generated);
-    info!("Dead ends: {} state(s).", result.dead_ends);
+    let statistics = &result.statistics;
+    let nodes = &statistics.nodes;
+    let until_last_jump = &statistics.nodes_until_last_jump;
+    info!("Expanded {} state(s).", nodes.expanded);
+    info!("Reopened {} state(s).", nodes.reopened);
+    info!("Evaluated {} state(s).", nodes.evaluated);
+    info!("Evaluations: {}", statistics.evaluations);
+    info!("Generated {} state(s).", nodes.generated);
+    info!("Dead ends: {} state(s).", statistics.dead_ends);
     info!(
         "Expanded until last jump: {} state(s).",
-        result.nodes_expanded_until_last_jump
+        until_last_jump.expanded
     );
     info!(
         "Reopened until last jump: {} state(s).",
-        result.nodes_reopened_until_last_jump
+        until_last_jump.reopened
     );
     info!(
         "Evaluated until last jump: {} state(s).",
-        result.nodes_evaluated_until_last_jump
+        until_last_jump.evaluated
     );
     info!(
         "Generated until last jump: {} state(s).",
-        result.nodes_generated_until_last_jump
+        until_last_jump.generated
     );
-    info!("Number of registered states: {}", result.registered_states);
+    info!(
+        "Number of registered states: {}",
+        statistics.registered_states
+    );
     info!("Search time: {:.6}s", result.search_time.as_secs_f64());
     print_peak_memory();
 }
@@ -95,39 +106,3 @@ fn print_peak_memory() {
 
 #[cfg(not(target_os = "linux"))]
 fn print_peak_memory() {}
-
-/// Print the outcome and write a found plan without claiming search statistics.
-///
-/// Gradient plan synthesis uses this directly because it has no search nodes,
-/// frontier, generated states, or expansions.
-pub fn print_plan_result(result: &SearchResult) {
-    match result.status {
-        SearchStatus::Solved(_) => {
-            info!("Solution found!");
-            if let Some(plan) = result.plan.as_ref() {
-                let plan_cost = result
-                    .solution_cost
-                    .unwrap_or_else(|| plan.iter().map(|op| op.cost().value() as f64).sum());
-
-                for (i, op) in plan.iter().enumerate() {
-                    info!("  {}: {}", i + 1, op.name());
-                }
-
-                info!("Plan length: {} step(s).", plan.len());
-                info!("Plan cost: {:.6}", plan_cost);
-            }
-        }
-        SearchStatus::Failed => {
-            info!("No solution found");
-        }
-        SearchStatus::Timeout => {
-            info!("Search timed out");
-        }
-        SearchStatus::MemoryLimitReached => {
-            info!("Search stopped after reaching the memory limit");
-        }
-        SearchStatus::InProgress => {
-            info!("Search ended in progress");
-        }
-    }
-}

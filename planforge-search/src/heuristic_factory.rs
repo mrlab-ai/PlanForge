@@ -469,7 +469,6 @@ pub(crate) fn build_scp_from_sources<'a>(
         deadline,
     )
     .map_err(|error| format!("failed to construct `{}`: {error}", context.name))?;
-    remaining_construction_time(deadline)?;
     Ok(Box::new(heuristic))
 }
 

@@ -1,88 +1,85 @@
 //! Pointwise maximum of arbitrary heuristics. Abstraction children are grouped
 //! by the feature builder before reaching this evaluator.
+
+#[cfg(test)]
+mod tests;
+
 use super::{EvaluationError, EvaluationState, Heuristic};
 use planforge_sas::numeric_task::OperatorIndex;
-use std::cell::{Cell, RefCell};
 
 pub struct MaximumHeuristic<'a> {
     name: String,
     children: Vec<Box<dyn Heuristic + 'a>>,
-    child_revisions: RefCell<Vec<u64>>,
-    revision: Cell<u64>,
-    preferred: RefCell<Vec<OperatorIndex>>,
-    preferred_scratch: RefCell<Vec<OperatorIndex>>,
 }
+
 impl<'a> MaximumHeuristic<'a> {
     pub fn new(name: String, children: Vec<Box<dyn Heuristic + 'a>>) -> Self {
         assert!(
             !children.is_empty(),
             "maximum requires at least one heuristic"
         );
-        let revisions = children.iter().map(|child| child.revision()).collect();
-        Self {
-            name,
-            children,
-            child_revisions: RefCell::new(revisions),
-            revision: Cell::new(0),
-            preferred: RefCell::default(),
-            preferred_scratch: RefCell::default(),
-        }
+        Self { name, children }
     }
-}
-impl Heuristic for MaximumHeuristic<'_> {
-    fn compute_heuristic(&self, state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+
+    /// The largest estimate of the children; with `preferred`, appending the
+    /// union of their preferred operators.
+    fn maximum(
+        &mut self,
+        state: &EvaluationState<'_, '_>,
+        mut preferred: Option<&mut Vec<OperatorIndex>>,
+    ) -> Result<f64, EvaluationError> {
+        let first_preferred = preferred.as_ref().map_or(0, |preferred| preferred.len());
         let mut best = f64::NEG_INFINITY;
-        let mut preferred = self.preferred.borrow_mut();
-        let mut scratch = self.preferred_scratch.borrow_mut();
-        preferred.clear();
-        for child in &self.children {
-            let estimate = child.compute_heuristic(state)?;
+        for child in &mut self.children {
+            let estimate = match preferred.as_deref_mut() {
+                Some(preferred) => child.evaluate_with_preferred(state, preferred)?,
+                None => child.evaluate(state)?,
+            };
             if estimate.is_nan() {
                 return Err(EvaluationError::ComputationFailed(format!(
                     "heuristic `{}` returned NaN",
-                    child.heuristic_name()
+                    child.name()
                 )));
             }
             best = best.max(estimate);
-            scratch.clear();
-            child.copy_preferred_operator_ids(&mut scratch);
-            preferred.extend_from_slice(&scratch);
         }
-        preferred.sort_unstable();
-        preferred.dedup();
+        if let Some(preferred) = preferred {
+            preferred[first_preferred..].sort_unstable();
+            preferred.dedup();
+        }
         Ok(best)
     }
-    fn heuristic_name(&self) -> &str {
+}
+
+impl Heuristic for MaximumHeuristic<'_> {
+    fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        self.maximum(state, None)
+    }
+
+    fn evaluate_with_preferred(
+        &mut self,
+        state: &EvaluationState<'_, '_>,
+        preferred: &mut Vec<OperatorIndex>,
+    ) -> Result<f64, EvaluationError> {
+        self.maximum(state, Some(preferred))
+    }
+
+    fn name(&self) -> &str {
         &self.name
     }
+
     fn proves_initial_state_optimal(&self) -> bool {
         self.children
             .iter()
             .all(|child| child.proves_initial_state_optimal())
     }
-    fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
-        out.clear();
-        out.extend_from_slice(&self.preferred.borrow());
-    }
+
+    /// The children's revisions summed: monotone, and growing exactly when
+    /// one of theirs grows.
     fn revision(&self) -> u64 {
-        let mut revisions = self.child_revisions.borrow_mut();
-        let mut changed = false;
-        for (child, previous) in self.children.iter().zip(revisions.iter_mut()) {
-            let current = child.revision();
-            assert!(current >= *previous, "heuristic revisions must be monotone");
-            changed |= current != *previous;
-            *previous = current;
-        }
-        if changed {
-            self.revision.set(
-                self.revision
-                    .get()
-                    .checked_add(1)
-                    .expect("heuristic revision overflow"),
-            );
-        }
-        self.revision.get()
+        self.children.iter().map(|child| child.revision()).sum()
     }
+
     fn reevaluate_on_every_pop(&self) -> bool {
         self.children
             .iter()

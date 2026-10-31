@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::RefCell;
 use std::fmt;
 use std::sync::Arc;
 
@@ -67,9 +66,10 @@ pub struct LandmarkCutNumericHeuristic<'task> {
     name: String,
     task: &'task dyn AbstractNumericTask,
     config: LmCutNumericConfig,
-    landmark_generator: RefCell<LandmarkCutLandmarks<'task>>,
-    state_scratch: RefCell<ExplicitState>,
-    state_value_cache: RefCell<StateValueCache>,
+    landmark_generator: LandmarkCutLandmarks<'task>,
+    state_scratch: ExplicitState,
+    /// Estimates by the state ids of the search's registry.
+    state_value_cache: StateValueCache,
 }
 
 impl LmCutNumericConfig {
@@ -96,9 +96,9 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
             name: "lmcutnumeric".to_string(),
             task,
             config,
-            landmark_generator: RefCell::new(LandmarkCutLandmarks::new(Arc::new(task), config)),
-            state_scratch: RefCell::new(ExplicitState::default()),
-            state_value_cache: RefCell::new(StateValueCache::default()),
+            landmark_generator: LandmarkCutLandmarks::new(Arc::new(task), config),
+            state_scratch: ExplicitState::default(),
+            state_value_cache: StateValueCache::default(),
         })
     }
 
@@ -108,26 +108,22 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
 }
 
 impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
-        if let Some(value) = self.state_value_cache.borrow().get(state_id) {
+        if let Some(value) = self.state_value_cache.get(state_id) {
             return Ok(value);
         }
 
-        let mut state = self.state_scratch.borrow_mut();
-        eval_state.fill_values(&mut state)?;
+        let state = &mut self.state_scratch;
+        eval_state.fill_values(state)?;
 
         if state.holds_all(self.task.goals()) {
-            self.state_value_cache.borrow_mut().insert(state_id, 0.0);
+            self.state_value_cache.insert(state_id, 0.0);
             return Ok(0.0);
         }
 
         let (dead_end, total_cost) = self
             .landmark_generator
-            .borrow_mut()
             .compute_landmark_cost(&state.propositional, &state.numeric)
             .map_err(EvaluationError::ComputationFailed)?;
 
@@ -139,13 +135,11 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             total_cost >= 0.0,
             "lmcutnumeric returned negative heuristic value"
         );
-        self.state_value_cache
-            .borrow_mut()
-            .insert(state_id, total_cost);
+        self.state_value_cache.insert(state_id, total_cost);
         Ok(total_cost)
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }

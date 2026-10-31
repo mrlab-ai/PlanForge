@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
@@ -11,7 +9,7 @@ use crate::evaluation::abstractions::component::AbstractionComponent;
 pub struct MaxAbstractionHeuristic<'task> {
     name: String,
     components: Vec<AbstractionComponent<'task>>,
-    state_values: RefCell<ExplicitState>,
+    state_values: ExplicitState,
 }
 
 impl<'task> MaxAbstractionHeuristic<'task> {
@@ -27,26 +25,26 @@ impl<'task> MaxAbstractionHeuristic<'task> {
         Ok(Self {
             name: name.unwrap_or_else(|| "max_abstractions".to_string()),
             components,
-            state_values: RefCell::default(),
+            state_values: ExplicitState::default(),
         })
     }
 }
 
 impl Heuristic for MaxAbstractionHeuristic<'_> {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let mut state_values = self.state_values.borrow_mut();
-        eval_state.fill_values(&mut state_values)?;
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        eval_state.fill_values(&mut self.state_values)?;
         let mut best = 0.0_f64;
         for (component_id, component) in self.components.iter().enumerate() {
-            best = best.max(standalone_estimate(component, component_id, &state_values)?);
+            best = best.max(standalone_estimate(
+                component,
+                component_id,
+                &self.state_values,
+            )?);
         }
         Ok(best)
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }

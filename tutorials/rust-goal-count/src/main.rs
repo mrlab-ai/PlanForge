@@ -4,73 +4,53 @@ use std::time::Duration;
 use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
-use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 
 /// Goal-count heuristic: number of goal facts not satisfied in the state.
-struct GoalCountHeuristic {
-    name: String,
-}
+struct GoalCountHeuristic;
 
 impl Heuristic for GoalCountHeuristic {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let task = eval_state.task();
-        let registry = eval_state.state_registry();
-        let state = eval_state.state();
-        let mut unsatisfied = 0usize;
-        for i in 0..task.get_num_goals() {
-            if !task.get_goal_fact(i).is_held(registry.view(state)) {
-                unsatisfied += 1;
-            }
-        }
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        let state = eval_state.state_registry().view(eval_state.state());
+        let unsatisfied = eval_state
+            .task()
+            .goals()
+            .iter()
+            .filter(|goal| !goal.is_held(state))
+            .count();
         Ok(unsatisfied as f64)
     }
 
-    fn heuristic_name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &str {
+        "goal_count"
     }
 }
 
 fn run(path: &str) {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(path));
+    let mut heuristic = GoalCountHeuristic;
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();
-    let heuristic = GoalCountHeuristic {
-        name: "goal_count".to_string(),
-    };
-    let initial_eval = EvaluationState::new(&initial_state, &*task, &registry);
     let initial_h = heuristic
-        .compute_heuristic(&initial_eval)
+        .evaluate(&EvaluationState::new(&initial_state, &*task, &registry))
         .expect("goal-count should evaluate the initial state");
-    let heuristic = Box::new(heuristic);
-    let mut search = AStarSearch::new(
-        &*task,
-        registry,
-        planforge_search::search::SearchParams {
-            heuristic,
-            lazy: None,
-            reevaluate_dynamic: false,
-            time_limit: Some(Duration::from_secs(5)),
-            max_memory_bytes: None,
-        },
-    );
-    let result = search.search().expect("search failed");
-    let status = match &result.status {
-        SearchStatus::Solved(_) => "solved",
-        SearchStatus::Failed => "unsolvable",
-        SearchStatus::Timeout => "timeout",
-        SearchStatus::MemoryLimitReached => "memory_limit",
-        SearchStatus::InProgress => "in_progress",
+
+    let params = SearchParams {
+        time_limit: Some(Duration::from_secs(5)),
+        ..SearchParams::new(Box::new(heuristic))
     };
+    let result = AStarSearch::new(task, params).run().expect("search failed");
     println!("instance: {path}");
     println!("  h(initial):  {initial_h}");
-    println!("  status:      {status}");
-    println!("  plan length: {:?}", result.plan.as_ref().map(|p| p.len()));
-    println!("  plan cost:   {:?}", result.solution_cost);
-    println!("  expanded:    {}", result.nodes_expanded);
-    println!("  evaluated:   {}", result.nodes_evaluated);
+    match &result.outcome {
+        SearchOutcome::Solved { plan, cost } => {
+            println!("  plan length: {}", plan.len());
+            println!("  plan cost:   {cost}");
+        }
+        outcome => println!("  outcome:     {outcome:?}"),
+    }
+    println!("  expanded:    {}", result.statistics.nodes.expanded);
+    println!("  evaluated:   {}", result.statistics.nodes.evaluated);
     println!();
 }
 

@@ -7,8 +7,8 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 fn diverse_orders_retain_available_goal_cover_orders_per_cartesian_goal() {
     // Standalone bounds live in one envelope outside the SCP order budget.
     let task = std::sync::Arc::new(independent_goals_task());
-    let (heuristic, expected_goals) = goal_cover_scp(&task, |goals| 1 + 4 * goals);
-    evaluate_initial(&task, &heuristic).unwrap();
+    let (mut heuristic, expected_goals) = goal_cover_scp(&task, |goals| 1 + 4 * goals);
+    evaluate_initial(&task, &mut heuristic).unwrap();
     let retained_per_goal = retained_goal_cover_orders_per_goal(&heuristic);
     assert_eq!(
         retained_per_goal.keys().copied().collect::<HashSet<_>>(),
@@ -27,8 +27,8 @@ fn diverse_orders_retain_available_goal_cover_orders_per_cartesian_goal() {
 #[test]
 fn required_orders_are_retained_beyond_max_orders() {
     let task = std::sync::Arc::new(independent_goals_task());
-    let (heuristic, expected_goals) = goal_cover_scp(&task, |_| 1);
-    evaluate_initial(&task, &heuristic).unwrap();
+    let (mut heuristic, expected_goals) = goal_cover_scp(&task, |_| 1);
+    evaluate_initial(&task, &mut heuristic).unwrap();
     let retained_per_goal = retained_goal_cover_orders_per_goal(&heuristic);
     assert_eq!(
         retained_per_goal.keys().copied().collect::<HashSet<_>>(),
@@ -66,7 +66,7 @@ fn diverse_orders_support_mixed_abstraction_representations() {
     config.diversify = true;
     config.samples = 16;
     config.max_orders = 8;
-    let heuristic = SaturatedCostPartitioningHeuristic::new(
+    let mut heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components,
         config,
@@ -75,12 +75,11 @@ fn diverse_orders_support_mixed_abstraction_representations() {
     )
     .unwrap();
 
-    assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
+    assert_eq!(evaluate_initial(&task, &mut heuristic).unwrap(), 5.0);
     let retained = retained_cost_partitionings(&heuristic);
     assert!(!retained.is_empty());
     assert!(retained.len() <= 8);
-    drop(retained);
-    assert!(heuristic.state.borrow().components.iter().all(|component| {
+    assert!(heuristic.components.iter().all(|component| {
         component
             .cegar()
             .is_none_or(|abstraction| !abstraction.retains_transitions())

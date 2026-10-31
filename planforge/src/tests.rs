@@ -1,4 +1,4 @@
-use planforge_search::search::SearchStatus;
+use planforge_search::search::SearchOutcome;
 
 use super::*;
 use crate::limits::{
@@ -29,21 +29,22 @@ fn parses_time_limit_suffixes() {
 }
 
 #[test]
-fn maps_search_statuses_to_exit_codes() {
+fn maps_search_outcomes_to_exit_codes() {
+    let solved = SearchOutcome::Solved {
+        plan: Vec::new(),
+        cost: 0.0,
+    };
+    assert_eq!(exit_code_for_search_outcome(&solved), EXIT_SUCCESS);
     assert_eq!(
-        exit_code_for_search_status(&SearchStatus::Solved(0)),
+        exit_code_for_search_outcome(&SearchOutcome::Unsolvable),
         EXIT_SUCCESS
     );
     assert_eq!(
-        exit_code_for_search_status(&SearchStatus::Failed),
-        EXIT_SUCCESS
-    );
-    assert_eq!(
-        exit_code_for_search_status(&SearchStatus::Timeout),
+        exit_code_for_search_outcome(&SearchOutcome::Timeout),
         EXIT_TIMEOUT
     );
     assert_eq!(
-        exit_code_for_search_status(&SearchStatus::MemoryLimitReached),
+        exit_code_for_search_outcome(&SearchOutcome::OutOfMemory),
         EXIT_OUT_OF_MEMORY
     );
 }
