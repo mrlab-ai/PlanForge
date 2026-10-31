@@ -13,6 +13,10 @@ use crate::tools::OrderedSet;
 #[derive(Debug, Clone)]
 pub struct Action {
     pub name: String,
+    /// The disjunct of a split disjunctive precondition this copy keeps.
+    /// Copies share the PDDL name, which plans use, and differ in this index,
+    /// which keeps their exploration rules apart.
+    pub split: Option<usize>,
     pub parameters: Vec<TypedObject>,
     pub num_external_parameters: usize,
     pub precondition: Condition,
@@ -33,12 +37,22 @@ impl Action {
     ) -> Self {
         Action {
             name,
+            split: None,
             parameters,
             num_external_parameters,
             precondition,
             effects,
             cost,
             assign_effects: vec![],
+        }
+    }
+
+    /// The name the grounding rules identify this action by: the PDDL name,
+    /// extended by the disjunct of a split precondition.
+    pub fn exploration_name(&self) -> String {
+        match self.split {
+            Some(index) => format!("{}@split{index}", self.name),
+            None => self.name.clone(),
         }
     }
 
@@ -107,12 +121,16 @@ impl Action {
             init_function_vals,
             ..
         } = *tables;
-        // Build the action name
-        let arg_list: Vec<&str> = self.parameters[..self.num_external_parameters]
-            .iter()
-            .map(|parameter| crate::pddl::Substitution::resolve(var_mapping, &parameter.name))
+        let words: Vec<&str> = std::iter::once(self.name.as_str())
+            .chain(
+                self.parameters[..self.num_external_parameters]
+                    .iter()
+                    .map(|parameter| {
+                        crate::pddl::Substitution::resolve(var_mapping, &parameter.name)
+                    }),
+            )
             .collect();
-        let name = format!("({} {})", self.name, arg_list.join(" "));
+        let name = format!("({})", words.join(" "));
 
         // Instantiate precondition
         let precondition = self.precondition.instantiate_action(

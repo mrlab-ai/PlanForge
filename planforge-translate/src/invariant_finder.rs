@@ -44,13 +44,8 @@ fn build_balance_checker(
 
         if create_heavy_act {
             let heavy_act = Action {
-                name: action.name.clone(),
-                parameters: action.parameters.clone(),
-                num_external_parameters: action.num_external_parameters,
-                precondition: action.precondition.clone(),
                 effects: too_heavy_effects,
-                cost: action.cost.clone(),
-                assign_effects: action.assign_effects.clone(),
+                ..action.clone()
             };
             action_to_heavy_action.insert(idx, heavy_act);
         }
@@ -100,13 +95,8 @@ fn add_inequality_preconds(
         // one conjunction deep, so a nested conjunction would hide them.
         let precond = Condition::Conjunction(Conjunction::new(precond_parts)).simplified();
         Action {
-            name: action.name.clone(),
-            parameters: action.parameters.clone(),
-            num_external_parameters: action.num_external_parameters,
             precondition: precond,
-            effects: action.effects.clone(),
-            cost: action.cost.clone(),
-            assign_effects: action.assign_effects.clone(),
+            ..action.clone()
         }
     } else {
         action.clone()

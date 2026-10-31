@@ -480,11 +480,11 @@ fn split_disjunctions(task: &mut Task) {
 
         match &action.precondition {
             Condition::Disjunction(disjunction) => {
-                // The copies need distinct names: an action's name identifies it
-                // downstream, in the exploration rules and in the plan file.
+                // The copies keep the PDDL name, which the plan file shows,
+                // and are told apart in the exploration rules by their split.
                 for (index, part) in disjunction.parts.iter().enumerate() {
                     let mut copy = action.clone();
-                    copy.name = format!("{}@split{index}", action.name);
+                    copy.split = Some(index);
                     copy.precondition = part.clone();
                     actions.push(copy);
                 }
@@ -760,13 +760,13 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
         rules.push(ExplorationRule {
             conditions,
             effect: Condition::Atom(Atom::new(
-                get_action_predicate(&action.name),
+                get_action_predicate(&action.exploration_name()),
                 action.parameters.iter().map(|p| p.name.clone()).collect(),
             )),
         });
 
         let action_head = Condition::Atom(Atom::new(
-            get_action_predicate(&action.name),
+            get_action_predicate(&action.exploration_name()),
             action.parameters.iter().map(|p| p.name.clone()).collect(),
         ));
 

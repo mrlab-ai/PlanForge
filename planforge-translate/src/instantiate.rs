@@ -293,7 +293,7 @@ pub fn explore(task: &Task, limits: GroundingLimits) -> Result<ExploreResult, Gr
     // so one buffer serves all of them.
     let mut var_mapping = VarMapping::default();
     for action in &task.actions {
-        let Some(param_lists) = reachable_action_params.get(&action.name) else {
+        let Some(param_lists) = reachable_action_params.get(&action.exploration_name()) else {
             continue;
         };
         monitor.enter_action(&action.name);
