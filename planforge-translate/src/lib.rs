@@ -51,3 +51,4 @@ pub use grounding::{
     GroundingLimitError, GroundingLimitKind, GroundingLimits,
 };
 pub use options::LayerStrategy;
+pub use pddl_parser::lisp_parser::{ParseError, ParseErrorKind};

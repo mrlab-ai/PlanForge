@@ -1,31 +1,34 @@
-use super::{SExpr, is_function_comparison};
-use planforge_sas::numeric_task::InvalidNumericValue;
+use super::{ParseError, ParseResult, SExpr, is_function_comparison};
 
 /// Validate only numeric expression positions: NaN remains a legal identifier
 /// in object/function arguments and metadata, but never a numeric literal.
-fn validate_numeric_expression(form: &SExpr) -> Result<(), InvalidNumericValue> {
+fn validate_numeric_expression(form: &SExpr) -> ParseResult<()> {
     match form {
-        SExpr::Atom(atom) => {
+        SExpr::Atom(atom, line) => {
             if atom.parse::<f64>().is_ok_and(f64::is_nan) {
-                return Err(InvalidNumericValue);
+                return Err(ParseError::malformed(*line, "NaN is not a numeric value"));
             }
         }
-        SExpr::List(items) if items.first().is_some_and(|head| matches!(head, SExpr::Atom(operator) if matches!(operator.as_str(), "+" | "-" | "*" | "/"))) => {
-            for argument in &items[1..] { validate_numeric_expression(argument)?; }
+        SExpr::List(items, _)
+            if matches!(
+                items.first().and_then(SExpr::atom),
+                Some("+" | "-" | "*" | "/")
+            ) =>
+        {
+            for argument in &items[1..] {
+                validate_numeric_expression(argument)?;
+            }
         }
-        SExpr::List(_) => {} // A fluent's arguments are object identifiers.
+        SExpr::List(..) => {} // A fluent's arguments are object identifiers.
     }
     Ok(())
 }
 
-pub(super) fn validate(form: &SExpr, effect: bool) -> Result<(), InvalidNumericValue> {
-    let SExpr::List(items) = form else {
+pub(super) fn validate(form: &SExpr, effect: bool) -> ParseResult<()> {
+    let SExpr::List(items, _) = form else {
         return Ok(());
     };
-    let head = items.first().and_then(|head| match head {
-        SExpr::Atom(atom) => Some(atom.as_str()),
-        SExpr::List(_) => None,
-    });
+    let head = items.first().and_then(SExpr::atom);
     if is_function_comparison(items) {
         for argument in &items[1..] {
             validate_numeric_expression(argument)?;
@@ -62,7 +65,7 @@ pub(super) fn validate(form: &SExpr, effect: bool) -> Result<(), InvalidNumericV
     let mut next_is_effect = false;
     for child in items {
         validate(child, effect || next_is_effect)?;
-        next_is_effect = matches!(child, SExpr::Atom(tag) if tag == ":effect");
+        next_is_effect = child.atom() == Some(":effect");
     }
     Ok(())
 }
@@ -80,11 +83,9 @@ mod numeric_literal_tests {
             "(define (problem p) (:domain d) (:init (= (x) NaN)) (:goal (> (x) 0)))",
         )
         .unwrap();
-        assert!(
-            parse_task(&domain, &problem)
-                .unwrap_err()
-                .is::<planforge_sas::numeric_task::InvalidNumericValue>()
-        );
+        let error = parse_task(&domain, &problem).unwrap_err();
+        assert_eq!(error.line, Some(1));
+        assert!(error.message.contains("NaN"), "{error}");
     }
 
     #[test]
