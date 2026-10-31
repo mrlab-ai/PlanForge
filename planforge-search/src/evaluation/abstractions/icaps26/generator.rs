@@ -40,92 +40,87 @@ impl Icaps26CartesianGenerator {
         let mut abstract_search = StableAbstractSearch::trivial();
         let mut pending_flaw = None;
         let mut solved_plan = None;
-        let run = CegarDriver::new(usize::MAX, None).run_from_zero_based(
-            start,
-            |_iteration, _deadline| {
-                if !crate::resource_limits::poll_and_release_if_exceeded() {
-                    return Ok(CegarIterationResult::Stop(CegarStopReason::MemoryLimit));
-                }
-                let selected_plan = {
-                    let mut initial_prop_values = Vec::new();
-                    semantics.concrete_prop_values(
-                        &state_packer,
-                        &refinement_root.propositions,
-                        &mut initial_prop_values,
-                    );
-                    let initial_state = working
-                        .hierarchy
-                        .map_state(&initial_prop_values, &refinement_root.numeric);
-                    let Some(plan) = abstract_search.find_plan(
-                        &working,
-                        &semantics,
-                        initial_state,
-                        shortest_paths.goal_flags(),
-                    )?
-                    else {
-                        return Err(RefinementRootDeadEnd::new(format!(
-                            "Cartesian abstract state {initial_state}"
-                        ))
-                        .into());
-                    };
-                    plan
-                };
-                let check = replay_optimal_abstract_trace(
+        let run = CegarDriver::new(usize::MAX, None).run_from(start, |_iteration, _deadline| {
+            if !crate::resource_limits::poll_and_release_if_exceeded() {
+                return Ok(CegarIterationResult::Stop(CegarStopReason::MemoryLimit));
+            }
+            let selected_plan = {
+                let mut initial_prop_values = Vec::new();
+                semantics.concrete_prop_values(
+                    &state_packer,
+                    &refinement_root.propositions,
+                    &mut initial_prop_values,
+                );
+                let initial_state = working
+                    .hierarchy
+                    .map_state(&initial_prop_values, &refinement_root.numeric);
+                let Some(plan) = abstract_search.find_plan(
                     &working,
                     &semantics,
-                    &shortest_paths,
-                    &state_packer,
-                    &axiom_evaluator,
-                    &refinement_root,
-                    Some(&selected_plan),
-                )?;
-                match check {
-                    PlanCheck::ConcretePlan(plan) => {
-                        solved_plan = Some(plan);
-                        Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan))
-                    }
-                    PlanCheck::AbstractDeadEnd(abstract_state_id) => {
-                        Err(RefinementRootDeadEnd::new(format!(
-                            "Cartesian abstract state {abstract_state_id}"
-                        ))
-                        .into())
-                    }
-                    PlanCheck::Refine(split) => {
-                        if working.states.len() >= self.config.max_states {
-                            pending_flaw = Some(split.description().to_string());
-                            return Ok(CegarIterationResult::Stop(CegarStopReason::SizeLimit));
-                        }
-                        if self
-                            .config
-                            .max_time
-                            .is_some_and(|max_time| start.elapsed() >= max_time)
-                        {
-                            pending_flaw = Some(split.description().to_string());
-                            return Ok(CegarIterationResult::Stop(CegarStopReason::TimeLimit));
-                        }
-                        if self.config.debug {
-                            info!(
-                                "Cartesian refinement {} at {} states: {split:?}",
-                                refinements,
-                                working.states.len()
-                            );
-                        }
-                        let old_state_id = split.state_id();
-                        let new_state_id = working.apply_split(&semantics, split)?;
-                        update_shortest_paths_after_split(
-                            &working,
-                            &semantics,
-                            &mut shortest_paths,
-                            old_state_id,
-                            new_state_id,
-                        )?;
-                        abstract_search.inherit_split_state(old_state_id, new_state_id);
-                        refinements += 1;
-                        Ok(CegarIterationResult::Continue)
-                    }
+                    initial_state,
+                    shortest_paths.goal_flags(),
+                )?
+                else {
+                    return Err(RefinementRootDeadEnd::new(format!(
+                        "Cartesian abstract state {initial_state}"
+                    ))
+                    .into());
+                };
+                plan
+            };
+            let check = replay_optimal_abstract_trace(
+                &working,
+                &semantics,
+                &shortest_paths,
+                &state_packer,
+                &axiom_evaluator,
+                &refinement_root,
+                Some(&selected_plan),
+            )?;
+            match check {
+                PlanCheck::ConcretePlan(plan) => {
+                    solved_plan = Some(plan);
+                    Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan))
                 }
-            },
-        )?;
+                PlanCheck::AbstractDeadEnd(abstract_state_id) => Err(RefinementRootDeadEnd::new(
+                    format!("Cartesian abstract state {abstract_state_id}"),
+                )
+                .into()),
+                PlanCheck::Refine(split) => {
+                    if working.states.len() >= self.config.max_states {
+                        pending_flaw = Some(split.description().to_string());
+                        return Ok(CegarIterationResult::Stop(CegarStopReason::SizeLimit));
+                    }
+                    if self
+                        .config
+                        .max_time
+                        .is_some_and(|max_time| start.elapsed() >= max_time)
+                    {
+                        pending_flaw = Some(split.description().to_string());
+                        return Ok(CegarIterationResult::Stop(CegarStopReason::TimeLimit));
+                    }
+                    if self.config.debug {
+                        info!(
+                            "Cartesian refinement {} at {} states: {split:?}",
+                            refinements,
+                            working.states.len()
+                        );
+                    }
+                    let old_state_id = split.state_id();
+                    let new_state_id = working.apply_split(&semantics, split)?;
+                    update_shortest_paths_after_split(
+                        &working,
+                        &semantics,
+                        &mut shortest_paths,
+                        old_state_id,
+                        new_state_id,
+                    )?;
+                    abstract_search.inherit_split_state(old_state_id, new_state_id);
+                    refinements += 1;
+                    Ok(CegarIterationResult::Continue)
+                }
+            }
+        })?;
         let stop_reason = run.stop_reason;
         assert!(
             matches!(

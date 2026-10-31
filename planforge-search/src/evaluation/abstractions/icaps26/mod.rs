@@ -61,8 +61,7 @@ use split_selection::*;
 use working::*;
 
 use super::cartesian::{
-    CartesianAbstraction, CartesianRefinementHierarchy, CartesianTransitions, NumericSplit,
-    RefinementNode,
+    CartesianAbstraction, CartesianRefinementHierarchy, CartesianTransitions, RefinementNode,
 };
 use super::common::abstraction::{AbstractionCore, AbstractionMetadata, AbstractionUse};
 use super::common::cegar::SplitKind;

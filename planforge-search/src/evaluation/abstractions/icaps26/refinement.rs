@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::split::ChildSide;
 
 impl WorkingAbstraction {
     pub(super) fn apply_split(
@@ -47,13 +48,20 @@ impl WorkingAbstraction {
                 let mut other_region = old_region.clone();
                 other_region.narrow_prop(var_id, other_child_values);
                 working.propositional_refinement_counts[var_id.index()] += 1;
-                working.hierarchy.split_propositional(
+                let mut wanted = wanted;
+                wanted.sort_unstable();
+                wanted.dedup();
+                working.hierarchy.replace_leaf(
                     leaf_node_id,
                     old_state_id,
                     new_state_id,
-                    var_id,
-                    wanted,
-                    witness_is_wanted,
+                    ChildSide::first_if(witness_is_wanted),
+                    |wanted_child, other_child| RefinementNode::Propositional {
+                        var_id,
+                        wanted,
+                        wanted_child,
+                        other_child,
+                    },
                 )?;
                 if witness_is_wanted {
                     (wanted_region, other_region)
@@ -86,15 +94,21 @@ impl WorkingAbstraction {
                 let mut upper_region = old_region.clone();
                 Arc::make_mut(&mut upper_region.numeric)[var_id.index()] = upper;
                 working.numeric_refinement_counts[var_id.index()] += 1;
-                working.hierarchy.split_numeric(
+                ensure!(
+                    boundary.is_finite(),
+                    "Cartesian split boundary must be finite"
+                );
+                working.hierarchy.replace_leaf(
                     leaf_node_id,
                     old_state_id,
                     new_state_id,
-                    NumericSplit {
+                    ChildSide::first_if(witness_is_lower),
+                    |lower_child, upper_child| RefinementNode::Numeric {
                         var_id,
                         boundary,
                         lower_includes_boundary,
-                        old_state_is_lower: witness_is_lower,
+                        lower_child,
+                        upper_child,
                     },
                 )?;
                 if witness_is_lower {

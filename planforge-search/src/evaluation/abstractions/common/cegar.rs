@@ -116,28 +116,10 @@ impl CegarDriver {
         }
     }
 
-    #[inline]
+    /// Runs refinement iterations, numbered from 1, until one stops, the
+    /// iteration limit is reached, the deadline `max_time` after `start`
+    /// passes, or every 64th iteration finds the memory limit reached.
     pub fn run_from(
-        self,
-        start: Instant,
-        run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
-    ) -> Result<CegarRunResult> {
-        self.run_from_with_poll_phase::<false>(start, run_iteration)
-    }
-
-    /// Like [`Self::run_from`], but polls the memory limit by the number of
-    /// completed refinements, starting at zero, as the ICAPS26 loop does.
-    #[inline]
-    pub fn run_from_zero_based(
-        self,
-        start: Instant,
-        run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
-    ) -> Result<CegarRunResult> {
-        self.run_from_with_poll_phase::<true>(start, run_iteration)
-    }
-
-    #[inline]
-    fn run_from_with_poll_phase<const POLL_BEFORE_FIRST: bool>(
         self,
         start: Instant,
         mut run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
@@ -146,12 +128,7 @@ impl CegarDriver {
         let mut iteration = 1usize;
 
         while iteration <= self.max_iterations {
-            let memory_poll_counter = if POLL_BEFORE_FIRST {
-                iteration - 1
-            } else {
-                iteration
-            };
-            if memory_poll_counter.is_multiple_of(64)
+            if iteration.is_multiple_of(64)
                 && !crate::resource_limits::poll_and_release_if_exceeded()
             {
                 return Ok(CegarRunResult {
