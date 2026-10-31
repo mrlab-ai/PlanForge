@@ -4,12 +4,10 @@ use std::rc::Rc;
 use tracing::info;
 
 use super::invariants::{BalanceChecker, Invariant, InvariantPart};
-use super::options;
 use super::pddl::actions::Action;
 use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
 use super::symbols::ObjectId;
-use super::tools;
 
 fn build_balance_checker(
     task: &Task,
@@ -158,38 +156,20 @@ fn find_invariants(
     task: &Task,
     reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
 ) -> Vec<Invariant> {
-    let limit = options::INVARIANT_GENERATION_MAX_CANDIDATES;
-    let initial = get_initial_invariants(task);
-    let mut candidates: VecDeque<Invariant> = initial.into_iter().take(limit).collect();
+    let mut candidates: VecDeque<Invariant> = get_initial_invariants(task).into();
     info!("{} initial candidates", candidates.len());
     let mut seen_candidates: HashSet<Invariant> = candidates.iter().cloned().collect();
 
     let balance_checker = build_balance_checker(task, reachable_action_params);
-
-    let deadline = tools::process_cpu_time()
-        + std::time::Duration::from_secs(options::INVARIANT_GENERATION_MAX_TIME);
     let mut result = vec![];
-
     while let Some(candidate) = candidates.pop_front() {
-        if tools::process_cpu_time() >= deadline {
-            info!("Time limit reached, aborting invariant generation");
-            return result;
-        }
-
         let mut enqueue_func = |invariant: Invariant| {
-            if seen_candidates.len() < limit && !seen_candidates.contains(&invariant) {
-                seen_candidates.insert(invariant.clone());
+            if seen_candidates.insert(invariant.clone()) {
                 candidates.push_back(invariant);
             }
         };
-
-        match candidate.check_balance(&balance_checker, &mut enqueue_func, deadline) {
-            Ok(true) => result.push(candidate),
-            Ok(false) => {}
-            Err(tools::CpuTimeDeadlineExceeded) => {
-                info!("Time limit reached, aborting invariant generation");
-                return result;
-            }
+        if candidate.check_balance(&balance_checker, &mut enqueue_func) {
+            result.push(candidate);
         }
     }
 

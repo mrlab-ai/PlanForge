@@ -185,16 +185,12 @@ impl ConstraintSystem {
                 .all(|clause| clause.is_satisfied_by(&representative))
     }
 
-    pub fn is_solvable(
-        &self,
-        deadline: std::time::Duration,
-    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
+    pub fn is_solvable(&self) -> bool {
         let mut equalities = Vec::new();
-        let completed = tools::for_each_product_before(
-            &self.combinatorial_assignments,
-            deadline,
-            &mut |assignments| !self.combination_is_satisfying(assignments, &mut equalities),
-        )?;
-        Ok(!completed)
+        let completed =
+            tools::for_each_product(&self.combinatorial_assignments, &mut |assignments| {
+                !self.combination_is_satisfying(assignments, &mut equalities)
+            });
+        !completed
     }
 }

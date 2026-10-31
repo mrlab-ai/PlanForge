@@ -2,34 +2,6 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
-use std::time::Duration;
-
-/// The CPU time this process has used so far, user and system.
-///
-/// The invariant synthesis works to a time budget, and against a wall clock the
-/// budget decides how many invariants are found by how busy the machine was --
-/// which makes the SAS encoding, and with it every number measured from it,
-/// depend on the load. Mainline Fast Downward reads `time.process_time()` here
-/// for the same reason.
-pub fn process_cpu_time() -> Duration {
-    let mut spent = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `clock_gettime` writes through the pointer we hand it and nowhere
-    // else, and the struct is fully initialized.
-    let result = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut spent) };
-    assert_eq!(
-        result,
-        0,
-        "the process CPU clock is not readable: {}",
-        std::io::Error::last_os_error()
-    );
-    Duration::new(
-        spent.tv_sec.try_into().expect("CPU time is not negative"),
-        spent.tv_nsec.try_into().expect("nanoseconds fit in a u32"),
-    )
-}
 
 /// A set that remembers the order things were inserted in.
 ///
@@ -121,64 +93,31 @@ pub fn for_each_product<'a, T>(
     lists: &'a [Vec<T>],
     visit: &mut impl FnMut(&[&'a T]) -> bool,
 ) -> bool {
-    for_each_product_inner(lists, None, visit).expect("a product without a deadline cannot expire")
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CpuTimeDeadlineExceeded;
-
-/// The deadline-aware form of [`for_each_product`].
-pub fn for_each_product_before<'a, T>(
-    lists: &'a [Vec<T>],
-    deadline: Duration,
-    visit: &mut impl FnMut(&[&'a T]) -> bool,
-) -> Result<bool, CpuTimeDeadlineExceeded> {
-    for_each_product_inner(lists, Some(deadline), visit)
-}
-
-fn for_each_product_inner<'a, T>(
-    lists: &'a [Vec<T>],
-    deadline: Option<Duration>,
-    visit: &mut impl FnMut(&[&'a T]) -> bool,
-) -> Result<bool, CpuTimeDeadlineExceeded> {
     fn recurse<'a, T>(
         lists: &'a [Vec<T>],
-        depth: usize,
         selection: &mut Vec<&'a T>,
-        deadline: Option<Duration>,
         visit: &mut impl FnMut(&[&'a T]) -> bool,
-    ) -> Result<bool, CpuTimeDeadlineExceeded> {
-        if deadline.is_some_and(|limit| process_cpu_time() >= limit) {
-            return Err(CpuTimeDeadlineExceeded);
-        }
-        if depth == lists.len() {
-            return Ok(visit(selection));
-        }
-        for item in &lists[depth] {
+    ) -> bool {
+        let Some(list) = lists.get(selection.len()) else {
+            return visit(selection);
+        };
+        for item in list {
             selection.push(item);
-            let keep_going = recurse(lists, depth + 1, selection, deadline, visit)?;
+            let keep_going = recurse(lists, selection, visit);
             selection.pop();
             if !keep_going {
-                return Ok(false);
+                return false;
             }
         }
-        Ok(true)
+        true
     }
 
-    recurse(
-        lists,
-        0,
-        &mut Vec::with_capacity(lists.len()),
-        deadline,
-        visit,
-    )
+    recurse(lists, &mut Vec::with_capacity(lists.len()), visit)
 }
 
 #[cfg(test)]
 mod product_tests {
-    use std::time::Duration;
-
-    use super::{for_each_product, for_each_product_before};
+    use super::for_each_product;
 
     #[test]
     fn empty_product_has_one_empty_combination() {
@@ -200,19 +139,5 @@ mod product_tests {
             combinations.len() < 2
         }));
         assert_eq!(combinations, [(&1, &10), (&1, &20)]);
-    }
-
-    #[test]
-    fn expired_deadline_interrupts_before_the_first_combination() {
-        let lists = vec![vec![1, 2], vec![10, 20]];
-        let mut visited = 0;
-        assert!(
-            for_each_product_before(&lists, Duration::ZERO, &mut |_| {
-                visited += 1;
-                true
-            })
-            .is_err()
-        );
-        assert_eq!(visited, 0);
     }
 }

@@ -3,12 +3,6 @@
 /// Whether to use partial encoding (default: true)
 pub const USE_PARTIAL_ENCODING: bool = true;
 
-/// Maximum candidates for invariant generation (default: 100000)
-pub const INVARIANT_GENERATION_MAX_CANDIDATES: usize = 100000;
-
-/// Maximum time for invariant generation in seconds (default: 300)
-pub const INVARIANT_GENERATION_MAX_TIME: u64 = 300;
-
 /// Whether to add implied preconditions (default: false)
 pub const ADD_IMPLIED_PRECONDITIONS: bool = false;
 
