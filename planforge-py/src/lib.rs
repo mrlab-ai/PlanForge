@@ -1024,7 +1024,7 @@ impl GilReleasedTask {
         time_limit: Option<Duration>,
         max_memory: Option<u64>,
     ) -> std::io::Result<SearchResult> {
-        planforge_core::solve_task(self.0, spec, time_limit, max_memory)
+        planforge_search::search::solve_task(self.0, spec, time_limit, max_memory)
     }
 
     fn enumerate(
@@ -1707,7 +1707,7 @@ fn solve(
 
         let task = restrict_numeric_task(task, restrict_task).map_err(SolveError::Restrict)?;
         let task: TaskRef<'static> = Arc::new(task);
-        planforge_core::solve_task(task, &spec, time_limit, memory_limit)
+        planforge_search::search::solve_task(task, &spec, time_limit, memory_limit)
             .map_err(|err| SolveError::Search(err.to_string()))
     });
 

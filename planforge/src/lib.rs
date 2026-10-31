@@ -29,14 +29,9 @@ use limits::{
     parse_time_limit,
 };
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
-use planforge_sas::state_registry::StateRegistry;
 use planforge_search::config::SearchConfig;
-use planforge_search::heuristic_factory::{
-    BuildContext, HeuristicBuildError, HeuristicEntry, register_external_heuristics,
-};
-use planforge_search::search::{
-    AStarSearch, GreedyBestFirstSearch, SearchEngine, SearchParams, SearchResult,
-};
+use planforge_search::heuristic_factory::{HeuristicEntry, register_external_heuristics};
+use planforge_search::search::{SearchResult, solve_task};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
 use std::ffi::OsString;
@@ -313,67 +308,6 @@ pub fn install_process_hooks(memory_limit: Option<u64>) -> std::io::Result<()> {
     #[cfg(unix)]
     allocator::install_oom_recovery(planforge_search::resource_limits::release_padding_for_oom);
     Ok(())
-}
-
-/// Run search for an already-parsed task and return the result. Contains no
-/// CLI, signal-handler, logging-setup, or file-writing side effects -- those
-/// stay in `run_internal`.
-pub fn solve_task(
-    task: TaskRef<'_>,
-    spec: &SearchConfig,
-    time_limit: Option<Duration>,
-    memory_limit: Option<u64>,
-) -> std::io::Result<SearchResult> {
-    let state_registry = StateRegistry::for_task(task.clone());
-    let context = BuildContext::new(&task);
-    let mut engine: Box<dyn SearchEngine + '_> = match spec {
-        SearchConfig::AStar {
-            heuristic,
-            lazy,
-            mpd,
-        } => {
-            let heuristic = heuristic
-                .build(&context)
-                .map_err(HeuristicBuildError::into_io_error)?;
-            let lazy = lazy
-                .as_ref()
-                .map(|spec| {
-                    spec.build(&context)
-                        .map_err(HeuristicBuildError::into_io_error)
-                })
-                .transpose()?;
-            info!("Starting A* search, mpd={mpd}, lazy={}", lazy.is_some());
-            Box::new(AStarSearch::new(
-                &*task,
-                state_registry,
-                SearchParams {
-                    heuristic,
-                    lazy,
-                    reevaluate_dynamic: *mpd,
-                    time_limit,
-                    max_memory_bytes: memory_limit,
-                },
-            ))
-        }
-        SearchConfig::Gbfs { heuristic } => {
-            let heuristic = heuristic
-                .build(&context)
-                .map_err(HeuristicBuildError::into_io_error)?;
-            info!("Starting GBFS search...");
-            Box::new(GreedyBestFirstSearch::new(
-                &*task,
-                state_registry,
-                SearchParams {
-                    time_limit,
-                    max_memory_bytes: memory_limit,
-                    ..SearchParams::new(heuristic)
-                },
-            ))
-        }
-    };
-    engine
-        .search()
-        .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }
 
 fn load_enumeration_task(
