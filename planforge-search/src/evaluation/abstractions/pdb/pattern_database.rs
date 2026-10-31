@@ -2,304 +2,28 @@
 mod tests;
 
 use std::cell::RefCell;
-use std::cmp::{Ordering, Reverse};
+use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fmt;
+use std::sync::Arc;
 
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericTaskExt, NumericValue, OperatorIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue,
+    OperatorIndex, TaskRef,
 };
-use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
+use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::state_packer::StatePacker;
-use rustc_hash::FxBuildHasher;
-use std::sync::Arc;
-use tracing::info;
-
-type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
 use crate::config::option_enum;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
-use crate::successor_generator::GroundedSuccessorGenerator;
+use crate::successor_generator::RegistryExpander;
 
-use super::projected_task::{PatternLookupProjection, ProjectedTask};
+use super::projected_task::ProjectedTask;
 
-#[inline]
-fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
-    const FNV_PRIME: u64 = 0x00000100000001B3;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
-}
-
-#[inline]
-fn hash_state_components(propositional: &[ExplicitValueIndex], numeric: &[NumericValue]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    let mut hash = FNV_OFFSET;
-    for value in propositional {
-        hash = hash_bytes(hash, &value.index().to_le_bytes());
-    }
-    hash = hash_bytes(hash, &(propositional.len() as u64).to_le_bytes());
-    for value in numeric {
-        hash = hash_bytes(hash, &value.to_bits().to_le_bytes());
-    }
-    hash_bytes(hash, &(numeric.len() as u64).to_le_bytes())
-}
-
-#[inline]
-fn hash_pattern_components(
-    propositional: &[ExplicitValueIndex],
-    numeric: &[NumericValue],
-    pattern_regular_ids: &[usize],
-    pattern_numeric_ids: &[usize],
-) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    let mut hash = FNV_OFFSET;
-    for &var_id in pattern_regular_ids {
-        hash = hash_bytes(hash, &propositional[var_id].index().to_le_bytes());
-    }
-    hash = hash_bytes(hash, &(pattern_regular_ids.len() as u64).to_le_bytes());
-    for &var_id in pattern_numeric_ids {
-        hash = hash_bytes(hash, &numeric[var_id].to_bits().to_le_bytes());
-    }
-    hash_bytes(hash, &(pattern_numeric_ids.len() as u64).to_le_bytes())
-}
-
-#[inline]
-fn build_prop_hash_multipliers(task: &ProjectedTask<'_>) -> Vec<usize> {
-    let mut multipliers = Vec::with_capacity(task.variables().len());
-    let mut product = 1usize;
-    for variable in task.variables() {
-        multipliers.push(product);
-        product = product.saturating_mul(variable.domain_size());
-    }
-    multipliers
-}
-
-#[inline]
-fn compute_prop_hash(propositional: &[ExplicitValueIndex], multipliers: &[usize]) -> usize {
-    assert_eq!(
-        propositional.len(),
-        multipliers.len(),
-        "one hash multiplier per propositional value"
-    );
-    let mut hash = 0usize;
-    for (value, multiplier) in propositional.iter().zip(multipliers.iter()) {
-        hash = hash.saturating_add(value.index().saturating_mul(*multiplier));
-    }
-    hash
-}
-
-#[inline]
-fn build_compact_prop_hash_multipliers(
-    task: &ProjectedTask<'_>,
-    pattern_regular_ids: &[usize],
-) -> Vec<usize> {
-    let mut multipliers = Vec::with_capacity(pattern_regular_ids.len());
-    let mut product = 1usize;
-    for &projected_var_id in pattern_regular_ids {
-        multipliers.push(product);
-        product = product.saturating_mul(task.variables()[projected_var_id].domain_size());
-    }
-    multipliers
-}
-
-#[inline]
-fn compute_projected_compact_prop_hash(
-    propositional: &[ExplicitValueIndex],
-    pattern_regular_ids: &[usize],
-    multipliers: &[usize],
-) -> usize {
-    assert_eq!(
-        pattern_regular_ids.len(),
-        multipliers.len(),
-        "one hash multiplier per pattern variable"
-    );
-    let mut hash = 0usize;
-    for (&projected_var_id, &multiplier) in pattern_regular_ids.iter().zip(multipliers.iter()) {
-        let value = propositional[projected_var_id];
-        hash = hash.saturating_add(value.index().saturating_mul(multiplier));
-    }
-    hash
-}
-
-#[inline]
-fn fast_hash_bins(bins: &[u64]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x00000100000001B3;
-    let mut hash = FNV_OFFSET;
-    for &value in bins {
-        for byte in value.to_le_bytes() {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-    }
-    hash
-}
-
-struct FrozenPackedDistanceRegistry {
-    bin_count: usize,
-    state_index: HashMap<u64, Vec<usize>>,
-    state_bins: Vec<u64>,
-    distances: Vec<f64>,
-}
-
-impl FrozenPackedDistanceRegistry {
-    fn new(bin_count: usize, capacity: usize) -> Self {
-        Self {
-            bin_count,
-            state_index: HashMap::with_capacity_and_hasher(capacity, FxBuildHasher),
-            state_bins: Vec::with_capacity(capacity.saturating_mul(bin_count)),
-            distances: Vec::with_capacity(capacity),
-        }
-    }
-
-    fn clear(&mut self) {
-        self.state_index.clear();
-        self.state_bins.clear();
-        self.distances.clear();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.distances.is_empty()
-    }
-
-    fn lookup_distance(&self, bins: &[u64]) -> Option<f64> {
-        let hash = fast_hash_bins(bins);
-        let candidates = self.state_index.get(&hash)?;
-        candidates.iter().copied().find_map(|entry_id| {
-            let start = entry_id * self.bin_count;
-            (self.state_bins[start..start + self.bin_count] == *bins)
-                .then(|| self.distances[entry_id])
-        })
-    }
-
-    fn insert_min_distance(&mut self, bins: &[u64], distance: f64) {
-        let hash = fast_hash_bins(bins);
-        let bucket = self
-            .state_index
-            .entry(hash)
-            .or_insert_with(|| Vec::with_capacity(1));
-        if let Some(existing_entry_id) = bucket.iter().copied().find(|&entry_id| {
-            let start = entry_id * self.bin_count;
-            let end = start + self.bin_count;
-            self.state_bins[start..end] == bins[..]
-        }) {
-            if distance < self.distances[existing_entry_id] {
-                self.distances[existing_entry_id] = distance;
-            }
-        } else {
-            let entry_id = self.distances.len();
-            self.state_bins.extend_from_slice(bins);
-            self.distances.push(distance);
-            bucket.push(entry_id);
-        }
-    }
-}
-
-enum CompactNumericDistanceIndex {
-    Empty,
-    One(HashMap<(u64, u64), f64>),
-    Two(HashMap<(u64, u64, u64), f64>),
-    Many(FrozenPackedDistanceRegistry),
-}
-
-impl CompactNumericDistanceIndex {
-    fn new(numeric_count: usize, capacity: usize) -> Self {
-        match numeric_count {
-            0 => Self::Empty,
-            1 => Self::One(HashMap::with_capacity_and_hasher(capacity, FxBuildHasher)),
-            2 => Self::Two(HashMap::with_capacity_and_hasher(capacity, FxBuildHasher)),
-            _ => Self::Many(FrozenPackedDistanceRegistry::new(
-                1 + numeric_count,
-                capacity,
-            )),
-        }
-    }
-
-    fn clear(&mut self) {
-        match self {
-            Self::Empty => {}
-            Self::One(index) => index.clear(),
-            Self::Two(index) => index.clear(),
-            Self::Many(index) => index.clear(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        match self {
-            Self::Empty => true,
-            Self::One(index) => index.is_empty(),
-            Self::Two(index) => index.is_empty(),
-            Self::Many(index) => index.is_empty(),
-        }
-    }
-
-    fn lookup_distance(&self, bins: &[u64]) -> Option<f64> {
-        match self {
-            Self::Empty => None,
-            Self::One(index) => {
-                let [prop_hash, value] = *bins else {
-                    panic!("compact numeric key has {} bins, expected 2", bins.len());
-                };
-                index.get(&(prop_hash, value)).copied()
-            }
-            Self::Two(index) => {
-                let [prop_hash, first, second] = *bins else {
-                    panic!("compact numeric key has {} bins, expected 3", bins.len());
-                };
-                index.get(&(prop_hash, first, second)).copied()
-            }
-            Self::Many(index) => index.lookup_distance(bins),
-        }
-    }
-
-    fn insert_min_distance(&mut self, bins: &[u64], distance: f64) {
-        match self {
-            Self::Empty => {}
-            Self::One(index) => {
-                let [prop_hash, value] = *bins else {
-                    panic!("compact numeric key has {} bins, expected 2", bins.len());
-                };
-                let slot = index.entry((prop_hash, value)).or_insert(distance);
-                *slot = slot.min(distance);
-            }
-            Self::Two(index) => {
-                let [prop_hash, first, second] = *bins else {
-                    panic!("compact numeric key has {} bins, expected 3", bins.len());
-                };
-                let slot = index.entry((prop_hash, first, second)).or_insert(distance);
-                *slot = slot.min(distance);
-            }
-            Self::Many(index) => index.insert_min_distance(bins, distance),
-        }
-    }
-}
-
-fn build_pattern_lookup_packer(task: &ProjectedTask<'_>) -> StatePacker {
-    let mut ranges = Vec::with_capacity(
-        task.pattern_regular_projected_ids().len() + task.pattern_numeric_projected_ids().len(),
-    );
-    for &projected_var_id in task.pattern_regular_projected_ids() {
-        ranges.push(task.variables()[projected_var_id].domain_size() as u64);
-    }
-    ranges.extend(std::iter::repeat_n(
-        u64::MAX,
-        task.pattern_numeric_projected_ids().len(),
-    ));
-    StatePacker::new(&ranges)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct PdbState {
-    propositional: Vec<ExplicitValueIndex>,
-    numeric: Vec<NumericValue>,
-}
-
+/// The heuristic a pattern database estimates abstract goal distances with
+/// where its exploration gives none.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PdbInternalHeuristic {
     Zero,
@@ -314,20 +38,25 @@ option_enum!("PDB internal heuristic", PdbInternalHeuristic {
     Lmcut => "lmcut",
 });
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The inner heuristics of a pattern database (Fritzsche et al. 2026): the
+/// exploration orders its open list by the first, a frontier state takes
+/// the second as its distance, and a state the exploration did not reach
+/// the third.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PdbHeuristicConfig {
     pub exploration_heuristic: PdbInternalHeuristic,
     pub frontier_heuristic: PdbInternalHeuristic,
     pub failed_lookup_heuristic: PdbInternalHeuristic,
 }
 
-impl Default for PdbHeuristicConfig {
-    fn default() -> Self {
-        Self {
-            exploration_heuristic: PdbInternalHeuristic::Blind,
-            frontier_heuristic: PdbInternalHeuristic::Blind,
-            failed_lookup_heuristic: PdbInternalHeuristic::Blind,
-        }
+impl PdbHeuristicConfig {
+    fn uses_lmcut(self) -> bool {
+        [
+            self.exploration_heuristic,
+            self.frontier_heuristic,
+            self.failed_lookup_heuristic,
+        ]
+        .contains(&PdbInternalHeuristic::Lmcut)
     }
 }
 
@@ -341,1333 +70,732 @@ impl fmt::Display for PdbHeuristicConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct InnerHeuristicResult {
-    dead_end: bool,
-    value: f64,
+/// How a pattern database explores its projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PdbBuildConfig {
+    /// The newly reached abstract states after which the exploration of a
+    /// projection with numeric variables stops. A purely propositional
+    /// projection is finite and explored in full.
+    pub max_states: usize,
+    pub heuristics: PdbHeuristicConfig,
+    /// Keep the transitions of the abstract state space, which only
+    /// saturated cost partitioning reads.
+    pub retain_transitions: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct PdbOpenEntry {
-    state_id: usize,
-    f: NotNan<f64>,
-    g: NotNan<f64>,
-}
-
-impl Eq for PdbOpenEntry {}
-
-impl Ord for PdbOpenEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .f
-            .cmp(&self.f)
-            .then_with(|| other.g.cmp(&self.g))
-            .then_with(|| other.state_id.cmp(&self.state_id))
-    }
-}
-
-impl PartialOrd for PdbOpenEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-struct LmcutInnerHeuristic<'task> {
-    landmark_generator: LandmarkCutLandmarks<'task>,
-    propositional_scratch: Vec<ExplicitValueIndex>,
-    numeric_scratch: Vec<NumericValue>,
-    default_state_buffer_len: usize,
-}
-
-impl<'task> LmcutInnerHeuristic<'task> {
-    fn new(task: &'task dyn AbstractNumericTask) -> Self {
-        Self {
-            landmark_generator: LandmarkCutLandmarks::new(task, LmCutNumericConfig::default()),
-            propositional_scratch: Vec::new(),
-            numeric_scratch: Vec::new(),
-            default_state_buffer_len: StatePacker::from_abstract_task(task).num_bins(),
-        }
-    }
-
-    fn evaluate_from_values(
-        &mut self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-        state_buffer_len: usize,
-    ) -> Result<InnerHeuristicResult, String> {
-        let (dead_end, value) = self.landmark_generator.compute_landmark_cost(
-            propositional,
-            state_buffer_len,
-            numeric,
-        )?;
-        Ok(InnerHeuristicResult { dead_end, value })
-    }
-
-    fn evaluate_projected_values(
-        &mut self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<InnerHeuristicResult, String> {
-        self.evaluate_from_values(propositional, numeric, self.default_state_buffer_len)
-    }
-}
-
+/// A pattern database over a projection of a numeric task (Fritzsche et al.
+/// 2026).
+///
+/// The abstract state space is explored forward from the abstract initial
+/// state, best-first under the exploration heuristic. A purely propositional
+/// projection is explored in full; one with numeric variables until
+/// `max_states` new states were reached. A state the exploration generated
+/// but did not expand lies on the frontier, and takes the frontier heuristic,
+/// at least the cheapest operator cost, as its distance. The goal distances
+/// then follow by backward Dijkstra from the goal and frontier states.
 pub struct PatternDatabase<'task> {
-    pub(super) task: ProjectedTask<'task>,
-    lookup_projection: PatternLookupProjection,
-    heuristic_config: PdbHeuristicConfig,
-    pub(super) states: Vec<PdbState>,
-    state_index: HashMap<u64, Vec<usize>>,
-    pattern_index: HashMap<u64, Vec<usize>>,
-    packed_pattern_registry: FrozenPackedDistanceRegistry,
-    full_prop_index: HashMap<usize, Vec<usize>>,
-    pub(super) distances: Vec<f64>,
-    goal_state_ids: Vec<usize>,
-    transition_predecessors: Vec<Vec<(usize, OperatorIndex)>>,
-    pub(super) min_operator_cost: f64,
-    pub(super) truncated: bool,
-    exhausted_abstract_state_space: bool,
-    pub(super) frontier_states: Vec<usize>,
-    full_prop_hash_multipliers: Vec<usize>,
-    compact_prop_hash_multipliers: Vec<usize>,
-    compact_prop_distances: Vec<f64>,
-    pattern_lookup_packer: StatePacker,
-    compact_numeric_registry: CompactNumericDistanceIndex,
-    failed_lookup_cache: RefCell<HashMap<u64, f64>>,
-    projection_prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
-    projection_numeric_scratch: RefCell<Vec<NumericValue>>,
-    pattern_lookup_bins_scratch: RefCell<Vec<u64>>,
-    compact_numeric_bins_scratch: RefCell<Vec<u64>>,
-    failed_lookup_lmcut: RefCell<Option<LmcutInnerHeuristic<'task>>>,
-    failed_lookup_lmcut_task: RefCell<Option<Box<ProjectedTask<'task>>>>,
+    task: Arc<ProjectedTask<'task>>,
+    states: AbstractStates<'task>,
+    /// The goal distance of every abstract state, by id; infinite for a
+    /// state from which neither a goal nor the frontier is reachable.
+    distances: Vec<f64>,
+    /// Every abstract state reachable from the abstract initial state was
+    /// expanded, so a state the exploration did not reach is unreachable.
+    exhausted: bool,
+    min_operator_cost: f64,
+    relevant_operator_ids: Vec<OperatorIndex>,
+    failed_lookup: FailedLookupHeuristic<'task>,
+    transitions: Option<AbstractTransitions>,
+    scratch: RefCell<LookupScratch>,
 }
 
 impl<'task> PatternDatabase<'task> {
+    /// The pattern database over `task` with blind inner heuristics, keeping
+    /// its transitions.
     pub fn new(task: ProjectedTask<'task>, max_states: usize) -> Result<Self, String> {
-        Self::with_heuristic_config(task, max_states, PdbHeuristicConfig::default())
-    }
-
-    pub fn with_heuristic_config(
-        task: ProjectedTask<'task>,
-        max_states: usize,
-        heuristic_config: PdbHeuristicConfig,
-    ) -> Result<Self, String> {
-        let min_operator_cost = task.min_operator_cost();
-        let lookup_projection = PatternLookupProjection::from_projected_task(&task);
-        let projection_prop_capacity = task.variables().len();
-        let projection_numeric_capacity = task.numeric_variables().len();
-        let compact_prop_hash_multipliers =
-            build_compact_prop_hash_multipliers(&task, task.pattern_regular_projected_ids());
-        let pattern_lookup_packer = build_pattern_lookup_packer(&task);
-        let pattern_lookup_bin_count = pattern_lookup_packer.num_bins();
-        let compact_numeric_bin_count = 1 + task.pattern_numeric_projected_ids().len();
-
-        let mut pdb = Self {
+        Self::build(
             task,
-            lookup_projection,
-            heuristic_config,
-            states: Vec::with_capacity(max_states),
-            state_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
-            pattern_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
-            packed_pattern_registry: FrozenPackedDistanceRegistry::new(
-                pattern_lookup_bin_count,
+            PdbBuildConfig {
                 max_states,
-            ),
-            full_prop_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
-            distances: Vec::new(),
-            goal_state_ids: Vec::new(),
-            transition_predecessors: Vec::new(),
-            min_operator_cost,
-            truncated: false,
-            exhausted_abstract_state_space: false,
-            frontier_states: Vec::new(),
-            full_prop_hash_multipliers: Vec::new(),
-            compact_prop_hash_multipliers,
-            compact_prop_distances: Vec::new(),
-            pattern_lookup_packer,
-            compact_numeric_registry: CompactNumericDistanceIndex::new(
-                compact_numeric_bin_count.saturating_sub(1),
-                max_states,
-            ),
-            failed_lookup_cache: RefCell::new(HashMap::default()),
-            projection_prop_scratch: RefCell::new(Vec::with_capacity(projection_prop_capacity)),
-            projection_numeric_scratch: RefCell::new(Vec::with_capacity(
-                projection_numeric_capacity,
-            )),
-            pattern_lookup_bins_scratch: RefCell::new(vec![0; pattern_lookup_bin_count]),
-            compact_numeric_bins_scratch: RefCell::new(vec![0; compact_numeric_bin_count]),
-            failed_lookup_lmcut: RefCell::new(None),
-            failed_lookup_lmcut_task: RefCell::new(None),
-        };
-        pdb.full_prop_hash_multipliers = build_prop_hash_multipliers(&pdb.task);
-        pdb.build(max_states)?;
-        Ok(pdb)
-    }
-
-    pub fn lookup(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Option<f64> {
-        let full_state_lookup = propositional.len() == self.task.variables().len()
-            && numeric.len() == self.task.numeric_variables().len();
-        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
-        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
-
-        if numeric.is_empty()
-            && pattern_numeric_ids.is_empty()
-            && propositional.len() == pattern_regular_ids.len()
-            && let Some(distance) = self.lookup_compact_prop_distance(propositional)
-        {
-            return Some(distance);
-        }
-
-        if !numeric.is_empty()
-            && !pattern_numeric_ids.is_empty()
-            && propositional.len() == pattern_regular_ids.len()
-            && numeric.len() == pattern_numeric_ids.len()
-            && let Some(distance) = self.lookup_compact_numeric_distance_from_compact_values(
-                compute_prop_hash(propositional, &self.compact_prop_hash_multipliers),
-                numeric,
-            )
-        {
-            return Some(distance);
-        }
-
-        if full_state_lookup {
-            let prop_hash = compute_prop_hash(propositional, &self.full_prop_hash_multipliers);
-            let candidates = self.full_prop_index.get(&prop_hash)?;
-            return candidates
-                .iter()
-                .copied()
-                .filter(|&state_id| {
-                    let state = &self.states[state_id];
-                    state.numeric.len() == numeric.len()
-                        && state
-                            .numeric
-                            .iter()
-                            .zip(numeric.iter())
-                            .all(|(lhs, rhs)| lhs == rhs)
-                })
-                .map(|state_id| self.distances[state_id])
-                .min_by(|lhs, rhs| lhs.total_cmp(rhs));
-        }
-
-        if propositional.len() == self.task.pattern_regular_projected_ids().len()
-            && numeric.len() == self.task.pattern_numeric_projected_ids().len()
-        {
-            return self.lookup_packed_pattern_distance_from_compact_values(propositional, numeric);
-        }
-
-        let lookup_key = hash_state_components(propositional, numeric);
-        let candidates = self.pattern_index.get(&lookup_key)?;
-
-        candidates
-            .iter()
-            .copied()
-            .filter(|&state_id| {
-                let state = &self.states[state_id];
-                pattern_regular_ids
-                    .iter()
-                    .enumerate()
-                    .all(|(pattern_index, &var_id)| {
-                        state.propositional.get(var_id).copied()
-                            == propositional.get(pattern_index).copied()
-                    })
-                    && pattern_numeric_ids
-                        .iter()
-                        .enumerate()
-                        .all(|(pattern_index, &var_id)| {
-                            state.numeric.get(var_id) == numeric.get(pattern_index)
-                        })
-            })
-            .map(|state_id| self.distances[state_id])
-            .min_by(|lhs, rhs| lhs.total_cmp(rhs))
-    }
-
-    pub fn lookup_or_fallback(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> f64 {
-        match self.lookup(propositional, numeric) {
-            Some(distance) if distance.is_finite() => distance,
-            Some(_) if self.is_goal_state(propositional) => 0.0,
-            Some(_) if self.exhausted_abstract_state_space => f64::INFINITY,
-            Some(_) if self.truncated => self.evaluate_failed_lookup(propositional, numeric),
-            Some(distance) => distance,
-            None => self.evaluate_failed_lookup(propositional, numeric),
-        }
-    }
-
-    fn lookup_pattern_distance_in_projected_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Option<f64> {
-        assert_eq!(propositional.len(), self.task.variables().len());
-        assert_eq!(numeric.len(), self.task.numeric_variables().len());
-
-        if numeric.is_empty()
-            && self.task.pattern_numeric_projected_ids().is_empty()
-            && let Some(distance) = self.lookup_projected_compact_prop_distance(propositional)
-        {
-            return Some(distance);
-        }
-
-        if !numeric.is_empty()
-            && !self.task.pattern_numeric_projected_ids().is_empty()
-            && let Some(distance) = self.lookup_compact_numeric_distance_from_projected_values(
-                self.lookup_projected_compact_prop_hash(propositional),
-                numeric,
-            )
-        {
-            return Some(distance);
-        }
-
-        self.lookup_packed_pattern_distance_from_projected_values(propositional, numeric)
-    }
-
-    fn lookup_projected_compact_prop_hash(&self, propositional: &[ExplicitValueIndex]) -> usize {
-        compute_projected_compact_prop_hash(
-            propositional,
-            self.task.pattern_regular_projected_ids(),
-            &self.compact_prop_hash_multipliers,
+                heuristics: PdbHeuristicConfig::default(),
+                retain_transitions: true,
+            },
         )
     }
 
-    fn lookup_compact_prop_distance(&self, propositional: &[ExplicitValueIndex]) -> Option<f64> {
-        if self.compact_prop_distances.is_empty() {
-            return None;
-        }
-        let index = compute_prop_hash(propositional, &self.compact_prop_hash_multipliers);
-        self.lookup_compact_prop_distance_by_hash(index)
-    }
+    pub fn build(task: ProjectedTask<'task>, config: PdbBuildConfig) -> Result<Self, String> {
+        let task = Arc::new(task);
+        let task_ref: TaskRef<'task> = task.clone();
+        let mut registry = StateRegistry::for_task(task_ref.clone());
+        let mut inner = InnerHeuristics {
+            lmcut: config
+                .heuristics
+                .uses_lmcut()
+                .then(|| ProjectedLmcut::new(task_ref)),
+            cache: Vec::new(),
+        };
+        let max_new_states = if task.has_regular_numeric_variables() {
+            config.max_states
+        } else {
+            usize::MAX
+        };
+        let exploration = explore(
+            &task,
+            &mut registry,
+            max_new_states,
+            config.heuristics.exploration_heuristic,
+            &mut inner,
+        )?;
+        let num_states = registry.num_registered_states();
+        let transitions = AbstractTransitions::new(num_states, exploration);
+        let exhausted = transitions.frontier.is_empty();
 
-    fn lookup_compact_prop_distance_by_hash(&self, index: usize) -> Option<f64> {
-        self.compact_prop_distances
-            .get(index)
-            .copied()
-            .filter(|distance| distance.is_finite())
-    }
-
-    fn lookup_projected_compact_prop_distance(
-        &self,
-        propositional: &[ExplicitValueIndex],
-    ) -> Option<f64> {
-        if self.compact_prop_distances.is_empty() {
-            return None;
-        }
-        let index = self.lookup_projected_compact_prop_hash(propositional);
-        self.lookup_compact_prop_distance_by_hash(index)
-    }
-
-    fn lookup_compact_numeric_distance(&self, bins: &[u64]) -> Option<f64> {
-        if self.compact_numeric_registry.is_empty() {
-            return None;
-        }
-        self.compact_numeric_registry.lookup_distance(bins)
-    }
-
-    fn lookup_compact_numeric_distance_from_compact_values(
-        &self,
-        prop_hash: usize,
-        numeric: &[NumericValue],
-    ) -> Option<f64> {
-        let mut bins = self.compact_numeric_bins_scratch.borrow_mut();
-        bins.clear();
-        bins.resize(1 + numeric.len(), 0);
-        bins[0] = prop_hash as u64;
-        for (numeric_index, value) in numeric.iter().enumerate() {
-            bins[numeric_index + 1] = value.to_bits();
-        }
-        self.lookup_compact_numeric_distance(&bins)
-    }
-
-    fn lookup_compact_numeric_distance_from_projected_values(
-        &self,
-        prop_hash: usize,
-        numeric: &[NumericValue],
-    ) -> Option<f64> {
-        let mut bins = self.compact_numeric_bins_scratch.borrow_mut();
-        bins.clear();
-        bins.resize(1 + self.task.pattern_numeric_projected_ids().len(), 0);
-        bins[0] = prop_hash as u64;
-        for (numeric_index, &projected_numeric_id) in
-            self.task.pattern_numeric_projected_ids().iter().enumerate()
-        {
-            bins[numeric_index + 1] = numeric[projected_numeric_id].to_bits();
-        }
-        self.lookup_compact_numeric_distance(&bins)
-    }
-
-    fn pack_pattern_values_into_bins(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-        bins: &mut Vec<u64>,
-    ) {
-        assert_eq!(
-            propositional.len(),
-            self.task.pattern_regular_projected_ids().len()
-        );
-        assert_eq!(
-            numeric.len(),
-            self.task.pattern_numeric_projected_ids().len()
-        );
-
-        bins.clear();
-        bins.resize(self.pattern_lookup_packer.num_bins(), 0);
-
-        for (var_id, value) in propositional.iter().enumerate() {
-            self.pattern_lookup_packer
-                .set(bins, var_id, value.index() as u64);
-        }
-        let prop_len = propositional.len();
-        for (numeric_index, value) in numeric.iter().enumerate() {
-            self.pattern_lookup_packer.set(
-                bins,
-                prop_len + numeric_index,
-                self.pattern_lookup_packer.pack_double(*value),
-            );
-        }
-    }
-
-    fn pack_pattern_projected_values_into_bins(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-        bins: &mut Vec<u64>,
-    ) {
-        bins.clear();
-        bins.resize(self.pattern_lookup_packer.num_bins(), 0);
-
-        for (compact_index, &projected_var_id) in
-            self.task.pattern_regular_projected_ids().iter().enumerate()
-        {
-            self.pattern_lookup_packer.set(
-                bins,
-                compact_index,
-                propositional[projected_var_id].index() as u64,
-            );
-        }
-        let prop_len = self.task.pattern_regular_projected_ids().len();
-        for (numeric_index, &projected_numeric_id) in
-            self.task.pattern_numeric_projected_ids().iter().enumerate()
-        {
-            self.pattern_lookup_packer.set(
-                bins,
-                prop_len + numeric_index,
-                self.pattern_lookup_packer
-                    .pack_double(numeric[projected_numeric_id]),
-            );
-        }
-    }
-
-    fn lookup_packed_pattern_distance(&self, bins: &[u64]) -> Option<f64> {
-        self.packed_pattern_registry.lookup_distance(bins)
-    }
-
-    fn lookup_packed_pattern_distance_from_compact_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Option<f64> {
-        let mut bins = self.pattern_lookup_bins_scratch.borrow_mut();
-        self.pack_pattern_values_into_bins(propositional, numeric, &mut bins);
-        self.lookup_packed_pattern_distance(&bins)
-    }
-
-    fn lookup_packed_pattern_distance_from_projected_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Option<f64> {
-        let mut bins = self.pattern_lookup_bins_scratch.borrow_mut();
-        self.pack_pattern_projected_values_into_bins(propositional, numeric, &mut bins);
-        self.lookup_packed_pattern_distance(&bins)
-    }
-
-    fn lookup_pattern_distance_from_source_state_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        source_numeric: &[NumericValue],
-    ) -> Result<Option<f64>, String> {
-        if self.task.pattern_numeric_projected_ids().is_empty() {
-            let prop_hash = self.lookup_projection.compact_prop_hash_from_state_values(
-                propositional,
-                &self.compact_prop_hash_multipliers,
-            )?;
-            if let Some(distance) = self.lookup_compact_prop_distance_by_hash(prop_hash) {
-                return Ok(Some(distance));
+        let min_operator_cost = task.min_operator_cost();
+        let mut seeds: Vec<(usize, f64)> = transitions
+            .goal_states
+            .iter()
+            .map(|&state_id| (state_id, 0.0))
+            .collect();
+        for &state_id in &transitions.frontier {
+            let state = ConcreteState::new(state_id);
+            if registry.view(&state).holds_all(task.goals()) {
+                seeds.push((state_id, 0.0));
+            } else if let Some(h) =
+                inner.estimate(config.heuristics.frontier_heuristic, state_id, &registry)
+            {
+                seeds.push((state_id, h.max(min_operator_cost)));
             }
         }
+        let distances = transitions.backward_dijkstra(&seeds, |operator_id| {
+            task.abstract_operator_cost(operator_id)
+        });
 
-        if !self.task.pattern_numeric_projected_ids().is_empty() {
-            let prop_hash = self.lookup_projection.compact_prop_hash_from_state_values(
-                propositional,
-                &self.compact_prop_hash_multipliers,
-            )?;
-            let mut packed_bins = self.compact_numeric_bins_scratch.borrow_mut();
-            self.lookup_projection
-                .fill_pattern_numeric_bins_from_source_numeric_into(
-                    source_numeric,
-                    &mut packed_bins,
-                )?;
-            packed_bins[0] = prop_hash as u64;
-            return Ok(self.lookup_compact_numeric_distance(&packed_bins));
-        }
+        let mut relevant_operator_ids: Vec<OperatorIndex> = if exhausted {
+            transitions
+                .predecessors
+                .iter()
+                .map(|&(_, operator_id)| task.base_operator_id(operator_id))
+                .collect()
+        } else {
+            task.base_operator_ids().to_vec()
+        };
+        relevant_operator_ids.sort_unstable();
+        relevant_operator_ids.dedup();
 
-        let mut packed_bins = self.pattern_lookup_bins_scratch.borrow_mut();
-        self.lookup_projection
-            .pack_pattern_state_values_from_source_numeric_into(
-                propositional,
-                source_numeric,
-                &self.pattern_lookup_packer,
-                &mut packed_bins,
-            )?;
-        Ok(self.lookup_packed_pattern_distance(&packed_bins))
-    }
-
-    fn lookup_pattern_or_fallback_in_projected_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> f64 {
-        match self.lookup_pattern_distance_in_projected_values(propositional, numeric) {
-            Some(distance) if distance.is_finite() => distance,
-            Some(_) if self.is_goal_state(propositional) => 0.0,
-            Some(_) if self.exhausted_abstract_state_space => f64::INFINITY,
-            Some(_) if self.truncated => self.evaluate_failed_lookup(propositional, numeric),
-            Some(distance) => distance,
-            None => self.evaluate_failed_lookup(propositional, numeric),
-        }
-    }
-
-    fn evaluate_failed_lookup(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> f64 {
-        if self.exhausted_abstract_state_space {
-            // Infinity is sound *here*, and the reason is worth stating, because
-            // the same expression is unsound one line of reasoning away.
-            //
-            // The abstract state space was enumerated in full. A state with no
-            // entry therefore has no abstract counterpart that reaches the goal,
-            // so infinity is a valid lower bound: it was proved, not assumed.
-            //
-            // Where the space was *not* exhausted, a missing entry only means
-            // "not computed", an unknown lower bound is zero, and returning
-            // infinity would record a solvable state as a dead end. That is
-            // exactly the bug the online saturated cost partitioning carried, and
-            // it made the planner report a solvable task unsolvable. The branches
-            // below are what keep this side of that line.
-            return f64::INFINITY;
-        }
-        if self.is_goal_state(propositional) {
-            return 0.0;
-        }
-
-        match self.heuristic_config.failed_lookup_heuristic {
-            PdbInternalHeuristic::Blind => self.min_operator_cost(),
-            PdbInternalHeuristic::Zero => 0.0,
-            PdbInternalHeuristic::Lmcut => {
-                let lookup_key = hash_state_components(propositional, numeric);
-                if let Some(distance) = self.failed_lookup_cache.borrow().get(&lookup_key).copied()
-                {
-                    return distance;
-                }
-
-                let distance = match self.evaluate_failed_lookup_lmcut(propositional, numeric) {
-                    Ok(result) if result.dead_end => f64::INFINITY,
-                    Ok(result) => result.value.max(self.min_operator_cost()),
-                    // The LM-cut instance runs on the projected task this PDB
-                    // built itself, so a failure is an internal inconsistency.
-                    // Substituting `min_operator_cost` here would fabricate a
-                    // heuristic value and, worse, cache it for every later
-                    // lookup of the same state.
-                    Err(error) => {
-                        panic!("LM-cut fallback failed on a projected PDB state: {error}")
-                    }
-                };
-                self.failed_lookup_cache
-                    .borrow_mut()
-                    .insert(lookup_key, distance);
-                distance
-            }
-        }
-    }
-
-    fn evaluate_failed_lookup_lmcut(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<InnerHeuristicResult, String> {
-        if self.failed_lookup_lmcut.borrow().is_none() {
-            let mut task_slot = self.failed_lookup_lmcut_task.borrow_mut();
-            if task_slot.is_none() {
-                *task_slot = Some(Box::new(self.task.clone()));
-            }
-            let task_ref = task_slot
-                .as_deref()
-                .expect("failed lookup LM-cut task must be initialized")
-                as &dyn AbstractNumericTask;
-            // The boxed task is stored in `failed_lookup_lmcut_task` and is
-            // declared after `failed_lookup_lmcut`, so it outlives the LM-cut
-            // object during `PatternDatabase` drop. The box allocation is
-            // stable even if `PatternDatabase` moves.
-            let task_ref = unsafe {
-                std::mem::transmute::<&dyn AbstractNumericTask, &'task dyn AbstractNumericTask>(
-                    task_ref,
-                )
-            };
-            drop(task_slot);
-
-            *self.failed_lookup_lmcut.borrow_mut() = Some(LmcutInnerHeuristic::new(task_ref));
-        }
-
-        self.failed_lookup_lmcut
-            .borrow_mut()
-            .as_mut()
-            .expect("failed lookup LM-cut must be initialized")
-            .evaluate_projected_values(propositional, numeric)
-    }
-
-    pub fn is_goal_state(&self, propositional: &[ExplicitValueIndex]) -> bool {
-        (0..self.task.get_num_goals()).all(|goal_index| {
-            let goal = self.task.get_goal_fact(goal_index);
-            propositional.get(goal.var()).copied() == Some(goal.value_index())
+        let dense = exhausted
+            .then(|| DenseStates::new(&task, &registry))
+            .flatten();
+        let states = match dense {
+            Some(dense) => AbstractStates::Dense(dense),
+            None => AbstractStates::Registry(Box::new(registry)),
+        };
+        let failed_lookup = match config.heuristics.failed_lookup_heuristic {
+            PdbInternalHeuristic::Zero => FailedLookupHeuristic::Zero,
+            PdbInternalHeuristic::Blind => FailedLookupHeuristic::Blind,
+            PdbInternalHeuristic::Lmcut => FailedLookupHeuristic::Lmcut(Box::new(RefCell::new(
+                inner
+                    .lmcut
+                    .expect("LM-cut was built for the failed-lookup heuristic"),
+            ))),
+        };
+        Ok(Self {
+            task,
+            states,
+            distances,
+            exhausted,
+            min_operator_cost,
+            relevant_operator_ids,
+            failed_lookup,
+            transitions: config.retain_transitions.then_some(transitions),
+            scratch: RefCell::default(),
         })
+    }
+
+    pub fn num_states(&self) -> usize {
+        self.distances.len()
+    }
+
+    pub fn is_exhausted(&self) -> bool {
+        self.exhausted
     }
 
     pub fn min_operator_cost(&self) -> f64 {
         self.min_operator_cost
     }
 
-    fn lookup_exact_state_id(
+    /// The base operators that can label a transition of the abstract state
+    /// space: those on a transition when it was explored in full, otherwise
+    /// every operator the projection keeps.
+    pub fn relevant_operator_ids(&self) -> &[OperatorIndex] {
+        &self.relevant_operator_ids
+    }
+
+    /// The goal distance this pattern database estimates for the state of the
+    /// base task with values `propositional` and `numeric`.
+    ///
+    /// A state the exploration did not reach is a dead end when the
+    /// exploration was exhaustive, has distance zero when it is an abstract
+    /// goal, and otherwise takes the failed-lookup heuristic, at least the
+    /// cheapest operator cost.
+    pub fn value(&self, propositional: &[ExplicitValueIndex], numeric: &[NumericValue]) -> f64 {
+        let registry = match &self.states {
+            AbstractStates::Dense(dense) => {
+                return dense
+                    .state_id(propositional)
+                    .map_or(f64::INFINITY, |state_id| self.distances[state_id]);
+            }
+            AbstractStates::Registry(registry) => registry,
+        };
+        let mut scratch = self.scratch.borrow_mut();
+        let scratch = &mut *scratch;
+        if let Some(state_id) = self.find_state_id(registry, propositional, numeric, scratch) {
+            return self.distances[state_id];
+        }
+        if self.exhausted {
+            return f64::INFINITY;
+        }
+        if is_goal(self.task.goals(), &scratch.propositional) {
+            return 0.0;
+        }
+        match &self.failed_lookup {
+            FailedLookupHeuristic::Zero => 0.0,
+            FailedLookupHeuristic::Blind => self.min_operator_cost,
+            FailedLookupHeuristic::Lmcut(lmcut) => lmcut
+                .borrow_mut()
+                .estimate(&scratch.propositional, &scratch.numeric)
+                .map_or(f64::INFINITY, |h| h.max(self.min_operator_cost)),
+        }
+    }
+
+    /// The id of the abstract state of the state of the base task with values
+    /// `propositional` and `numeric`, if the exploration reached it.
+    pub fn abstract_state_id(
         &self,
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
     ) -> Option<usize> {
-        let lookup_key = hash_state_components(propositional, numeric);
-        self.state_index
-            .get(&lookup_key)?
-            .iter()
-            .copied()
-            .find(|&state_id| {
-                let state = &self.states[state_id];
-                state.propositional == propositional
-                    && state.numeric.len() == numeric.len()
-                    && state
-                        .numeric
-                        .iter()
-                        .zip(numeric.iter())
-                        .all(|(lhs, rhs)| lhs == rhs)
-            })
-    }
-
-    pub fn abstract_state_id_from_source_state_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        source_numeric: &[NumericValue],
-    ) -> Result<Option<usize>, String> {
-        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
-        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
-        self.lookup_projection
-            .project_state_values_from_source_numeric_into(
+        match &self.states {
+            AbstractStates::Dense(dense) => dense.state_id(propositional),
+            AbstractStates::Registry(registry) => self.find_state_id(
+                registry,
                 propositional,
-                source_numeric,
-                &mut projected_prop,
-                &mut projected_num,
-            )?;
-        Ok(self.lookup_exact_state_id(&projected_prop, &projected_num))
+                numeric,
+                &mut self.scratch.borrow_mut(),
+            ),
+        }
     }
 
-    pub fn num_states(&self) -> usize {
-        self.states.len()
+    /// Projects the state into `scratch` and looks it up in `registry`.
+    fn find_state_id(
+        &self,
+        registry: &StateRegistry<'task>,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+        scratch: &mut LookupScratch,
+    ) -> Option<usize> {
+        self.task.project_state_values_into(
+            propositional,
+            numeric,
+            &mut scratch.propositional,
+            &mut scratch.numeric,
+        );
+        registry.find_state_id(
+            &scratch.propositional,
+            &scratch.numeric,
+            &mut scratch.packed,
+        )
     }
 
-    pub fn relevant_operator_ids(&self) -> Vec<OperatorIndex> {
-        let mut relevant = if self.exhausted_abstract_state_space {
-            self.transition_predecessors
-                .iter()
-                .flatten()
-                .map(|&(_, projected_operator_id)| {
-                    self.task.base_operator_id(projected_operator_id)
-                })
-                .collect()
-        } else {
-            self.task.base_operator_ids().to_vec()
-        };
-        relevant.sort_unstable();
-        relevant.dedup();
-        relevant
-    }
-
+    /// The goal distances of the abstract states under `operator_costs`, one
+    /// cost per base operator, and the saturated costs of those distances.
     pub fn build_cost_partitioned_distance_table(
         &self,
         operator_costs: &[f64],
-    ) -> Result<(Vec<f64>, Vec<f64>), String> {
-        let distances = self.build_goal_distances(operator_costs)?;
-        let saturated_costs =
-            self.saturated_costs_from_distances(&distances, operator_costs.len())?;
-        Ok((distances, saturated_costs))
+    ) -> (Vec<f64>, Vec<f64>) {
+        let distances = self.goal_distances_under(operator_costs);
+        let saturated_costs = self.saturated_costs(&distances, operator_costs.len());
+        (distances, saturated_costs)
     }
 
-    /// The goal distances of the enumerated states under `operator_costs`,
-    /// seeded at zero from the goal states and, when truncated, the frontier.
-    fn build_goal_distances(&self, operator_costs: &[f64]) -> Result<Vec<f64>, String> {
-        let mut distances = vec![f64::INFINITY; self.states.len()];
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-
-        for &goal_state_id in &self.goal_state_ids {
-            distances[goal_state_id] = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), goal_state_id));
-        }
-        if self.truncated {
-            for &frontier_state_id in &self.frontier_states {
-                if distances[frontier_state_id] > 0.0 {
-                    distances[frontier_state_id] = 0.0;
-                    heap.push((Reverse(NotNan::new(0.0).unwrap()), frontier_state_id));
-                }
-            }
-        }
-
-        while let Some((Reverse(distance), state_id)) = heap.pop() {
-            let distance = distance.into_inner();
-            if distance > distances[state_id] + float_tolerance::DIJKSTRA_EPSILON {
-                continue;
-            }
-            for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
-                let base_operator_id = self.task.base_operator_id(projected_operator_id);
-                let operator_cost =
-                    *operator_costs
-                        .get(base_operator_id.index())
-                        .ok_or_else(|| {
-                            format!("missing residual cost for operator {base_operator_id}")
-                        })?;
-                let alternative = distance + operator_cost;
-                if alternative + float_tolerance::DIJKSTRA_EPSILON < distances[parent_id] {
-                    distances[parent_id] = alternative;
-                    heap.push((
-                        Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
-                        parent_id,
-                    ));
-                }
-            }
-        }
-
-        Ok(distances)
-    }
-
-    /// Builds a PERIM cost-partitioned distance table, capped at the goal
-    /// distance of `cap_state_id` under `operator_costs`.
+    /// The perimeter variant of [`Self::build_cost_partitioned_distance_table`]:
+    /// the saturated costs only preserve the distances up to the goal
+    /// distance of `cap_state_id`.
     ///
-    /// The perimeter table is used only to derive saturated costs. The returned
-    /// lookup table is recomputed globally from the nonnegative saturated costs,
-    /// so it remains an admissible table when reused for later states outside
-    /// the original perimeter.
+    /// The returned distances are recomputed from the saturated costs, so
+    /// they stay admissible for the states beyond the perimeter.
     pub fn build_cost_partitioned_distance_table_capped(
         &self,
         operator_costs: &[f64],
         cap_state_id: usize,
-    ) -> Result<(Vec<f64>, Vec<f64>), String> {
-        let mut distances = self.build_goal_distances(operator_costs)?;
-        assert!(
-            cap_state_id < distances.len(),
-            "PERIM cap state {cap_state_id} out of range for a PDB with {} states",
-            distances.len()
-        );
-        let h_cap = distances[cap_state_id];
-
-        if h_cap.is_finite() {
-            for h in &mut distances {
-                if !h.is_finite() || *h > h_cap {
-                    *h = f64::NEG_INFINITY;
+    ) -> (Vec<f64>, Vec<f64>) {
+        let mut distances = self.goal_distances_under(operator_costs);
+        let cap = distances[cap_state_id];
+        if cap.is_finite() {
+            for distance in &mut distances {
+                if *distance > cap {
+                    *distance = f64::NEG_INFINITY;
                 }
             }
         }
-
-        let saturated_costs =
-            self.saturated_costs_from_distances(&distances, operator_costs.len())?;
-        let global_distances = self.build_goal_distances(&saturated_costs)?;
-
-        Ok((global_distances, saturated_costs))
+        let saturated_costs = self.saturated_costs(&distances, operator_costs.len());
+        (self.goal_distances_under(&saturated_costs), saturated_costs)
     }
 
-    fn saturated_costs_from_distances(
-        &self,
-        distances: &[f64],
-        num_operators: usize,
-    ) -> Result<Vec<f64>, String> {
-        let mut saturated_costs = vec![f64::NEG_INFINITY; num_operators];
-        for (target_id, predecessors) in self.transition_predecessors.iter().enumerate() {
+    fn transitions(&self) -> &AbstractTransitions {
+        self.transitions
+            .as_ref()
+            .expect("cost partitioning reads a pattern database that kept its transitions")
+    }
+
+    /// The goal distances under `operator_costs`, with the frontier states
+    /// at distance zero.
+    fn goal_distances_under(&self, operator_costs: &[f64]) -> Vec<f64> {
+        let transitions = self.transitions();
+        let seeds: Vec<(usize, f64)> = transitions
+            .goal_states
+            .iter()
+            .chain(&transitions.frontier)
+            .map(|&state_id| (state_id, 0.0))
+            .collect();
+        transitions.backward_dijkstra(&seeds, |operator_id| {
+            operator_costs[self.task.base_operator_id(operator_id).index()]
+        })
+    }
+
+    /// For every base operator, the largest goal distance difference along a
+    /// transition it labels between two states of finite distance.
+    fn saturated_costs(&self, distances: &[f64], num_operators: usize) -> Vec<f64> {
+        let transitions = self.transitions();
+        let mut saturated_costs = vec![0.0_f64; num_operators];
+        for target_id in 0..transitions.num_states() {
             let target_h = distances[target_id];
             if !target_h.is_finite() {
                 continue;
             }
-            for &(parent_id, projected_operator_id) in predecessors {
-                let parent_h = distances[parent_id];
+            for &(parent_id, operator_id) in transitions.predecessors_of(target_id) {
+                let parent_h = distances[parent_id as usize];
                 if !parent_h.is_finite() {
                     continue;
                 }
-                let base_operator_id = self.task.base_operator_id(projected_operator_id);
-                let slot = saturated_costs.get_mut(base_operator_id.index()).ok_or_else(|| {
-                    format!(
-                        "base operator id {base_operator_id} out of bounds for {num_operators} operators"
-                    )
-                })?;
-                *slot = slot.max((parent_h - target_h).max(0.0));
+                let slot = &mut saturated_costs[self.task.base_operator_id(operator_id).index()];
+                *slot = slot.max(parent_h - target_h);
             }
         }
+        saturated_costs
+    }
+}
 
-        // An operator on no transition between two finite distances saturates
-        // nothing; every other cost is a maximum of nonnegative differences.
-        for cost in &mut saturated_costs {
-            if *cost == f64::NEG_INFINITY {
-                *cost = 0.0;
-            }
+/// The abstract states a pattern database explored, and how a projected
+/// state finds its id among them.
+enum AbstractStates<'task> {
+    Dense(DenseStates),
+    /// The registry the exploration registered the states in.
+    Registry(Box<StateRegistry<'task>>),
+}
+
+/// The states of an exhausted projection without numeric input variables,
+/// addressed by the perfect hash of their propositional input values.
+struct DenseStates {
+    variables: Vec<DenseVariable>,
+    /// The abstract state at each hash, [`DenseStates::UNREACHED`] where the
+    /// exploration reached none.
+    ids: Vec<u32>,
+}
+
+struct DenseVariable {
+    projected: usize,
+    original: usize,
+    multiplier: usize,
+}
+
+impl DenseStates {
+    const UNREACHED: u32 = u32::MAX;
+
+    /// A table with this many slots per reached state costs about as much
+    /// memory as a registry lookup does; beyond it the registry is used.
+    const MAX_SLOTS_PER_STATE: usize = 8;
+
+    /// Slots a table may always have: a few kilobytes, less than the
+    /// registry itself.
+    const MIN_SLOTS: usize = 1024;
+
+    /// The dense table of the states in `registry`, or `None` when the
+    /// projection has numeric input variables or too many value combinations
+    /// for its reached states.
+    fn new(task: &ProjectedTask<'_>, registry: &StateRegistry<'_>) -> Option<Self> {
+        if task.has_regular_numeric_variables() {
+            return None;
         }
-        assert!(
-            saturated_costs
-                .iter()
-                .all(|cost| cost.is_finite() && *cost >= 0.0),
-            "PDB saturated costs must be finite and nonnegative"
-        );
-
-        Ok(saturated_costs)
-    }
-
-    pub fn lookup_projected_or_fallback_from_source_state_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        source_numeric: &[NumericValue],
-    ) -> Result<f64, String> {
-        if let Some(distance) =
-            self.lookup_pattern_distance_from_source_state_values(propositional, source_numeric)?
-            && distance.is_finite()
-        {
-            return Ok(distance);
-        }
-
-        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
-        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
-
-        self.lookup_projection
-            .project_state_values_from_source_numeric_into(
-                propositional,
-                source_numeric,
-                &mut projected_prop,
-                &mut projected_num,
-            )?;
-
-        Ok(self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num))
-    }
-
-    fn rebuild_lookup_indexes(&mut self) {
-        self.state_index.clear();
-        self.pattern_index.clear();
-        self.packed_pattern_registry.clear();
-        self.compact_numeric_registry.clear();
-        self.full_prop_index.clear();
-        self.compact_prop_distances.clear();
-        self.failed_lookup_cache.borrow_mut().clear();
-
-        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
-        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
-        let mut packed_bins = vec![0; self.pattern_lookup_packer.num_bins()];
-        let mut compact_numeric_bins = vec![0; 1 + pattern_numeric_ids.len()];
-
-        // A purely propositional pattern gets a dense table with one slot per
-        // assignment to its variables, if that fits a few slots per state.
-        let compact_prop_table_len = if !pattern_numeric_ids.is_empty() {
-            None
-        } else if let Some(&last_var_id) = pattern_regular_ids.last() {
-            let last_multiplier = *self
-                .compact_prop_hash_multipliers
-                .last()
-                .expect("one hash multiplier per pattern variable");
-            last_multiplier
-                .checked_mul(self.task.variables()[last_var_id].domain_size())
-                .filter(|&len| len > 0 && len <= (self.states.len() * 8).max(1024))
-        } else {
-            Some(1)
-        };
-
-        if let Some(table_len) = compact_prop_table_len {
-            self.compact_prop_distances.resize(table_len, f64::INFINITY);
-        }
-
-        for (state_id, state) in self.states.iter().enumerate() {
-            let full_key = hash_state_components(&state.propositional, &state.numeric);
-            self.state_index
-                .entry(full_key)
-                .or_insert_with(|| Vec::with_capacity(1))
-                .push(state_id);
-
-            self.full_prop_index
-                .entry(compute_prop_hash(
-                    &state.propositional,
-                    &self.full_prop_hash_multipliers,
-                ))
-                .or_insert_with(|| Vec::with_capacity(1))
-                .push(state_id);
-
-            let pattern_key = hash_pattern_components(
-                &state.propositional,
-                &state.numeric,
-                pattern_regular_ids,
-                pattern_numeric_ids,
-            );
-            self.pattern_index
-                .entry(pattern_key)
-                .or_insert_with(|| Vec::with_capacity(1))
-                .push(state_id);
-
-            let compact_prop_hash = compute_projected_compact_prop_hash(
-                &state.propositional,
-                pattern_regular_ids,
-                &self.compact_prop_hash_multipliers,
-            );
-
-            if !self.compact_prop_distances.is_empty() {
-                let slot = &mut self.compact_prop_distances[compact_prop_hash];
-                *slot = slot.min(self.distances[state_id]);
-            }
-
-            if !pattern_numeric_ids.is_empty() {
-                compact_numeric_bins.fill(0);
-                compact_numeric_bins[0] = compact_prop_hash as u64;
-                for (numeric_index, &projected_numeric_id) in pattern_numeric_ids.iter().enumerate()
-                {
-                    compact_numeric_bins[numeric_index + 1] =
-                        state.numeric[projected_numeric_id].to_bits();
-                }
-                let distance = self.distances[state_id];
-                self.compact_numeric_registry
-                    .insert_min_distance(&compact_numeric_bins, distance);
-            }
-
-            packed_bins.fill(0);
-            for (compact_index, &projected_var_id) in pattern_regular_ids.iter().enumerate() {
-                self.pattern_lookup_packer.set(
-                    &mut packed_bins,
-                    compact_index,
-                    state.propositional[projected_var_id].index() as u64,
-                );
-            }
-            let prop_len = pattern_regular_ids.len();
-            for (numeric_index, &projected_numeric_id) in pattern_numeric_ids.iter().enumerate() {
-                self.pattern_lookup_packer.set(
-                    &mut packed_bins,
-                    prop_len + numeric_index,
-                    self.pattern_lookup_packer
-                        .pack_double(state.numeric[projected_numeric_id]),
-                );
-            }
-            let distance = self.distances[state_id];
-            self.packed_pattern_registry
-                .insert_min_distance(&packed_bins, distance);
-        }
-    }
-
-    fn build(&mut self, max_states: usize) -> Result<(), String> {
-        let table = self.build_distance_table(max_states)?;
-        self.states = table.states;
-        self.distances = table.distances;
-        self.goal_state_ids = table.goal_state_ids;
-        self.transition_predecessors = table.transition_predecessors;
-        self.frontier_states = table.frontier_states;
-        self.truncated = table.truncated;
-        self.exhausted_abstract_state_space = table.exhausted_abstract_state_space;
-        self.rebuild_lookup_indexes();
-        Ok(())
-    }
-
-    /// Explore the projected task's abstract state space and compute the goal
-    /// distance of every state reached.
-    fn build_distance_table(&self, max_states: usize) -> Result<PdbDistanceTable, String> {
-        let mut registry = StateRegistry::for_task(Arc::new(&self.task));
-        let mut inner_heuristic = PdbInnerHeuristic::new(&self.task, self.uses_lmcut());
-        let mut exploration =
-            self.explore_abstract_state_space(max_states, &mut registry, &mut inner_heuristic)?;
-        let exhausted_abstract_state_space = exploration.open.is_empty();
-        let states = collect_pdb_states(&exploration.representative_states, &registry)?;
-
-        // Backward Dijkstra from the goal states over the recorded
-        // predecessors, seeded with the goal states at distance zero.
-        let mut distances = vec![f64::INFINITY; states.len()];
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        for &goal_state_id in &exploration.goal_states {
-            distances[goal_state_id] = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), goal_state_id));
-        }
-        let frontier_states = if exploration.truncated {
-            self.seed_frontier_distances(
-                &mut exploration,
-                &states,
-                &registry,
-                &mut inner_heuristic,
-                &mut distances,
-                &mut heap,
-            )?
-        } else {
-            Vec::new()
-        };
-        self.propagate_distances_to_predecessors(
-            &exploration.predecessors,
-            &mut distances,
-            &mut heap,
-        );
-
-        Ok(PdbDistanceTable {
-            states,
-            distances,
-            goal_state_ids: exploration.goal_states,
-            frontier_states,
-            transition_predecessors: exploration.predecessors,
-            truncated: exploration.truncated,
-            exhausted_abstract_state_space,
-        })
-    }
-
-    fn uses_lmcut(&self) -> bool {
-        matches!(
-            self.heuristic_config.exploration_heuristic,
-            PdbInternalHeuristic::Lmcut
-        ) || matches!(
-            self.heuristic_config.frontier_heuristic,
-            PdbInternalHeuristic::Lmcut
-        )
-    }
-
-    /// Best-first exploration of the abstract state space, recording every
-    /// transition as a predecessor edge so distances can be propagated
-    /// backwards afterwards.
-    ///
-    /// Stops at `max_states` newly seen states; the states still queued then
-    /// are the frontier, and `truncated` says the table only bounds distances
-    /// rather than giving them exactly.
-    fn explore_abstract_state_space(
-        &self,
-        max_states: usize,
-        registry: &mut StateRegistry<'_>,
-        inner_heuristic: &mut PdbInnerHeuristic<'_>,
-    ) -> Result<PdbExploration, String> {
-        let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
-        let mut applicable_operators: Vec<OperatorIndex> = Vec::new();
-        let mut current_propositional: Vec<ExplicitValueIndex> = Vec::new();
-        let mut successor_numeric: Vec<NumericValue> = Vec::new();
-        let mut successor_cost_values: Vec<NumericValue> = Vec::new();
-        let mut expansion_context = ExpansionContext::default();
-
-        let mut exploration = PdbExploration {
-            representative_states: vec![registry.get_initial_state()],
-            predecessors: Vec::with_capacity(max_states),
-            goal_states: Vec::new(),
-            closed: vec![false],
-            seen_or_closed: vec![true],
-            open: BinaryHeap::new(),
-            truncated: false,
-        };
-        exploration.predecessors.push(Vec::new());
-        exploration.open.push(PdbOpenEntry {
-            state_id: 0,
-            f: NotNan::new(0.0).unwrap(),
-            g: NotNan::new(0.0).unwrap(),
-        });
-        let mut seen_count = 0usize;
-
-        loop {
-            if seen_count >= max_states {
-                exploration.truncated = true;
-                break;
-            }
-            let Some(entry) = exploration.open.pop() else {
-                break;
-            };
-            let state_id = entry.state_id;
-            if exploration.representative_states.len().is_multiple_of(500) {
-                info!(
-                    "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
-                    state_id + 1,
-                    exploration.representative_states.len(),
-                    exploration.goal_states.len(),
-                    0
-                );
-            }
-            if exploration.is_closed(state_id) {
+        let num_states = registry.num_registered_states();
+        let max_slots = Self::MAX_SLOTS_PER_STATE
+            .checked_mul(num_states)?
+            .max(Self::MIN_SLOTS);
+        let mut variables = Vec::new();
+        let mut num_slots = 1usize;
+        for (projected, variable) in task.variables().iter().enumerate() {
+            if variable.axiom_layer().is_some() {
                 continue;
             }
-            exploration.mark_closed(state_id);
-
-            applicable_operators.clear();
-            let current_registry_state = exploration.representative_states[state_id].clone();
-            current_registry_state.fill_state(registry, &mut current_propositional);
-            if self.is_goal_state(&current_propositional) {
-                exploration.goal_states.push(state_id);
-            }
-            successor_generator
-                .get_applicable_operators(&current_propositional, &mut applicable_operators);
+            variables.push(DenseVariable {
+                projected,
+                original: task.original_variable(projected).index(),
+                multiplier: num_slots,
+            });
+            num_slots = num_slots
+                .checked_mul(variable.domain_size())
+                .filter(|&slots| slots <= max_slots)?;
+        }
+        let mut ids = vec![Self::UNREACHED; num_slots];
+        let mut values = Vec::new();
+        for state_id in 0..num_states {
             registry
-                .build_expansion_context(&current_registry_state, &mut expansion_context)
-                .map_err(|err| err.message)?;
-
-            let operators = self.task.get_operators();
-            for &op_id in applicable_operators.iter() {
-                let (successor_state, _) = registry
-                    .apply_operator_in_context(
-                        &current_registry_state,
-                        &operators[op_id.index()],
-                        &expansion_context,
-                        &mut successor_numeric,
-                        &mut successor_cost_values,
-                    )
-                    .map_err(|err| err.message)?;
-                if successor_state.get_id() == current_registry_state.get_id() {
-                    continue;
-                }
-                let next_id = successor_state.get_id();
-                exploration.register_state(next_id, successor_state)?;
-                exploration.predecessors[next_id].push((state_id, op_id));
-
-                if exploration.seen_or_closed[next_id] {
-                    continue;
-                }
-                exploration.seen_or_closed[next_id] = true;
-                seen_count += 1;
-                let inner_h = inner_heuristic.evaluate(
-                    self.heuristic_config.exploration_heuristic,
-                    next_id,
-                    registry.view(&exploration.representative_states[next_id]),
-                )?;
-                if inner_h.dead_end {
-                    continue;
-                }
-                let g = entry.g.into_inner() + self.task.abstract_operator_cost(op_id);
-                // Blind and Zero explore breadth-first: their value is a
-                // constant, so folding it into `f` would only shift every key.
-                let h = if matches!(
-                    self.heuristic_config.exploration_heuristic,
-                    PdbInternalHeuristic::Blind | PdbInternalHeuristic::Zero
-                ) {
-                    0.0
-                } else {
-                    inner_h.value
-                };
-                exploration.open.push(PdbOpenEntry {
-                    state_id: next_id,
-                    f: NotNan::new(g + h).map_err(|err| err.to_string())?,
-                    g: NotNan::new(g).map_err(|err| err.to_string())?,
-                });
-            }
+                .view(&ConcreteState::new(state_id))
+                .fill_propositional(&mut values);
+            let index: usize = variables
+                .iter()
+                .map(|variable| values[variable.projected].index() * variable.multiplier)
+                .sum();
+            assert_eq!(
+                ids[index],
+                Self::UNREACHED,
+                "two abstract states share their input values"
+            );
+            ids[index] = u32::try_from(state_id).expect("abstract state ids fit in u32");
         }
-        Ok(exploration)
+        Some(Self { variables, ids })
     }
 
-    /// Seed the backward search with the states the exploration left queued.
-    ///
-    /// A truncated table only knows a lower bound for a frontier state, so it
-    /// takes the frontier heuristic — floored at the cheapest operator cost,
-    /// since a non-goal state always needs at least one more operator.
-    /// Returns the frontier state ids, ascending and deduplicated.
-    fn seed_frontier_distances(
-        &self,
-        exploration: &mut PdbExploration,
-        states: &[PdbState],
-        registry: &StateRegistry<'_>,
-        inner_heuristic: &mut PdbInnerHeuristic<'_>,
-        distances: &mut [f64],
-        heap: &mut BinaryHeap<(Reverse<NotNan<f64>>, usize)>,
-    ) -> Result<Vec<usize>, String> {
-        let mut frontier_states: Vec<usize> = Vec::new();
-        let mut seen_frontier = vec![false; states.len()];
-        while let Some(entry) = exploration.open.pop() {
-            let state_id = entry.state_id;
-            if exploration.is_closed(state_id) {
-                continue;
-            }
-            if seen_frontier[state_id] {
-                continue;
-            }
-            seen_frontier[state_id] = true;
-            frontier_states.push(state_id);
+    /// The abstract state of the base task state with `propositional` values.
+    fn state_id(&self, propositional: &[ExplicitValueIndex]) -> Option<usize> {
+        let index: usize = self
+            .variables
+            .iter()
+            .map(|variable| propositional[variable.original].index() * variable.multiplier)
+            .sum();
+        let id = self.ids[index];
+        (id != Self::UNREACHED).then_some(id as usize)
+    }
+}
 
-            let seed_cost = if self.is_goal_state(&states[state_id].propositional) {
-                0.0
-            } else {
-                let inner_h = inner_heuristic.evaluate(
-                    self.heuristic_config.frontier_heuristic,
-                    state_id,
-                    registry.view(&exploration.representative_states[state_id]),
-                )?;
-                if inner_h.dead_end {
-                    continue;
-                }
-                inner_h.value.max(self.min_operator_cost())
-            };
-            if seed_cost + float_tolerance::DIJKSTRA_EPSILON < distances[state_id] {
-                distances[state_id] = seed_cost;
-                heap.push((Reverse(NotNan::new(seed_cost).unwrap()), state_id));
-            }
+/// The transitions of an explored abstract state space, grouped by target
+/// state, and the states backward searches over them start from.
+struct AbstractTransitions {
+    /// `predecessors[offsets[s]..offsets[s + 1]]` are the
+    /// `(parent, projected operator)` transitions entering state `s`.
+    offsets: Vec<usize>,
+    predecessors: Vec<(u32, OperatorIndex)>,
+    goal_states: Vec<usize>,
+    /// The states the exploration generated but did not expand, ascending.
+    frontier: Vec<usize>,
+}
+
+impl AbstractTransitions {
+    fn new(num_states: usize, exploration: Exploration) -> Self {
+        let mut offsets = vec![0usize; num_states + 1];
+        for transition in &exploration.transitions {
+            offsets[transition.target as usize + 1] += 1;
         }
-        frontier_states.sort_unstable();
-        frontier_states.dedup();
-        Ok(frontier_states)
+        for state_id in 0..num_states {
+            offsets[state_id + 1] += offsets[state_id];
+        }
+        let mut next = offsets.clone();
+        let mut predecessors =
+            vec![(0, OperatorIndex::from_usize(0)); exploration.transitions.len()];
+        for transition in exploration.transitions {
+            let slot = &mut next[transition.target as usize];
+            predecessors[*slot] = (transition.parent, transition.operator);
+            *slot += 1;
+        }
+        Self {
+            offsets,
+            predecessors,
+            goal_states: exploration.goal_states,
+            frontier: exploration.frontier,
+        }
     }
 
-    /// Backward Dijkstra over the recorded predecessor edges.
-    fn propagate_distances_to_predecessors(
+    fn num_states(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    fn predecessors_of(&self, state_id: usize) -> &[(u32, OperatorIndex)] {
+        &self.predecessors[self.offsets[state_id]..self.offsets[state_id + 1]]
+    }
+
+    /// The goal distances of all states by backward Dijkstra from `seeds`,
+    /// `(state, distance)` pairs, under `operator_cost`.
+    fn backward_dijkstra(
         &self,
-        predecessors: &[Vec<(usize, OperatorIndex)>],
-        distances: &mut [f64],
-        heap: &mut BinaryHeap<(Reverse<NotNan<f64>>, usize)>,
-    ) {
-        while let Some((Reverse(distance), state_id)) = heap.pop() {
+        seeds: &[(usize, f64)],
+        operator_cost: impl Fn(OperatorIndex) -> f64,
+    ) -> Vec<f64> {
+        let mut distances = vec![f64::INFINITY; self.num_states()];
+        let mut heap: BinaryHeap<Reverse<(NotNan<f64>, usize)>> = BinaryHeap::new();
+        for &(state_id, distance) in seeds {
+            if distance + float_tolerance::DIJKSTRA_EPSILON < distances[state_id] {
+                distances[state_id] = distance;
+                heap.push(Reverse((not_nan(distance), state_id)));
+            }
+        }
+        while let Some(Reverse((distance, state_id))) = heap.pop() {
             let distance = distance.into_inner();
             if distance > distances[state_id] + float_tolerance::DIJKSTRA_EPSILON {
                 continue;
             }
-            for &(parent_id, operator_id) in &predecessors[state_id] {
-                let alternative = distance + self.task.abstract_operator_cost(operator_id);
+            for &(parent_id, operator_id) in self.predecessors_of(state_id) {
+                let parent_id = parent_id as usize;
+                let alternative = distance + operator_cost(operator_id);
                 if alternative + float_tolerance::DIJKSTRA_EPSILON < distances[parent_id] {
                     distances[parent_id] = alternative;
-                    heap.push((Reverse(NotNan::new(alternative).unwrap()), parent_id));
+                    heap.push(Reverse((not_nan(alternative), parent_id)));
                 }
             }
         }
+        distances
     }
 }
 
-/// Everything `PatternDatabase::build` writes back onto itself.
-struct PdbDistanceTable {
-    states: Vec<PdbState>,
-    distances: Vec<f64>,
-    goal_state_ids: Vec<usize>,
-    frontier_states: Vec<usize>,
-    transition_predecessors: Vec<Vec<(usize, OperatorIndex)>>,
-    truncated: bool,
-    exhausted_abstract_state_space: bool,
-}
-
-/// The abstract state space the exploration reached.
-struct PdbExploration {
-    /// One concrete state per abstract state, indexed by abstract state id.
-    representative_states: Vec<ConcreteState>,
-    /// `predecessors[s]` are the `(parent, operator)` edges entering `s`.
-    predecessors: Vec<Vec<(usize, OperatorIndex)>>,
+/// What exploring a projection found.
+struct Exploration {
+    transitions: Vec<Transition>,
     goal_states: Vec<usize>,
-    closed: Vec<bool>,
-    seen_or_closed: Vec<bool>,
-    /// States generated but not expanded — the frontier, when truncated.
-    open: BinaryHeap<PdbOpenEntry>,
-    /// The exploration hit its state limit, so distances are bounds.
-    truncated: bool,
+    frontier: Vec<usize>,
 }
 
-impl PdbExploration {
-    fn is_closed(&self, state_id: usize) -> bool {
-        self.closed[state_id]
-    }
-
-    fn mark_closed(&mut self, state_id: usize) {
-        self.closed[state_id] = true;
-    }
-
-    /// Give a newly reached abstract state its slot. The state registry hands
-    /// out ids densely, so a gap means the registry and this table disagree
-    /// about which states exist.
-    fn register_state(&mut self, state_id: usize, state: ConcreteState) -> Result<(), String> {
-        if state_id < self.representative_states.len() {
-            return Ok(());
-        }
-        if state_id != self.representative_states.len() {
-            return Err(format!(
-                "state registry produced non-contiguous abstract state id {state_id} while {} states are represented",
-                self.representative_states.len()
-            ));
-        }
-        self.representative_states.push(state);
-        self.predecessors.push(Vec::new());
-        self.closed.push(false);
-        self.seen_or_closed.push(false);
-        Ok(())
-    }
+struct Transition {
+    target: u32,
+    parent: u32,
+    operator: OperatorIndex,
 }
 
-/// The inner heuristic PDB construction consults, memoised per abstract state.
+/// An open-list entry of the exploration. Entries order by `g + h`, then by
+/// `h`, as in numeric Fast Downward, and then by state id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct OpenEntry {
+    f: NotNan<f64>,
+    h: NotNan<f64>,
+    state_id: usize,
+    g: NotNan<f64>,
+}
+
+/// Explores the abstract state space of `task` best-first from its initial
+/// state until `max_new_states` states were newly generated or the open list
+/// is empty.
 ///
-/// `Blind` and `Zero` are constants and need no memory; only LM-cut is worth
-/// caching, and it is the only one that has to be built at all.
-struct PdbInnerHeuristic<'task> {
-    lmcut: Option<LmcutInnerHeuristic<'task>>,
-    cache: Vec<Option<InnerHeuristicResult>>,
-}
+/// As in numeric Fast Downward, the open list has no duplicate detection: a
+/// state is pushed again whenever it is generated while not yet expanded, and
+/// a blind exploration orders by `g` alone.
+fn explore(
+    task: &ProjectedTask<'_>,
+    registry: &mut StateRegistry<'_>,
+    max_new_states: usize,
+    heuristic: PdbInternalHeuristic,
+    inner: &mut InnerHeuristics<'_>,
+) -> Result<Exploration, String> {
+    let mut expander = RegistryExpander::new(task);
+    let operators = task.get_operators();
+    let initial_state = registry.get_initial_state();
+    assert_eq!(
+        initial_state.get_id(),
+        0,
+        "a fresh registry registers the initial state first"
+    );
+    let mut transitions = Vec::new();
+    let mut goal_states = Vec::new();
+    let mut closed = vec![false];
+    let mut generated = vec![true];
+    let mut new_states = 0usize;
+    let mut open = BinaryHeap::from([Reverse(OpenEntry {
+        f: not_nan(0.0),
+        h: not_nan(0.0),
+        state_id: 0,
+        g: not_nan(0.0),
+    })]);
 
-impl<'task> PdbInnerHeuristic<'task> {
-    fn new(task: &'task dyn AbstractNumericTask, uses_lmcut: bool) -> Self {
-        Self {
-            lmcut: uses_lmcut.then(|| LmcutInnerHeuristic::new(task)),
-            cache: Vec::new(),
+    while new_states < max_new_states
+        && let Some(Reverse(entry)) = open.pop()
+    {
+        let state_id = entry.state_id;
+        if closed[state_id] {
+            continue;
+        }
+        closed[state_id] = true;
+        let state = ConcreteState::new(state_id);
+        if registry.view(&state).holds_all(task.goals()) {
+            goal_states.push(state_id);
+        }
+        let mut expansion = expander
+            .expand(registry, &state)
+            .map_err(|error| error.message)?;
+        for &operator_id in expansion.applicable_operators() {
+            let (successor, _) = expansion
+                .successor(registry, &operators[operator_id.index()])
+                .map_err(|error| error.message)?;
+            let successor_id = successor.get_id();
+            if successor_id == state_id {
+                continue;
+            }
+            if successor_id == closed.len() {
+                closed.push(false);
+                generated.push(false);
+            }
+            transitions.push(Transition {
+                target: u32::try_from(successor_id).expect("abstract state ids fit in u32"),
+                parent: u32::try_from(state_id).expect("abstract state ids fit in u32"),
+                operator: operator_id,
+            });
+            if closed[successor_id] {
+                continue;
+            }
+            if !generated[successor_id] {
+                generated[successor_id] = true;
+                new_states += 1;
+            }
+            let Some(h) = inner.estimate(heuristic, successor_id, registry) else {
+                continue;
+            };
+            let g = entry.g.into_inner() + task.abstract_operator_cost(operator_id);
+            let h = match heuristic {
+                PdbInternalHeuristic::Zero | PdbInternalHeuristic::Blind => 0.0,
+                PdbInternalHeuristic::Lmcut => h,
+            };
+            open.push(Reverse(OpenEntry {
+                f: not_nan(g + h),
+                h: not_nan(h),
+                state_id: successor_id,
+                g: not_nan(g),
+            }));
         }
     }
 
-    fn evaluate(
+    let mut frontier: Vec<usize> = open
+        .into_iter()
+        .map(|Reverse(entry)| entry.state_id)
+        .filter(|&state_id| !closed[state_id])
+        .collect();
+    frontier.sort_unstable();
+    frontier.dedup();
+    Ok(Exploration {
+        transitions,
+        goal_states,
+        frontier,
+    })
+}
+
+/// The inner heuristics a pattern database is built with, memoised per
+/// abstract state.
+struct InnerHeuristics<'task> {
+    lmcut: Option<ProjectedLmcut<'task>>,
+    /// The LM-cut estimate of each abstract state, `Some(None)` for a dead
+    /// end.
+    cache: Vec<Option<Option<f64>>>,
+}
+
+impl InnerHeuristics<'_> {
+    /// The estimate of `heuristic` for the abstract state `state_id`; `None`
+    /// for a dead end.
+    fn estimate(
         &mut self,
         heuristic: PdbInternalHeuristic,
         state_id: usize,
-        state: planforge_sas::state_registry::ConcreteStateView<'_>,
-    ) -> Result<InnerHeuristicResult, String> {
+        registry: &StateRegistry<'_>,
+    ) -> Option<f64> {
         match heuristic {
-            PdbInternalHeuristic::Zero | PdbInternalHeuristic::Blind => Ok(InnerHeuristicResult {
-                dead_end: false,
-                value: 0.0,
-            }),
+            PdbInternalHeuristic::Zero | PdbInternalHeuristic::Blind => Some(0.0),
             PdbInternalHeuristic::Lmcut => {
                 if self.cache.len() <= state_id {
                     self.cache.resize(state_id + 1, None);
                 }
-                if let Some(result) = self.cache[state_id] {
-                    return Ok(result);
+                if let Some(estimate) = self.cache[state_id] {
+                    return estimate;
                 }
                 let lmcut = self
                     .lmcut
                     .as_mut()
-                    .expect("LM-cut inner heuristic must be initialized when configured");
-                state.fill_propositional(&mut lmcut.propositional_scratch);
-                state
-                    .fill_numeric(&mut lmcut.numeric_scratch)
-                    .map_err(|err| format!("failed to read projected numeric state: {err:?}"))?;
-                let propositional = lmcut.propositional_scratch.clone();
-                let numeric = lmcut.numeric_scratch.clone();
-                let result = lmcut.evaluate_from_values(
-                    &propositional,
-                    &numeric,
-                    state.propositional().len(),
-                )?;
-                self.cache[state_id] = Some(result);
-                Ok(result)
+                    .expect("LM-cut is built when an inner heuristic is LM-cut");
+                let estimate = lmcut.estimate_registered(registry, state_id);
+                self.cache[state_id] = Some(estimate);
+                estimate
             }
         }
     }
 }
 
-/// Read every abstract state's propositional and numeric values out of the
-/// registry.
-fn collect_pdb_states(
-    representative_states: &[ConcreteState],
-    registry: &StateRegistry<'_>,
-) -> Result<Vec<PdbState>, String> {
-    representative_states
+/// The failed-lookup heuristic of a built pattern database.
+enum FailedLookupHeuristic<'task> {
+    Zero,
+    Blind,
+    Lmcut(Box<RefCell<ProjectedLmcut<'task>>>),
+}
+
+/// LM-cut on the projection of a pattern database.
+struct ProjectedLmcut<'task> {
+    landmarks: LandmarkCutLandmarks<'task>,
+    propositional: Vec<ExplicitValueIndex>,
+    numeric: Vec<NumericValue>,
+}
+
+impl<'task> ProjectedLmcut<'task> {
+    fn new(task: TaskRef<'task>) -> Self {
+        Self {
+            landmarks: LandmarkCutLandmarks::new(task, LmCutNumericConfig::default()),
+            propositional: Vec::new(),
+            numeric: Vec::new(),
+        }
+    }
+
+    /// The estimate for projected state values; `None` for a dead end.
+    fn estimate(
+        &mut self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Option<f64> {
+        lmcut_estimate(&mut self.landmarks, propositional, numeric)
+    }
+
+    fn estimate_registered(
+        &mut self,
+        registry: &StateRegistry<'_>,
+        state_id: usize,
+    ) -> Option<f64> {
+        let state = ConcreteState::new(state_id);
+        let view = registry.view(&state);
+        view.fill_propositional(&mut self.propositional);
+        view.fill_numeric(&mut self.numeric)
+            .unwrap_or_else(|error| {
+                panic!("projected state {state_id} has no numeric values: {error:?}")
+            });
+        lmcut_estimate(&mut self.landmarks, &self.propositional, &self.numeric)
+    }
+}
+
+fn lmcut_estimate(
+    landmarks: &mut LandmarkCutLandmarks<'_>,
+    propositional: &[ExplicitValueIndex],
+    numeric: &[NumericValue],
+) -> Option<f64> {
+    // The projection is a task the pattern database built itself, so a
+    // failure is an internal inconsistency.
+    let (dead_end, value) = landmarks
+        .compute_landmark_cost(propositional, numeric)
+        .unwrap_or_else(|error| panic!("LM-cut failed on a projected state: {error}"));
+    (!dead_end).then_some(value)
+}
+
+/// Reused buffers for projecting a base task state and looking it up.
+#[derive(Default)]
+struct LookupScratch {
+    propositional: Vec<ExplicitValueIndex>,
+    numeric: Vec<NumericValue>,
+    packed: Vec<u64>,
+}
+
+fn is_goal(goals: &[ExplicitFact], propositional: &[ExplicitValueIndex]) -> bool {
+    goals
         .iter()
-        .map(|state| {
-            Ok(PdbState {
-                propositional: state.get_state(registry),
-                numeric: registry
-                    .get_numeric_vars(state)
-                    .map_err(|err| format!("{err:?}"))?,
-            })
-        })
-        .collect()
+        .all(|goal| propositional[goal.var()] == goal.value_index())
+}
+
+fn not_nan(value: f64) -> NotNan<f64> {
+    NotNan::new(value).expect("pattern database distances are never NaN")
 }

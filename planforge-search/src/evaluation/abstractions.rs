@@ -13,3 +13,4 @@ pub mod cost_partitioning;
 pub mod domain;
 pub mod icaps26;
 pub mod pdb;
+pub(crate) mod random_walk;

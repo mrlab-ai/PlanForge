@@ -164,14 +164,15 @@ impl Heuristic for CanonicalAbstractionHeuristic<'_> {
     }
 }
 
-fn are_operator_sets_additive(
+pub(crate) fn are_operator_sets_additive(
     left: &BTreeSet<OperatorIndex>,
     right: &BTreeSet<OperatorIndex>,
 ) -> bool {
     !left.iter().any(|operator_id| right.contains(operator_id))
 }
 
-fn compute_max_additive_subsets_from_relevant_operators(
+/// The maximal sets of components no two of which share a relevant operator.
+pub(crate) fn compute_max_additive_subsets_from_relevant_operators(
     relevant_operators: &[BTreeSet<OperatorIndex>],
 ) -> Vec<Vec<usize>> {
     let mut maximal_cliques = maximal_cliques(relevant_operators.len(), |left, right| {

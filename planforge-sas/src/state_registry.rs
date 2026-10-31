@@ -879,6 +879,59 @@ impl<'a> StateRegistry<'a> {
         (state_id, true)
     }
 
+    /// The id of the registered state with the input values of
+    /// `propositional` and `numeric`, without registering anything.
+    ///
+    /// Both hold one value per variable of the task. Only the input
+    /// variables identify a state: derived values are functions of them and
+    /// cost values are not part of a state, so those entries are ignored.
+    /// `buffer` is scratch space for the packed state.
+    pub fn find_state_id(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+        buffer: &mut Vec<u64>,
+    ) -> Option<StateID> {
+        assert_eq!(
+            propositional.len(),
+            self.global_state_packer.numeric_slot_offset(),
+            "a state lookup needs one value per propositional variable"
+        );
+        assert_eq!(
+            numeric.len(),
+            self.numeric_var_types.len(),
+            "a state lookup needs one value per numeric variable"
+        );
+        let num_bins = self.num_state_bins();
+        buffer.clear();
+        buffer.resize(num_bins, 0);
+        self.pack_propositional_variables(buffer, propositional);
+        {
+            // A value no registered state holds has no compact id, and then
+            // no registered state matches.
+            let interner = self.compact_numeric_values.borrow();
+            for &(numeric_var_id, slot) in &self.regular_numeric_slots {
+                let id = *interner.ids_by_value.get(&numeric[numeric_var_id])?;
+                self.global_state_packer.set(buffer, slot, u64::from(id));
+            }
+        }
+        if !self.has_axiom_derived_bits {
+            return self.find_registered_state_id(fast_hash_bins(buffer), buffer);
+        }
+        let mask = &self.non_derived_bits_mask[..num_bins];
+        let key = fast_hash_bins_masked(buffer, mask);
+        self.registered_states
+            .find(key, |&(candidate_hash, compact_candidate)| {
+                candidate_hash == key
+                    && bins_eq_masked(
+                        &self.get_buffer(compact_candidate as StateID)[..num_bins],
+                        buffer,
+                        mask,
+                    )
+            })
+            .map(|&(_, id)| id as StateID)
+    }
+
     /// Create and registers the initial state of the planning problem.
     ///
     /// This method:

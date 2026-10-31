@@ -578,7 +578,7 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     // of them look like dead ends.
     let mut registry = StateRegistry::for_task(Arc::new(&task));
     let mut state = registry.get_initial_state();
-    let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+    let mut landmarks = LandmarkCutLandmarks::new(Arc::new(&task), LmCutNumericConfig::default());
     let mut values = ExplicitState::default();
 
     for (step, operator) in std::iter::once(None)
@@ -592,11 +592,7 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
                 panic!("failed to unpack Plant Watering state at step {step}: {e:?}")
             });
         let (dead_end, total_cost) = landmarks
-            .compute_landmark_cost(
-                &values.propositional,
-                state.buffer(&registry).len(),
-                &values.numeric,
-            )
+            .compute_landmark_cost(&values.propositional, &values.numeric)
             .unwrap_or_else(|e| panic!("LM-cut evaluation failed at step {step}: {e}"));
 
         let last_operator = operator.map(|op| op.name());
@@ -689,13 +685,10 @@ fn lmcutnumeric_counts_numeric_goal_conditions() {
             .view(&state)
             .fill_explicit(&mut values)
             .unwrap_or_else(|e| panic!("failed to unpack the {domain} initial state: {e:?}"));
-        let (dead_end, initial_h) = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default())
-            .compute_landmark_cost(
-                &values.propositional,
-                state.buffer(&registry).len(),
-                &values.numeric,
-            )
-            .unwrap_or_else(|e| panic!("LM-cut evaluation failed on {domain}: {e}"));
+        let (dead_end, initial_h) =
+            LandmarkCutLandmarks::new(Arc::new(&task), LmCutNumericConfig::default())
+                .compute_landmark_cost(&values.propositional, &values.numeric)
+                .unwrap_or_else(|e| panic!("LM-cut evaluation failed on {domain}: {e}"));
         assert!(!dead_end, "the {domain} initial state is not a dead end");
         assert!(
             (initial_h - expected_initial_h).abs() <= 1e-6,

@@ -3,6 +3,7 @@ pub use crate::task_restriction::validate_restricted_task;
 pub mod pattern_collection;
 pub mod pattern_database;
 pub mod pattern_generator_greedy;
+pub mod pattern_generator_hillclimbing;
 pub mod pattern_generator_systematic;
 pub mod pdb_collection;
 pub mod projected_task;

@@ -57,7 +57,7 @@ pub fn generate_systematic_patterns(
 
     let causal_graph = RestrictedCausalGraph::new(task)
         .expect("systematic PDB patterns require a restricted task");
-    let seed_variables = collect_seed_variables(task, &causal_graph);
+    let seed_variables = goal_variables(task, &causal_graph);
     build_interesting_patterns(
         &causal_graph,
         &seed_variables,
@@ -225,7 +225,9 @@ fn compute_connection_points(
     candidates.into_iter().collect()
 }
 
-fn collect_seed_variables(
+/// The variables the goal names: the propositional goal variables, then the
+/// numeric variable of every goal comparison.
+pub(super) fn goal_variables(
     task: &dyn AbstractNumericTask,
     causal_graph: &CausalGraph,
 ) -> Vec<CausalGraphVariable> {

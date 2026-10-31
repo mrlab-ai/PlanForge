@@ -51,7 +51,7 @@ fn sample_task() -> NumericRootTask {
 }
 
 #[test]
-fn pdb_collection_builds_all_patterns() {
+fn builds_one_pattern_database_per_pattern() {
     let task = sample_task();
     let patterns = PatternCollection::new(vec![
         Pattern::new(vec![VariableIndex::from_usize(1)], vec![]),
@@ -61,8 +61,16 @@ fn pdb_collection_builds_all_patterns() {
         ),
     ]);
 
-    let collection = PdbCollection::new(&task, patterns.clone(), 32).unwrap();
+    let pdbs = build_pattern_databases(
+        &task,
+        &patterns,
+        PdbBuildConfig {
+            max_states: 32,
+            heuristics: Default::default(),
+            retain_transitions: false,
+        },
+    )
+    .unwrap();
 
-    assert_eq!(collection.len(), 2);
-    assert_eq!(collection.patterns().as_slice(), patterns.as_slice());
+    assert_eq!(pdbs.len(), 2);
 }

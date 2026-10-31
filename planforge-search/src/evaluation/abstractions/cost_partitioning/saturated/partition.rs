@@ -91,11 +91,10 @@ pub(super) fn saturate_component_labels(
         AbstractionComponent::Cegar(abstraction) => {
             abstraction.saturate_labels(operator_costs, perimeter_state, deadline)
         }
-        AbstractionComponent::PatternDatabase(pdb) => match perimeter_state {
+        AbstractionComponent::PatternDatabase(pdb) => Ok(match perimeter_state {
             Some(state) => pdb.build_cost_partitioned_distance_table_capped(operator_costs, state),
             None => pdb.build_cost_partitioned_distance_table(operator_costs),
-        }
-        .map_err(anyhow::Error::msg),
+        }),
     }
 }
 

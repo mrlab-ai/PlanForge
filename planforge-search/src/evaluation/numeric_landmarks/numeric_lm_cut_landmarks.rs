@@ -5,7 +5,7 @@ use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, Effect, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue,
-    Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    Operator, OperatorIndex, TaskRef, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
 use planforge_sas::utils::linear_effects::LinearNumericEffect;
@@ -258,7 +258,7 @@ struct OperatorConditionEval {
 }
 
 pub struct LandmarkCutLandmarks<'task> {
-    task: &'task dyn AbstractNumericTask,
+    task: TaskRef<'task>,
     config: LmCutNumericConfig,
     propositions: Vec<RelaxedProposition>,
     proposition_runtime: Vec<PropositionRuntime>,
@@ -332,7 +332,7 @@ pub struct LandmarkCutLandmarks<'task> {
 
 #[allow(unused)]
 impl<'task> LandmarkCutLandmarks<'task> {
-    pub fn new(task: &'task dyn AbstractNumericTask, config: LmCutNumericConfig) -> Self {
+    pub fn new(task: TaskRef<'task>, config: LmCutNumericConfig) -> Self {
         // PARITY(numeric-fd): `random_pcf` is still blocked until the randomized supporter
         // selection path is ported. The other current feature flags are wired through the same
         // control-flow sites as the C++ implementation.
@@ -347,7 +347,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         );
         let use_bounds = config.bound_iterations > 0;
         let default_value_axioms =
-            default_value_axioms(task, DefaultValueAxiomMode::ApproximateNegativeCycles);
+            default_value_axioms(&*task, DefaultValueAxiomMode::ApproximateNegativeCycles);
         let relaxed_axioms: Arc<[PropositionalAxiom]> = task
             .axioms()
             .iter()
@@ -355,13 +355,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .chain(default_value_axioms.iter().cloned())
             .collect();
         let numeric_bound = NumericBound::new(
-            task,
+            &*task,
             &default_value_axioms,
             config.precision,
             config.epsilon,
         );
         let numeric_helper = NumericTaskHelper::new_lmcut(
-            task,
+            &*task,
             &default_value_axioms,
             config.precision,
             config.epsilon,
@@ -781,7 +781,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn build_relaxed_operators(&mut self) {
-        let operators = self.task.get_operators();
+        let task = Arc::clone(&self.task);
+        let operators = task.get_operators();
         for (operator_id, operator) in operators.iter().enumerate() {
             let operator_id = OperatorIndex::from_usize(operator_id);
             let base_cost = self.calculate_base_operator_cost(operator_id, operator);
@@ -3309,10 +3310,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
             return;
         }
 
-        self.linear_effect_to_conditions_plus = vec![Vec::new(); self.task.get_operators().len()];
-        self.linear_effect_to_conditions_minus = vec![Vec::new(); self.task.get_operators().len()];
+        let task = Arc::clone(&self.task);
+        self.linear_effect_to_conditions_plus = vec![Vec::new(); task.get_operators().len()];
+        self.linear_effect_to_conditions_minus = vec![Vec::new(); task.get_operators().len()];
 
-        for (operator_id, operator) in self.task.get_operators().iter().enumerate() {
+        for (operator_id, operator) in task.get_operators().iter().enumerate() {
             let helper_conditional_fact_effects = self
                 .numeric_helper
                 .get_action_conditional_fact_effects(operator_id)
@@ -3675,16 +3677,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
     fn compute_landmarks_impl(
         &mut self,
         propositional_values: &[ExplicitValueIndex],
-        state_buffer_len: usize,
         numeric_values: &[NumericValue],
     ) -> Result<(bool, f64), String> {
         assert!(
             self.initialized,
             "LM-cut landmarks used before initialization"
-        );
-        assert!(
-            state_buffer_len > 0,
-            "LM-cut scaffold requires a non-empty packed state buffer"
         );
         assert_eq!(
             numeric_values.len(),
@@ -3878,14 +3875,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
     pub fn compute_landmark_cost(
         &mut self,
         propositional_values: &[ExplicitValueIndex],
-        state_buffer_len: usize,
         numeric_values: &[NumericValue],
     ) -> Result<(bool, f64), String> {
-        self.compute_landmarks_impl(propositional_values, state_buffer_len, numeric_values)
+        self.compute_landmarks_impl(propositional_values, numeric_values)
     }
 
-    pub fn task(&self) -> &'task dyn AbstractNumericTask {
-        self.task
+    pub fn task(&self) -> &dyn AbstractNumericTask {
+        &*self.task
     }
 
     pub fn propositions(&self) -> &[RelaxedProposition] {

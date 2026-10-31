@@ -16,14 +16,19 @@ use crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::pattern_collection::PatternCollection;
-use crate::evaluation::abstractions::pdb::pattern_database::PdbHeuristicConfig;
+use crate::evaluation::abstractions::pdb::pattern_database::{
+    PatternDatabase, PdbBuildConfig, PdbHeuristicConfig,
+};
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::{
     GreedyPatternGeneratorConfig, generate_greedy_pattern,
+};
+use crate::evaluation::abstractions::pdb::pattern_generator_hillclimbing::{
+    HillClimbingConfig, generate_hill_climbing_pdbs,
 };
 use crate::evaluation::abstractions::pdb::pattern_generator_systematic::{
     SystematicPatternGeneratorConfig, generate_systematic_patterns,
 };
-use crate::evaluation::abstractions::pdb::pdb_collection::PdbCollection;
+use crate::evaluation::abstractions::pdb::pdb_collection::build_pattern_databases;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
@@ -84,17 +89,18 @@ impl AbstractionSource {
             Self::Icaps26Cartesian(config) => {
                 Icaps26CartesianGenerator::new(config.clone()).map(|_| ())
             }
-            Self::Pdb(config) => {
-                if let PdbPatternsConfig::Systematic(patterns) = &config.patterns
-                    && !patterns.only_interesting_patterns
-                {
+            Self::Pdb(config) => match &config.patterns {
+                PdbPatternsConfig::Systematic(patterns) if !patterns.only_interesting_patterns => {
                     return Err(ConfigError::from(
                         "systematic naive numeric PDB patterns are not implemented",
                     )
                     .at_option("only_interesting_patterns"));
                 }
-                Ok(())
-            }
+                PdbPatternsConfig::HillClimbing(patterns) => {
+                    patterns.validate().map_err(anyhow::Error::msg)
+                }
+                PdbPatternsConfig::Systematic(_) | PdbPatternsConfig::Greedy(_) => Ok(()),
+            },
         };
         result.map_err(|error| ConfigError::from(error.to_string()).at(self.name()))
     }
@@ -170,16 +176,9 @@ impl AbstractionSource {
                 Ok(vec![AbstractionComponent::from(abstraction)])
             }
             Self::Pdb(config) => {
-                let (patterns, max_pdb_states, heuristic_config) =
-                    config.clone().build_patterns(task);
-                let pdbs = PdbCollection::with_heuristic_config(
-                    task,
-                    patterns,
-                    max_pdb_states,
-                    heuristic_config,
-                )
-                .map_err(|error| format!("failed to build numeric PDB source: {error}"))?
-                .into_pdbs();
+                let pdbs = config
+                    .build(task, purpose.needs_transition_system(), remaining)
+                    .map_err(|error| format!("failed to build numeric PDB source: {error}"))?;
                 Ok(pdbs.into_iter().map(AbstractionComponent::from).collect())
             }
         }
@@ -192,6 +191,8 @@ enum PdbPatternsConfig {
     Systematic(SystematicPatternGeneratorConfig),
     #[option(rename = "greedy")]
     Greedy(GreedyPatternGeneratorConfig),
+    #[option(rename = "hillclimbing")]
+    HillClimbing(HillClimbingConfig),
 }
 impl Default for PdbPatternsConfig {
     fn default() -> Self {
@@ -204,32 +205,42 @@ impl Default for PdbPatternsConfig {
 #[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
 pub struct PdbSourceConfig {
     patterns: PdbPatternsConfig,
-    exploration_heuristic: PdbInternalHeuristic,
-    frontier_heuristic: PdbInternalHeuristic,
-    failed_lookup_heuristic: PdbInternalHeuristic,
+    pub(super) exploration_heuristic: PdbInternalHeuristic,
+    pub(super) frontier_heuristic: PdbInternalHeuristic,
+    pub(super) failed_lookup_heuristic: PdbInternalHeuristic,
 }
 
 impl PdbSourceConfig {
-    fn build_patterns(
-        self,
-        task: &dyn AbstractNumericTask,
-    ) -> (PatternCollection, usize, PdbHeuristicConfig) {
-        let heuristic = PdbHeuristicConfig {
+    fn build<'task>(
+        &self,
+        task: &'task dyn AbstractNumericTask,
+        retain_transitions: bool,
+        remaining: Option<Duration>,
+    ) -> Result<Vec<PatternDatabase<'task>>, String> {
+        let heuristics = PdbHeuristicConfig {
             exploration_heuristic: self.exploration_heuristic,
             frontier_heuristic: self.frontier_heuristic,
             failed_lookup_heuristic: self.failed_lookup_heuristic,
         };
+        let pdb_config = |max_states| PdbBuildConfig {
+            max_states,
+            heuristics,
+            retain_transitions,
+        };
         match self.patterns {
-            PdbPatternsConfig::Systematic(config) => (
-                generate_systematic_patterns(task, config),
-                config.max_pdb_states,
-                heuristic,
+            PdbPatternsConfig::Systematic(config) => build_pattern_databases(
+                task,
+                &generate_systematic_patterns(task, config),
+                pdb_config(config.max_pdb_states),
             ),
-            PdbPatternsConfig::Greedy(config) => (
-                PatternCollection::new(vec![generate_greedy_pattern(task, config)]),
-                config.max_pdb_states,
-                heuristic,
+            PdbPatternsConfig::Greedy(config) => build_pattern_databases(
+                task,
+                &PatternCollection::new(vec![generate_greedy_pattern(task, config)]),
+                pdb_config(config.max_pdb_states),
             ),
+            PdbPatternsConfig::HillClimbing(config) => {
+                generate_hill_climbing_pdbs(task, config, heuristics, retain_transitions, remaining)
+            }
         }
     }
 }
