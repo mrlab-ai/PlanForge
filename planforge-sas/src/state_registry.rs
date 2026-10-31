@@ -174,7 +174,7 @@ enum ConcreteStateViewBacking<'a> {
         regular_numeric_slots: &'a [(usize, usize)],
         cost_numeric_indices: &'a [(usize, usize)],
         compact_numeric_values: &'a RefCell<CompactNumericValues>,
-        cost_info: &'a RefCell<DenseCostInformation>,
+        cost_info: &'a DenseCostInformation,
         axiom_evaluator: &'a AxiomEvaluator<'a>,
     },
 }
@@ -289,8 +289,7 @@ impl<'a> ConcreteStateView<'a> {
         for &(out_idx, packed_slot) in regular_numeric_slots {
             output[out_idx] = interned.value(self.packer.get(self.prop, packed_slot));
         }
-        let costs = cost_info.borrow();
-        let cost_values = costs.get(state_id);
+        let cost_values = cost_info.get(state_id);
         for &(out_idx, cost_idx) in cost_numeric_indices {
             output[out_idx] = cost_values[cost_idx];
         }
@@ -481,7 +480,7 @@ pub struct StateRegistry<'a> {
     /// Dense row-major `NumericValue` cost values indexed by state ID. Cost variables
     /// are not part of state identity, but storing one allocation per state is
     /// unnecessary because state IDs are dense.
-    cost_info: RefCell<DenseCostInformation>,
+    cost_info: DenseCostInformation,
     /// Snapshot of the numeric variable layout, populated at construction.
     /// Iterating this avoids per-call vtable dispatch through `task.numeric_variables()`
     /// in hot paths like numeric decoding.
@@ -673,7 +672,7 @@ impl<'a> StateRegistry<'a> {
             successor_bins: Vec::new(),
             registered_states: RegisteredStates::with_capacity(1024),
             axiom_evaluator,
-            cost_info: RefCell::new(DenseCostInformation::new(cost_variable_count)),
+            cost_info: DenseCostInformation::new(cost_variable_count),
             numeric_var_types,
             numeric_template,
             regular_numeric_slots,
@@ -1357,7 +1356,7 @@ impl<'a> StateRegistry<'a> {
     }
 
     fn fill_cost_information(&self, state: &ConcreteState, output: &mut Vec<NumericValue>) {
-        let cost_info_borrow = self.cost_info.borrow();
+        let cost_info_borrow = &self.cost_info;
         let cost_info_data = cost_info_borrow.get(state.get_id());
         output.resize(cost_info_data.len(), NumericValue::new(0.0));
         output.copy_from_slice(cost_info_data);
@@ -1564,7 +1563,7 @@ impl<'a> StateRegistry<'a> {
             }
             NumericType::Cost => {
                 let cost_index = self.cost_index(metric_fluent_id);
-                let cost_info_borrow = self.cost_info.borrow();
+                let cost_info_borrow = &self.cost_info;
                 let cost_values = cost_info_borrow.get(state.get_id());
                 Ok(cost_values[cost_index])
             }
@@ -1617,14 +1616,12 @@ impl<'a> StateRegistry<'a> {
     /// Return an empty vector if no cost information is stored for the state.
     #[cfg(test)]
     pub(crate) fn get_cost_information(&self, state: &ConcreteState) -> Vec<NumericValue> {
-        self.cost_info.borrow().get(state.get_id()).to_vec()
+        self.cost_info.get(state.get_id()).to_vec()
     }
 
     /// Set cost information for a given state.
     ///
-    /// This corresponds to the C++ g_cost_information[state] = values assignment.
-    /// It uses `RefCell` for interior mutability to resolve borrowing conflicts.
-    fn set_cost_information(&self, state: &ConcreteState, values: &[NumericValue]) {
-        self.cost_info.borrow_mut().set(state.get_id(), values);
+    fn set_cost_information(&mut self, state: &ConcreteState, values: &[NumericValue]) {
+        self.cost_info.set(state.get_id(), values);
     }
 }
