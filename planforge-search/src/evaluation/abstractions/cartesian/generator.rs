@@ -20,6 +20,7 @@ use crate::evaluation::abstractions::common::abstraction::{
 use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::refine::refine_from_root;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
+use crate::evaluation::abstractions::common::coordinates::coordinate_value;
 use crate::evaluation::abstractions::component::AbstractionKind;
 
 pub struct CartesianAbstractionGenerator {
@@ -83,9 +84,12 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             ..
         } = refinement;
         let initial_state = semantics.cegar().states().initial_state()?;
+        let views = semantics.cegar().coordinates().views();
         let initial_abstract_state = working
             .hierarchy
-            .map_state(&initial_state.propositional, &initial_state.numeric)?;
+            .map_state_with(&initial_state.propositional, |var_id| {
+                coordinate_value(views, &initial_state.numeric, var_id)
+            })?;
         let abstraction = finalize_abstraction(
             working,
             &semantics,
