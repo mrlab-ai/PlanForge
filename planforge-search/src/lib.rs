@@ -34,7 +34,7 @@ pub mod resource_limits;
 pub mod search;
 pub mod state_space;
 pub mod successor_generator;
-pub mod task_restriction;
+pub mod task_transformations;
 #[cfg(test)]
 mod test_tasks;
 pub mod unsupported;

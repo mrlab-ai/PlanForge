@@ -1,3 +1,6 @@
+//! The restricted task: every numeric comparison and the metric read state
+//! variables, with derived arithmetic folded into them.
+
 #[cfg(test)]
 mod tests;
 

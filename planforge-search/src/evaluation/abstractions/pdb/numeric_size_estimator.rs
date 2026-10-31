@@ -8,7 +8,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use crate::task_restriction::validate_restricted_task;
+use crate::task_transformations::restriction::validate_restricted_task;
 
 #[derive(Debug, Clone, Copy)]
 struct NumericCondition {
