@@ -4,10 +4,17 @@ use planforge_sas::state_registry::StateRegistry;
 use rand::{SeedableRng, rngs::SmallRng};
 use tracing::info;
 
+use crate::config::ConfigError;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::component::AbstractionComponent;
+use crate::evaluation::abstractions::sources::{
+    AbstractionPurpose, CombinationConfig, build_components, remaining_construction_time,
+};
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::heuristic_factory::{
+    BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
+};
 use crate::resource_limits::Deadline;
 
 mod config;
@@ -295,29 +302,39 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
 #[cfg(test)]
 mod tests;
 
-pub use registry_feature::ScpFeature;
-mod registry_feature {
-    use crate::config::ConfigError;
-    use crate::evaluation::Heuristic;
-    use crate::heuristic_factory::features::{source_requirements, validate_sources};
-    use crate::heuristic_factory::*;
-
-    pub struct ScpFeature;
-    impl HeuristicFeature for ScpFeature {
-        const NAME: &'static str = "scp";
-        type Config = ScpHeuristicConfig;
-        fn requirements(config: &Self::Config) -> TaskRequirements {
-            source_requirements(&config.sources)
-        }
-        fn validate(config: &Self::Config) -> Result<(), ConfigError> {
-            validate_sources(&config.sources)?;
-            config.scp.validate().map_err(Into::into)
-        }
-        fn build<'a>(
-            config: &Self::Config,
-            context: &BuildContext<'a>,
-        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-            build_scp_from_sources(context, config)
-        }
+/// `scp(sources, ...)`: saturated cost partitioning over the abstractions of
+/// the sources.
+pub struct ScpFeature;
+impl HeuristicFeature for ScpFeature {
+    const NAME: &'static str = "scp";
+    type Config = CombinationConfig<ScpConfig>;
+    fn requirements(config: &Self::Config) -> TaskRequirements {
+        config.requirements()
+    }
+    fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+        config.validate()?;
+        config.options.validate().map_err(Into::into)
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        let deadline = config.deadline()?;
+        let purpose = if config.options.partitioning.uses_regions() {
+            AbstractionPurpose::RegionalCostPartitioning
+        } else {
+            AbstractionPurpose::LabelCostPartitioning
+        };
+        let components = build_components(&**context.task, &config.sources, purpose, deadline)?;
+        remaining_construction_time(deadline)?;
+        let heuristic = SaturatedCostPartitioningHeuristic::new(
+            Some(context.name.clone()),
+            components,
+            config.options.clone(),
+            context.task.clone(),
+            deadline,
+        )
+        .map_err(|error| format!("failed to construct `{}`: {error}", context.name))?;
+        Ok(Box::new(heuristic))
     }
 }

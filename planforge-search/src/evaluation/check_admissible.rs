@@ -307,8 +307,7 @@ impl crate::config::ApplyOptions for CheckAdmissibleConfig {
         &mut self,
         args: &[crate::config::ConfigArg],
     ) -> Result<(), crate::config::ConfigError> {
-        let spec =
-            crate::heuristic_factory::single_wrapped_heuristic_spec("check_admissible", args)?;
+        let spec = single_wrapped_heuristic_spec("check_admissible", args)?;
         self.inner = crate::heuristic_factory::HeuristicConfig::from_spec(&spec)?;
         Ok(())
     }
@@ -330,4 +329,24 @@ impl crate::heuristic_factory::HeuristicFeature for CheckAdmissibleFeature {
             context.task.clone(),
         )?))
     }
+}
+
+/// The one heuristic `wrapper(h)` wraps, given positionally.
+fn single_wrapped_heuristic_spec(
+    wrapper: &str,
+    args: &[crate::config::ConfigArg],
+) -> Result<crate::config::ConfigCall, String> {
+    let [arg] = args else {
+        return Err(format!(
+            "`{wrapper}` expects exactly one heuristic, e.g. `{wrapper}(domain())`, \
+             but got {} arguments",
+            args.len()
+        ));
+    };
+    if let Some(key) = arg.key() {
+        return Err(format!(
+            "`{wrapper}` takes its heuristic positionally, not as `{key}=...`"
+        ));
+    }
+    crate::config::ConfigCall::from_value(arg.value())
 }

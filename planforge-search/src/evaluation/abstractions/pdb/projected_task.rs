@@ -693,14 +693,6 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         &self.numeric_state
     }
 
-    fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        ProjectedTask::project_state_values(self, propositional_values, numeric_values)
-    }
-
     fn evaluate_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {

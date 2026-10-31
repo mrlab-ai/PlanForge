@@ -5,9 +5,6 @@
 pub mod canonical;
 pub mod costs;
 pub mod max;
-// Only compiled with the `cplex` feature. Requesting the heuristic in another
-// build produces an explicit configuration error before translation.
-#[cfg(feature = "cplex")]
 pub mod posthoc_optimization;
 pub mod saturated;
 
@@ -38,5 +35,3 @@ fn standalone_estimate(
     );
     Ok(value)
 }
-
-pub mod posthoc_feature;

@@ -26,7 +26,7 @@ mod view;
 ///
 /// An abstraction addresses both kinds of variable through one dense id space:
 /// the task's `num_propositional_vars` propositional variables first, its
-/// numeric variables after them. [`layout::StateLayout`] is indexed by that space,
+/// numeric variables after them. `layout::StateLayout` is indexed by that space,
 /// and facts on the upper range carry
 /// [`FactNamespace::NumericVariable`](planforge_sas::numeric_task::FactNamespace::NumericVariable)
 /// so the offset is readable off the fact instead of off the arithmetic that

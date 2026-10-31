@@ -8,9 +8,6 @@ pub mod heuristic;
 pub(crate) mod maximal_cliques;
 pub mod maximum;
 pub mod numeric_landmarks;
-#[path = "evaluation/numeric_potentials/config.rs"]
-pub mod numeric_potential_config;
-#[cfg(feature = "cplex")]
 pub mod numeric_potentials;
 pub(crate) mod sampling;
 pub mod seed;

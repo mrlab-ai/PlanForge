@@ -40,7 +40,7 @@ pub trait MemberConfig: ApplyOptions + Clone {
 /// A collection of abstractions configured by `M`. The member options bound
 /// every member: `max_states` and `max_time` are per member. The members'
 /// `random_seed` is the seed of the collection, which its members derive
-/// theirs from; a [`MemberConstruction`] sets it, and the other options it
+/// theirs from; a `MemberConstruction` sets it, and the other options it
 /// names, for every member.
 #[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct CollectionConfig<M: ApplyOptions> {

@@ -112,15 +112,6 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.get_initial_numeric_state_values()
     }
 
-    fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        self.base
-            .project_state_values(propositional_values, numeric_values)
-    }
-
     fn evaluate_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {

@@ -178,3 +178,13 @@ fn goal_distance_is_computed_per_state() {
         1.0
     );
 }
+
+#[test]
+fn the_wrapped_heuristic_is_one_positional_heuristic() {
+    let spec = crate::config::parse_call("check_admissible([domain_collection()])").unwrap();
+    let error = super::single_wrapped_heuristic_spec("check_admissible", &spec.args).unwrap_err();
+    assert_eq!(error, "expected heuristic, got a list");
+    let spec = crate::config::parse_call("check_admissible(h=blind())").unwrap();
+    let error = super::single_wrapped_heuristic_spec("check_admissible", &spec.args).unwrap_err();
+    assert!(error.contains("positionally"), "{error}");
+}

@@ -553,7 +553,7 @@ impl<'a> StateRegistry<'a> {
     }
 
     /// Build the state packer, axiom evaluator, and registry for `task` in
-    /// one step. This is the common construction path; use [`Self::new`]
+    /// one step. This is the common construction path; use `Self::new`
     /// when a custom packer or axiom evaluator is needed.
     pub fn for_task(task: TaskRef<'a>) -> Self {
         let packer = Arc::new(StatePacker::from_abstract_task_with_numeric_range(

@@ -6,10 +6,17 @@ use std::collections::BTreeSet;
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
+use crate::config::ConfigError;
+use crate::evaluation::abstractions::sources::{
+    AbstractionPurpose, CombinationConfig, build_components, remaining_construction_time,
+};
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::maximal_cliques::maximal_cliques;
 use crate::evaluation::state_value_cache::StateValueCache;
+use crate::heuristic_factory::{
+    BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
+};
 
 use planforge_sas::explicit_state::ExplicitState;
 
@@ -158,33 +165,35 @@ pub(crate) fn compute_max_additive_subsets_from_relevant_operators(
     maximal_cliques
 }
 
-pub use registry_feature::CanonicalFeature;
-mod registry_feature {
-    use crate::config::ConfigError;
-    use crate::evaluation::Heuristic;
-    use crate::heuristic_factory::features::{source_requirements, validate_sources};
-    use crate::heuristic_factory::*;
-
-    pub struct CanonicalFeature;
-    impl HeuristicFeature for CanonicalFeature {
-        const NAME: &'static str = "canonical";
-        type Config = SourcesConfig;
-        fn requirements(config: &Self::Config) -> TaskRequirements {
-            source_requirements(config)
-        }
-        fn validate(config: &Self::Config) -> Result<(), ConfigError> {
-            validate_sources(config)
-        }
-        fn build<'a>(
-            config: &Self::Config,
-            context: &BuildContext<'a>,
-        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-            build_canonical_from_sources(
-                &**context.task,
-                &config.sources,
-                &context.name,
-                config.deadline()?,
-            )
-        }
+/// `canonical(sources)`: the canonical heuristic over the abstractions of
+/// the sources.
+pub struct CanonicalFeature;
+impl HeuristicFeature for CanonicalFeature {
+    const NAME: &'static str = "canonical";
+    type Config = CombinationConfig;
+    fn requirements(config: &Self::Config) -> TaskRequirements {
+        config.requirements()
+    }
+    fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+        config.validate()
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        let deadline = config.deadline()?;
+        let task = &**context.task;
+        let components = build_components(
+            task,
+            &config.sources,
+            AbstractionPurpose::Standalone,
+            deadline,
+        )?;
+        remaining_construction_time(deadline)?;
+        let heuristic =
+            CanonicalAbstractionHeuristic::new(Some(context.name.clone()), task, components)
+                .map_err(|error| format!("failed to construct `{}`: {error}", context.name))?;
+        remaining_construction_time(deadline)?;
+        Ok(Box::new(heuristic))
     }
 }

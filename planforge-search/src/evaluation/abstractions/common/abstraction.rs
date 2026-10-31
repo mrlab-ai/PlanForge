@@ -170,7 +170,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
     fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]>;
 
     /// The goal distances under `operator_costs` and the saturated cost of
-    /// every operator; see [`saturate_labels`](crate::evaluation::abstractions::cost_partitioning::costs::saturate_labels).
+    /// every operator; see `cost_partitioning::costs::saturate_labels`.
     fn saturate_labels(
         &self,
         operator_costs: &[f64],
@@ -179,7 +179,8 @@ pub trait CegarAbstraction: std::fmt::Debug {
     ) -> Result<(Vec<f64>, Vec<f64>)>;
 
     /// The goal distances under `remaining` and what every transition
-    /// needs of its labels' source sets; see [`saturate_regions`](crate::evaluation::abstractions::cost_partitioning::costs::saturate_regions).
+    /// needs of its labels' source sets; see
+    /// `cost_partitioning::costs::saturate_regions`.
     fn saturate_regions(
         &self,
         remaining: &RemainingCosts,

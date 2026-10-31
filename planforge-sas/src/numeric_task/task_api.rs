@@ -49,15 +49,7 @@ pub trait AbstractNumericTask: Send + Sync {
     /// task's axioms.
     fn get_initial_numeric_state_values(&self) -> &[NumericValue];
 
-    /// Customization hook used by [`NumericTaskExt::abstract_state_values`].
-    fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String>;
-
-    /// Customization hook used by
-    /// [`NumericTaskExt::evaluated_initial_abstract_state_values`].
+    /// The initial state closed under the task's axioms.
     fn evaluate_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String>;
@@ -145,28 +137,6 @@ pub trait NumericTaskExt: AbstractNumericTask {
 }
 
 impl<T: AbstractNumericTask + ?Sized> NumericTaskExt for T {}
-
-fn identity_state_values(
-    task: &(impl AbstractNumericTask + ?Sized),
-    propositional_values: &[ExplicitValueIndex],
-    numeric_values: &[NumericValue],
-) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-    if propositional_values.len() != task.variables().len() {
-        return Err(format!(
-            "expected {} propositional values, got {}",
-            task.variables().len(),
-            propositional_values.len()
-        ));
-    }
-    if numeric_values.len() != task.numeric_variables().len() {
-        return Err(format!(
-            "expected {} numeric values, got {}",
-            task.numeric_variables().len(),
-            numeric_values.len()
-        ));
-    }
-    Ok((propositional_values.to_vec(), numeric_values.to_vec()))
-}
 
 pub fn evaluate_metric_from_values<T: AbstractNumericTask + ?Sized>(
     task: &T,
@@ -393,13 +363,6 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
         (**self).get_initial_numeric_state_values()
     }
 
-    fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        (**self).project_state_values(propositional_values, numeric_values)
-    }
     fn evaluate_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
@@ -822,14 +785,6 @@ impl NumericRootTask {
 }
 
 impl AbstractNumericTask for NumericRootTask {
-    fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        identity_state_values(self, propositional_values, numeric_values)
-    }
-
     fn variables(&self) -> &Vec<ExplicitVariable> {
         &self.variables
     }

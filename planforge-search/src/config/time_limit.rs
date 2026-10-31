@@ -27,20 +27,6 @@ impl TimeLimit {
         }
         Ok(Self(seconds))
     }
-    pub(crate) fn positive_bounded(value: &ConfigValue) -> Result<Self, String> {
-        let limit = Self::from_option_value(value)?;
-        if !limit.0.is_finite() || limit.duration()? == Some(Duration::ZERO) {
-            return Err(format!(
-                "time limit must be finite and at least one nanosecond, got {}",
-                limit.0
-            ));
-        }
-        // Construction budgets become deadlines before any parent deadline is
-        // applied, so a clock overflow is unconditionally a configuration error.
-        crate::resource_limits::Deadline::after(std::time::Instant::now(), limit.duration()?)
-            .map_err(|error| error.to_string())?;
-        Ok(limit)
-    }
 }
 impl From<Option<Duration>> for TimeLimit {
     fn from(value: Option<Duration>) -> Self {

@@ -18,7 +18,8 @@
 //! - `#[option(rename = "key")]` — CLI key differs from field name.
 //! - `#[option(flatten)]` — catch-all: unknown keys delegate to this field's
 //!   `apply_options` (the field's type must impl `ApplyOptions`). Only one
-//!   `flatten` per struct, and a struct with one takes named options only.
+//!   `flatten` per struct; positional arguments fill the struct's own
+//!   positional fields.
 //!
 //! The trait, primitive `FromOptionValue` impls, and `for_each_option`
 //! helper live in `planforge_search::config`. The emitted code references
@@ -102,6 +103,7 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
             #key_lit => {
                 self.#field_ident =
                     ::planforge_search::config::FromOptionValue::from_option_value(value)?;
+                Ok(())
             }
         });
     }
@@ -116,12 +118,12 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                 ::planforge_search::config::ApplyOptions::apply_options(
                     &mut self.#field,
                     std::slice::from_ref(&arg),
-                )?;
+                )
             }
         }
     } else {
         quote! {
-            other => return Err(format!("unknown option `{other}`").into()),
+            other => Err(format!("unknown option `{other}`").into()),
         }
     };
 
@@ -144,7 +146,6 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                         #(#arms)*
                         #catchall
                     }
-                    Ok(())
                 })
             }
         }

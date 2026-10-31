@@ -1,0 +1,159 @@
+//! The registry features of abstraction heuristics: one abstraction, and one
+//! abstraction source -- a collection or a pattern collection -- used as the
+//! maximum over its abstractions. The combinations of sources register next
+//! to their heuristics in [`super::cost_partitioning`].
+
+use std::marker::PhantomData;
+
+use planforge_sas::numeric_task::AbstractNumericTask;
+
+use super::cartesian::{
+    CartesianAbstractionCollectionConfig, CartesianAbstractionConfig, CartesianAbstractionGenerator,
+};
+use super::collections::config::MemberConfig;
+use super::collections::generator::AbstractionGenerator;
+use super::common::abstraction::AbstractionHeuristic;
+use super::cost_partitioning::max::MaxAbstractionHeuristic;
+use super::domain::config::{DomainAbstractionCollectionConfig, DomainAbstractionConfig};
+use super::domain::generator::DomainAbstractionGenerator;
+use super::icaps26::Icaps26CartesianConfig;
+use super::sources::{AbstractionPurpose, AbstractionSource, PdbSourceConfig, build_components};
+use crate::config::{ApplyOptions, ConfigError};
+use crate::evaluation::Heuristic;
+use crate::heuristic_factory::{
+    BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
+};
+use crate::resource_limits::Deadline;
+
+/// The configuration of an abstraction source, which names it in the
+/// configuration grammar.
+pub trait SourceConfig:
+    ApplyOptions + Default + Clone + std::fmt::Debug + Send + Sync + 'static
+{
+    const NAME: &'static str;
+    fn source(&self) -> AbstractionSource;
+}
+
+impl SourceConfig for DomainAbstractionConfig {
+    const NAME: &'static str = "domain";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::Domain(self.clone())
+    }
+}
+
+impl SourceConfig for CartesianAbstractionConfig {
+    const NAME: &'static str = "cartesian";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::Cartesian(self.clone())
+    }
+}
+
+impl SourceConfig for DomainAbstractionCollectionConfig {
+    const NAME: &'static str = "domain_collection";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::DomainCollection(self.clone())
+    }
+}
+
+impl SourceConfig for CartesianAbstractionCollectionConfig {
+    const NAME: &'static str = "cartesian_collection";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::CartesianCollection(self.clone())
+    }
+}
+
+impl SourceConfig for PdbSourceConfig {
+    const NAME: &'static str = "pdb";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::Pdb(self.clone())
+    }
+}
+
+impl SourceConfig for Icaps26CartesianConfig {
+    const NAME: &'static str = "icaps26_cartesian";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::Icaps26Cartesian(self.clone())
+    }
+}
+
+/// One abstraction as a heuristic: its goal distances, without the
+/// transition system a cost partitioning needs.
+pub struct SingleAbstractionFeature<G>(PhantomData<G>);
+
+impl<G> HeuristicFeature for SingleAbstractionFeature<G>
+where
+    G: AbstractionGenerator + 'static,
+    G::Config: SourceConfig,
+{
+    const NAME: &'static str = <G::Config as SourceConfig>::NAME;
+    type Config = G::Config;
+    fn requirements(config: &Self::Config) -> TaskRequirements {
+        config.source().requirements()
+    }
+    fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+        config.source().validate()
+    }
+    fn source(config: &Self::Config) -> Option<AbstractionSource> {
+        Some(config.source())
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        let mut config = config.clone();
+        config.cegar_mut().keep_transitions = false;
+        let abstraction = G::new(config)
+            .and_then(|generator| generator.generate(&**context.task))
+            .map_err(|error| {
+                HeuristicBuildError::from_source(error, format!("failed to build {}", G::KIND))
+            })?;
+        Ok(Box::new(AbstractionHeuristic::new(
+            &context.name,
+            abstraction,
+        )))
+    }
+}
+
+pub type DomainFeature = SingleAbstractionFeature<DomainAbstractionGenerator>;
+pub type CartesianFeature = SingleAbstractionFeature<CartesianAbstractionGenerator>;
+
+/// A collection or pattern-collection source as a heuristic: the maximum over
+/// its abstractions.
+pub struct SourceFeature<C>(PhantomData<C>);
+
+impl<C: SourceConfig> HeuristicFeature for SourceFeature<C> {
+    const NAME: &'static str = C::NAME;
+    type Config = C;
+    fn requirements(config: &C) -> TaskRequirements {
+        config.source().requirements()
+    }
+    fn validate(config: &C) -> Result<(), ConfigError> {
+        config.source().validate()
+    }
+    fn source(config: &C) -> Option<AbstractionSource> {
+        Some(config.source())
+    }
+    fn build<'a>(
+        config: &C,
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        max_over_sources(&**context.task, &[config.source()], &context.name)
+    }
+}
+
+/// The maximum over the abstractions of `sources`.
+pub(crate) fn max_over_sources<'task>(
+    task: &'task dyn AbstractNumericTask,
+    sources: &[AbstractionSource],
+    name: &str,
+) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
+    let components = build_components(
+        task,
+        sources,
+        AbstractionPurpose::Standalone,
+        Deadline::NONE,
+    )?;
+    let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
+        .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
+    Ok(Box::new(heuristic))
+}

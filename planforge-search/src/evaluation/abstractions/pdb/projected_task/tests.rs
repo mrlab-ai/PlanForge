@@ -115,20 +115,10 @@ fn borrowed_task_extension_methods_preserve_projected_overrides() {
     let task_object: &dyn AbstractNumericTask = &projected;
     let forwarded: &dyn AbstractNumericTask = &task_object;
 
-    let expected = projected
-        .project_state_values(
-            task.get_initial_propositional_state_values(),
-            task.get_initial_numeric_state_values(),
-        )
-        .unwrap();
-    let actual = forwarded
-        .project_state_values(
-            task.get_initial_propositional_state_values(),
-            task.get_initial_numeric_state_values(),
-        )
-        .unwrap();
-
-    assert_eq!(actual, expected);
+    assert_eq!(
+        forwarded.evaluate_initial_state_values().unwrap(),
+        projected.evaluate_initial_state_values().unwrap()
+    );
     assert_eq!(
         forwarded.abstract_operator_cost(OperatorIndex::new(0)),
         projected.abstract_operator_cost(OperatorIndex::new(0))

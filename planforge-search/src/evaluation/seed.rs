@@ -9,7 +9,7 @@
 //! is available by asking for a seed, not by omitting one.
 //!
 //! An unset `random_seed` does not mean the same seed everywhere: the random
-//! split selection of CEGAR uses [`RANDOM_SPLIT_SEED`], CEGAR's seeded
+//! split selection of CEGAR uses `RANDOM_SPLIT_SEED`, CEGAR's seeded
 //! tie-breaking between splits takes the first candidate, and every other
 //! consumer uses [`DEFAULT_RANDOM_SEED`].
 
