@@ -182,9 +182,12 @@ impl<'task> PatternDatabase<'task> {
         relevant_operator_ids.sort_unstable();
         relevant_operator_ids.dedup();
 
-        let states = match DenseStates::new(&task, &registry) {
-            Some(dense) if exhausted => AbstractStates::Dense(dense),
-            _ => AbstractStates::Registry(Box::new(registry)),
+        let dense = exhausted
+            .then(|| DenseStates::new(&task, &registry))
+            .flatten();
+        let states = match dense {
+            Some(dense) => AbstractStates::Dense(dense),
+            None => AbstractStates::Registry(Box::new(registry)),
         };
         let failed_lookup = match config.heuristics.failed_lookup_heuristic {
             PdbInternalHeuristic::Zero => FailedLookupHeuristic::Zero,
@@ -303,8 +306,8 @@ impl<'task> PatternDatabase<'task> {
         )
     }
 
-    /// The goal distances under `operator_costs`, indexed by base operator,
-    /// and the saturated costs (Seipp and Helmert 2018) of those distances.
+    /// The goal distances of the abstract states under `operator_costs`, one
+    /// cost per base operator, and the saturated costs of those distances.
     pub fn build_cost_partitioned_distance_table(
         &self,
         operator_costs: &[f64],
@@ -412,6 +415,10 @@ impl DenseStates {
     /// memory as a registry lookup does; beyond it the registry is used.
     const MAX_SLOTS_PER_STATE: usize = 8;
 
+    /// Slots a table may always have: a few kilobytes, less than the
+    /// registry itself.
+    const MIN_SLOTS: usize = 1024;
+
     /// The dense table of the states in `registry`, or `None` when the
     /// projection has numeric input variables or too many value combinations
     /// for its reached states.
@@ -420,7 +427,9 @@ impl DenseStates {
             return None;
         }
         let num_states = registry.num_registered_states();
-        let max_slots = Self::MAX_SLOTS_PER_STATE.checked_mul(num_states.max(128))?;
+        let max_slots = Self::MAX_SLOTS_PER_STATE
+            .checked_mul(num_states)?
+            .max(Self::MIN_SLOTS);
         let mut variables = Vec::new();
         let mut num_slots = 1usize;
         for (projected, variable) in task.variables().iter().enumerate() {

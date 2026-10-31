@@ -16,7 +16,7 @@ use rand::seq::SliceRandom;
 use tracing::{debug, info};
 
 use super::numeric_size_estimator::NumericSizeEstimator;
-use super::pattern_database::{PatternDatabase, PdbBuildConfig};
+use super::pattern_database::{PatternDatabase, PdbBuildConfig, PdbHeuristicConfig};
 use super::pattern_generator_systematic::goal_variables;
 use super::projected_task::{Pattern, ProjectedTask};
 use crate::causal_graph::{CausalGraphVariable, RestrictedCausalGraph};
@@ -105,15 +105,19 @@ impl fmt::Display for HillClimbingConfig {
 /// heuristic on the most states sampled by random walks. The climb stops
 /// when no candidate raises it on `min_improvement` samples, when the
 /// initial state is a dead end, or when `max_time` or `remaining` passes.
+/// Every pattern database explores up to `config.max_pdb_states` states with
+/// `heuristics`.
 pub fn generate_hill_climbing_pdbs<'task>(
     task: &'task dyn AbstractNumericTask,
     config: HillClimbingConfig,
-    pdb_config: PdbBuildConfig,
+    heuristics: PdbHeuristicConfig,
+    retain_transitions: bool,
     remaining: Option<Duration>,
 ) -> Result<Vec<PatternDatabase<'task>>, String> {
     let pdb_config = PdbBuildConfig {
         max_states: config.max_pdb_states,
-        ..pdb_config
+        heuristics,
+        retain_transitions,
     };
     let mut climbing = HillClimbing::new(task, config, pdb_config)?;
     let mut collection = Collection::default();
@@ -149,6 +153,13 @@ struct HillClimbing<'task> {
     average_operator_cost: f64,
     /// Extensions rejected for exceeding `max_pdb_size`.
     rejected: usize,
+}
+
+/// The outcome of evaluating the candidates on the samples.
+enum Selection {
+    Best { index: usize, improvement: usize },
+    NoneImproves,
+    DeadlinePassed,
 }
 
 /// Why hill climbing stopped.
@@ -241,17 +252,19 @@ impl<'task> HillClimbing<'task> {
             let Some(samples) = self.sample_states(collection, initial_h, deadline)? else {
                 break Stop::Timeout;
             };
-            let Some((improvement, best)) =
-                self.best_candidate(collection, &mut candidates, &samples, deadline)
-            else {
-                break Stop::Timeout;
-            };
-            if improvement < self.config.min_improvement {
-                break Stop::NoImprovement;
-            }
-            let candidate = candidates[best.expect("a positive improvement has a candidate")]
+            let (index, improvement) =
+                match self.select_candidate(collection, &mut candidates, &samples, deadline) {
+                    Selection::Best { index, improvement }
+                        if improvement >= self.config.min_improvement =>
+                    {
+                        (index, improvement)
+                    }
+                    Selection::Best { .. } | Selection::NoneImproves => break Stop::NoImprovement,
+                    Selection::DeadlinePassed => break Stop::Timeout,
+                };
+            let candidate = candidates[index]
                 .take()
-                .expect("the best candidate is still a candidate");
+                .expect("a selected candidate is still a candidate");
             info!(
                 "iPDB: adding pattern {:?} with improvement {improvement}",
                 candidate.pattern
@@ -361,16 +374,16 @@ impl<'task> HillClimbing<'task> {
         Ok(Some(samples))
     }
 
-    /// The most samples a candidate raises the canonical heuristic on, and
-    /// the first candidate that does, if any does. Drops the candidates the
-    /// collection has no room for. `None` when `deadline` passes.
-    fn best_candidate(
+    /// The candidate that raises the canonical heuristic on the most samples,
+    /// the first one among equals. Drops the candidates the collection has no
+    /// room for.
+    fn select_candidate(
         &self,
         collection: &Collection<'task>,
         candidates: &mut [Option<Candidate<'task>>],
         samples: &[ExplicitState],
         deadline: Deadline,
-    ) -> Option<(usize, Option<usize>)> {
+    ) -> Selection {
         let sample_values: Vec<Vec<f64>> = samples
             .iter()
             .map(|sample| collection.values(sample))
@@ -379,10 +392,10 @@ impl<'task> HillClimbing<'task> {
             .iter()
             .map(|values| collection.canonical_value(values))
             .collect();
-        let mut best = (0, None);
+        let mut selection = Selection::NoneImproves;
         for (index, slot) in candidates.iter_mut().enumerate() {
             if deadline.passed() {
-                return None;
+                return Selection::DeadlinePassed;
             }
             let Some(candidate) = slot else {
                 continue;
@@ -410,17 +423,24 @@ impl<'task> HillClimbing<'task> {
                 candidate.pattern,
                 candidate.pdb.num_states()
             );
-            if improvement > best.0 {
-                best = (improvement, Some(index));
+            let best_improvement = match selection {
+                Selection::Best { improvement, .. } => improvement,
+                _ => 0,
+            };
+            if improvement > best_improvement {
+                selection = Selection::Best { index, improvement };
             }
         }
-        Some(best)
+        selection
     }
 }
 
 /// Whether a pattern database with value `h_pattern` raises the canonical
 /// heuristic value `h_collection` of a state whose values in the collection
 /// are `values`, given the maximal additive subsets it would join.
+///
+/// A raise must exceed float noise: summing the same values in another order
+/// must not count as an improvement.
 fn raises_canonical_value(
     h_pattern: f64,
     values: &[f64],

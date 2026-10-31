@@ -60,14 +60,6 @@ fn key_task() -> NumericRootTask {
     })
 }
 
-fn pdb_config() -> PdbBuildConfig {
-    PdbBuildConfig {
-        max_states: 0,
-        heuristics: PdbHeuristicConfig::default(),
-        retain_transitions: false,
-    }
-}
-
 fn initial_h(task: &NumericRootTask, pdbs: &[PatternDatabase<'_>]) -> f64 {
     let initial = [ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)];
     assert_eq!(task.variables().len(), initial.len());
@@ -82,7 +74,9 @@ fn hill_climbing_adds_the_precondition_variable_of_the_goal() {
         min_improvement: 1,
         ..HillClimbingConfig::default()
     };
-    let pdbs = generate_hill_climbing_pdbs(&task, config, pdb_config(), None).unwrap();
+    let pdbs =
+        generate_hill_climbing_pdbs(&task, config, PdbHeuristicConfig::default(), false, None)
+            .unwrap();
 
     assert_eq!(pdbs.len(), 2);
     // {door} alone gives 1; {door, key} gives the optimal 2 on its three
@@ -102,7 +96,9 @@ fn hill_climbing_rejects_candidates_beyond_max_pdb_size() {
         max_pdb_size: 2,
         ..HillClimbingConfig::default()
     };
-    let pdbs = generate_hill_climbing_pdbs(&task, config, pdb_config(), None).unwrap();
+    let pdbs =
+        generate_hill_climbing_pdbs(&task, config, PdbHeuristicConfig::default(), false, None)
+            .unwrap();
 
     assert_eq!(pdbs.len(), 1);
 }

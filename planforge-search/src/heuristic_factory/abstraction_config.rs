@@ -217,13 +217,14 @@ impl PdbSourceConfig {
         retain_transitions: bool,
         remaining: Option<Duration>,
     ) -> Result<Vec<PatternDatabase<'task>>, String> {
+        let heuristics = PdbHeuristicConfig {
+            exploration_heuristic: self.exploration_heuristic,
+            frontier_heuristic: self.frontier_heuristic,
+            failed_lookup_heuristic: self.failed_lookup_heuristic,
+        };
         let pdb_config = |max_states| PdbBuildConfig {
             max_states,
-            heuristics: PdbHeuristicConfig {
-                exploration_heuristic: self.exploration_heuristic,
-                frontier_heuristic: self.frontier_heuristic,
-                failed_lookup_heuristic: self.failed_lookup_heuristic,
-            },
+            heuristics,
             retain_transitions,
         };
         match self.patterns {
@@ -237,12 +238,9 @@ impl PdbSourceConfig {
                 &PatternCollection::new(vec![generate_greedy_pattern(task, config)]),
                 pdb_config(config.max_pdb_states),
             ),
-            PdbPatternsConfig::HillClimbing(config) => generate_hill_climbing_pdbs(
-                task,
-                config,
-                pdb_config(config.max_pdb_states),
-                remaining,
-            ),
+            PdbPatternsConfig::HillClimbing(config) => {
+                generate_hill_climbing_pdbs(task, config, heuristics, retain_transitions, remaining)
+            }
         }
     }
 }

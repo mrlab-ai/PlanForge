@@ -163,7 +163,6 @@ impl fmt::Display for ProjectedTaskBuildError {
 
 impl std::error::Error for ProjectedTaskBuildError {}
 
-#[derive(Clone)]
 pub struct ProjectedTask<'task> {
     base: &'task dyn AbstractNumericTask,
     variables: Vec<ExplicitVariable>,
@@ -566,17 +565,20 @@ impl<'task> ProjectedTask<'task> {
         Ok((propositional, numeric))
     }
 
+    /// The cheapest cost of an operator the projection keeps, the least cost
+    /// of reaching the goal from a state that is no abstract goal; infinite
+    /// when the projection keeps no operator.
     pub fn min_operator_cost(&self) -> f64 {
         let min_operator_cost = self
             .operator_costs
             .iter()
             .copied()
             .fold(f64::INFINITY, f64::min);
-        if min_operator_cost.is_finite() {
-            min_operator_cost.max(0.0)
-        } else {
-            0.0
-        }
+        assert!(
+            min_operator_cost >= 0.0,
+            "operator costs are nonnegative, got {min_operator_cost}"
+        );
+        min_operator_cost
     }
 
     pub fn base_operator_id(&self, projected_operator_id: OperatorIndex) -> OperatorIndex {
