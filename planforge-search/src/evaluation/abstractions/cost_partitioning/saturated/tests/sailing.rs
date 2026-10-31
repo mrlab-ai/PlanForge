@@ -24,10 +24,10 @@ use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
-use crate::evaluation::abstractions::common::task::SingleGoalTask;
 use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_transformations::restriction::build_restricted_task;
+use crate::task_transformations::single_goal::SingleGoalTask;
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::utils::interval::Interval;
 

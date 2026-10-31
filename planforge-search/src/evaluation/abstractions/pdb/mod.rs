@@ -7,6 +7,5 @@ pub mod pattern_generator_greedy;
 pub mod pattern_generator_hillclimbing;
 pub mod pattern_generator_systematic;
 pub mod pdb_collection;
-pub mod projected_task;
 pub(crate) mod utils;
 pub mod variable_order_finder;

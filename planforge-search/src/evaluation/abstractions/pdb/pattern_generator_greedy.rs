@@ -7,9 +7,9 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
 use super::numeric_size_estimator::NumericSizeEstimator;
-use super::projected_task::Pattern;
 use super::variable_order_finder::{GreedyVariableOrderType, VariableOrderFinder};
 use crate::evaluation::seed::DEFAULT_RANDOM_SEED;
+use crate::task_transformations::projection::Pattern;
 
 pub const DEFAULT_MAX_PDB_STATES: usize = 100_000;
 pub const DEFAULT_NUMERIC_FIRST: bool = true;

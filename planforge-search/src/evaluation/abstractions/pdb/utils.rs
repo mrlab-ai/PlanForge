@@ -1,7 +1,7 @@
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
-use super::projected_task::{Pattern, ProjectedTask};
+use crate::task_transformations::projection::{Pattern, ProjectedTask};
 
 pub(crate) fn print_projection_summary(
     base: &dyn AbstractNumericTask,

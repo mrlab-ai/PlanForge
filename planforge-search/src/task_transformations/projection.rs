@@ -1,3 +1,16 @@
+//! The projection of a task to a pattern: the task over only the pattern's
+//! variables, whose operators keep their preconditions and effects on those
+//! variables and drop everything else.
+//!
+//! Projections are primarily the abstract tasks of pattern databases. A
+//! pattern database for the pattern {truck location, package location} of a
+//! delivery task explores the projection to those two variables: an operator
+//! that drives the truck keeps its location precondition and effect but loses
+//! its fuel precondition, so every plan of the task is a plan of the
+//! projection, and the projection's goal distances are admissible estimates
+//! of the task's. The projection is a task in its own right, though, so any
+//! search or heuristic can run on it.
+
 #[cfg(test)]
 mod tests;
 

@@ -11,7 +11,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use super::{PatternDatabase, PdbBuildConfig, PdbHeuristicConfig, PdbInternalHeuristic};
-use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTask};
+use crate::task_transformations::projection::{Pattern, ProjectedTask};
 
 fn build<'task>(
     task: &'task NumericRootTask,

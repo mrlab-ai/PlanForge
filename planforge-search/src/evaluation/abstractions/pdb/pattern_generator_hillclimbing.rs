@@ -18,7 +18,6 @@ use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use super::numeric_size_estimator::NumericSizeEstimator;
 use super::pattern_database::{PatternDatabase, PdbBuildConfig, PdbHeuristicConfig};
 use super::pattern_generator_systematic::goal_variables;
-use super::projected_task::{Pattern, ProjectedTask};
 use crate::config::TimeLimit;
 use crate::evaluation::abstractions::cost_partitioning::canonical::{
     are_operator_sets_additive, compute_max_additive_subsets_from_relevant_operators,
@@ -27,6 +26,7 @@ use crate::evaluation::evaluator::EvaluationError;
 use crate::evaluation::sampling::RandomWalkSampler;
 use crate::evaluation::seed::DEFAULT_RANDOM_SEED;
 use crate::resource_limits::{Deadline, min_time_limit};
+use crate::task_transformations::projection::{Pattern, ProjectedTask};
 
 /// The options of iPDB, with the defaults of numeric Fast Downward.
 #[derive(Debug, Clone, Copy, PartialEq, planforge_search::config::ApplyOptions)]

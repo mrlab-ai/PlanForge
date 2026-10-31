@@ -17,8 +17,8 @@ use crate::evaluation::abstractions::cartesian::{
 use crate::evaluation::abstractions::common::abstraction::AbstractionUse;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
-use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTask};
 use crate::evaluation::evaluator::EvaluationState;
+use crate::task_transformations::projection::{Pattern, ProjectedTask};
 
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
