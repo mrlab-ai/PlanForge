@@ -262,6 +262,8 @@ pub struct LandmarkCutLandmarks<'task> {
     config: LmCutNumericConfig,
     propositions: Vec<RelaxedProposition>,
     proposition_runtime: Vec<PropositionRuntime>,
+    /// Scratch of `mark_goal_plateau`: (proposition, next achiever, end).
+    plateau_stack: Vec<(usize, usize, usize)>,
     proposition_precondition_of_data: Vec<OperatorIndex>,
     proposition_precondition_of_ranges: Vec<(usize, usize)>,
     proposition_effect_of_data: Vec<OperatorIndex>,
@@ -365,6 +367,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             config,
             propositions: Vec::new(),
             proposition_runtime: Vec::new(),
+            plateau_stack: Vec::new(),
             proposition_precondition_of_data: Vec::new(),
             proposition_precondition_of_ranges: Vec::new(),
             proposition_effect_of_data: Vec::new(),
@@ -1361,7 +1364,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
         // stack.
         self.set_proposition_status(proposition_id, PropositionStatus::GoalZone);
         let (start, end) = self.proposition_effect_of_range(proposition_id);
-        let mut stack = vec![(proposition_id, start, end)];
+        let mut stack = std::mem::take(&mut self.plateau_stack);
+        stack.clear();
+        stack.push((proposition_id, start, end));
         while let Some(top) = stack.last_mut() {
             let (proposition_id, achiever_index, end) = *top;
             if achiever_index == end {
@@ -1395,6 +1400,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             let (start, end) = self.proposition_effect_of_range(supporter_id);
             stack.push((supporter_id, start, end));
         }
+        self.plateau_stack = stack;
     }
 
     fn second_exploration(
