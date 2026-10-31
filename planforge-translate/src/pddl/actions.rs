@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use planforge_sas::numeric_task::{NumericValue, ONE_VALUE, ZERO_VALUE};
+use planforge_sas::numeric_task::{NumericValue, ZERO_VALUE};
 
 use super::conditions::{Atom, Condition};
 use super::effects::Effect;
@@ -238,30 +238,17 @@ impl Action {
             new_constant_axioms,
         );
 
-        // Instantiate cost
-        let cost = if let Some(ref c) = self.cost {
-            Some(c.instantiate(
+        // An action without a cost effect costs nothing under a metric, as in
+        // PDDL; without a metric, search charges every operator one.
+        let cost = self.cost.as_ref().map(|cost| {
+            cost.instantiate(
                 var_mapping,
                 fluent_functions,
                 init_function_vals,
                 task_function_admin,
                 new_constant_axioms,
-            ))
-        } else {
-            // Default cost: increase(total-cost, 1)
-            let derived = constant_function(
-                ONE_VALUE,
-                fluent_functions,
-                init_function_vals,
-                task_function_admin,
-                new_constant_axioms,
-            );
-            Some(FunctionAssignment::new(
-                "+".to_string(),
-                PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
-                FunctionalExpression::PrimitiveNumericExpression(derived),
-            ))
-        };
+            )
+        });
 
         Some(PropositionalAction {
             name,

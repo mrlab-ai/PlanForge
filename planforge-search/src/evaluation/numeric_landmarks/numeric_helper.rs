@@ -979,7 +979,7 @@ impl NumericTaskHelper {
             simple_effects: vec![0.0; self.numeric_variable_ids.len()],
             is_assignment: vec![false; self.numeric_variable_ids.len()],
             assignment_values: vec![0.0; self.numeric_variable_ids.len()],
-            cost: operator.cost().value() as f64,
+            cost: task.abstract_operator_cost(operator_id),
             ..HelperActionModel::default()
         };
 

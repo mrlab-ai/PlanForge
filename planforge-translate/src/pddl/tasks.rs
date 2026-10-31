@@ -154,6 +154,10 @@ impl Task {
     /// domain's constants, every object is made equal to itself so that `=`
     /// preconditions can be grounded, and the metric defaults to minimising
     /// `total-cost`, which is then declared if the domain did not declare it.
+    ///
+    /// Without a metric a plan is as good as it is short, as in PDDL, so every
+    /// action then increases `total-cost` by one, whatever cost it declares.
+    /// Under a metric an action without a cost effect costs nothing.
     pub fn new(domain: DomainDefinition, problem: ProblemDefinition) -> Self {
         let mut objects = domain.constants;
         objects.extend(problem.objects);
@@ -173,6 +177,16 @@ impl Task {
                 vec![],
                 "number".to_string(),
             ));
+        }
+        let mut actions = domain.actions;
+        if problem.metric.is_none() {
+            for action in &mut actions {
+                action.cost = Some(FunctionAssignment::new(
+                    "+".to_string(),
+                    PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+                    FunctionalExpression::NumericConstant(NumericConstant::new(1.0)),
+                ));
+            }
         }
         let metric_expression = problem.metric.unwrap_or_else(|| {
             (
@@ -201,7 +215,7 @@ impl Task {
             init,
             num_init: problem.num_init,
             goal: problem.goal,
-            actions: domain.actions,
+            actions,
             axioms: domain.axioms,
             metric,
             function_administrator,
