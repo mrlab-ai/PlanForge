@@ -8,7 +8,6 @@ use super::pddl::f_expression::{
     FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
 };
 
-/// Returns (processed_axioms, axioms_by_layer, max_layer, axiom_map, constant_axioms)
 /// The numeric axioms of a task, folded and layered.
 #[derive(Debug, PartialEq, Eq)]
 pub struct NumericAxioms {
@@ -16,8 +15,6 @@ pub struct NumericAxioms {
     pub axioms: Vec<InstantiatedNumericAxiom>,
     /// The axioms of each evaluation layer, lowest first.
     pub by_layer: BTreeMap<i32, Vec<InstantiatedNumericAxiom>>,
-    /// The highest layer used, or `-1` when there are no axioms.
-    pub max_layer: i32,
     /// Maps an axiom's effect onto the effect of an equivalent axiom that is
     /// kept instead of it.
     pub equivalent: HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression>,
@@ -30,7 +27,6 @@ pub fn handle_axioms(axioms: &[InstantiatedNumericAxiom]) -> NumericAxioms {
         return NumericAxioms {
             axioms: Vec::new(),
             by_layer: BTreeMap::new(),
-            max_layer: -1,
             equivalent: HashMap::new(),
             constant: HashSet::new(),
         };
@@ -61,13 +57,12 @@ pub fn handle_axioms(axioms: &[InstantiatedNumericAxiom]) -> NumericAxioms {
         .cloned()
         .collect();
 
-    let (axioms_by_layer, max_layer) = compute_axiom_layers(&processed_axioms, &constant_axioms);
+    let axioms_by_layer = compute_axiom_layers(&processed_axioms, &constant_axioms);
     let axiom_map = identify_equivalent_axioms(&axioms_by_layer);
 
     NumericAxioms {
         axioms: processed_axioms,
         by_layer: axioms_by_layer,
-        max_layer,
         equivalent: axiom_map,
         constant: constant_axioms,
     }
@@ -198,7 +193,7 @@ fn evaluate_constant_expression(op: &str, values: &[NumericValue]) -> NumericVal
 fn compute_axiom_layers(
     axioms: &[InstantiatedNumericAxiom],
     constant_axioms: &HashSet<InstantiatedNumericAxiom>,
-) -> (BTreeMap<i32, Vec<InstantiatedNumericAxiom>>, i32) {
+) -> BTreeMap<i32, Vec<InstantiatedNumericAxiom>> {
     let axiom_index = axiom_by_pne(axioms);
     let constant_effects: HashSet<PrimitiveNumericExpression> = constant_axioms
         .iter()
@@ -263,15 +258,14 @@ fn compute_axiom_layers(
         layer
     }
 
-    let mut max_layer = -2;
     for idx in 0..axioms.len() {
-        max_layer = max_layer.max(compute_layer_for_axiom(
+        compute_layer_for_axiom(
             idx,
             axioms,
             &axiom_index,
             &constant_effects,
             &mut layer_cache,
-        ));
+        );
     }
 
     let mut axioms_by_layer: BTreeMap<i32, Vec<InstantiatedNumericAxiom>> = BTreeMap::new();
@@ -285,7 +279,7 @@ fn compute_axiom_layers(
             .push(axiom.clone());
     }
 
-    (axioms_by_layer, max_layer)
+    axioms_by_layer
 }
 
 fn identify_equivalent_axioms(

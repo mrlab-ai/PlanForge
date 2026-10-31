@@ -10,23 +10,6 @@ use super::pddl::f_expression::*;
 use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
 
-/// Wraps a Task with additional state for normalization.
-pub struct NormalizableTask {
-    pub task: Task,
-    pub goal: Condition,
-}
-
-impl NormalizableTask {
-    pub fn from_task(task: Task) -> Self {
-        let goal = task.goal.clone();
-        NormalizableTask { task, goal }
-    }
-
-    pub fn add_global_constraints(&mut self) {
-        self.task.add_global_constraints();
-    }
-}
-
 /// One normalization pass: the name the log calls it by, and the rewrite it
 /// applies to the task in place.
 type Pass = (&'static str, fn(&mut Task));
@@ -59,15 +42,13 @@ const PASSES: &[Pass] = &[
     ("verify axiom predicates", verify_axiom_predicates),
 ];
 
-/// Runs every pass in [`PASSES`] over the task, then republishes the goal they
-/// rewrote. Every pass either succeeds or panics on a task PDDL cannot express,
-/// so there is nothing here to report.
-pub fn normalize(task: &mut NormalizableTask) {
+/// Runs every pass in [`PASSES`] over the task. Every pass either succeeds or
+/// panics on a task PDDL cannot express, so there is nothing here to report.
+pub fn normalize(task: &mut Task) {
     for &(name, pass) in PASSES {
         debug!("normalizing: {name}");
-        pass(&mut task.task);
+        pass(task);
     }
-    task.goal = task.task.goal.clone();
 }
 
 /// Renames every action's and axiom's parameters apart from every other's, so

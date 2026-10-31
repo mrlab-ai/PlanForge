@@ -144,20 +144,15 @@ pub(crate) fn translate_to_sas_task(
     let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))?;
     let parsed_task = task.to_task()?;
 
-    let mut norm_task = normalize::NormalizableTask::from_task(parsed_task);
-    norm_task.add_global_constraints();
-    normalize::normalize(&mut norm_task);
+    let mut task = parsed_task;
+    task.add_global_constraints();
+    normalize::normalize(&mut task);
 
-    let result = crate::instantiate::explore(&norm_task.task, limits)?;
+    let result = crate::instantiate::explore(&task, limits)?;
 
     // `translate_task_from_grounded_internal` already filters unreachable
     // propositions and answers with a trivial task when that proves the task
     // impossible or trivially solvable, so nothing is left to simplify here.
-    crate::translate::translate_task_from_grounded_internal(
-        &result,
-        &norm_task,
-        fast_groups,
-        layer_strategy,
-    )
-    .map_err(|err| anyhow::anyhow!(err))
+    crate::translate::translate_grounded_task(&result, &task, fast_groups, layer_strategy)
+        .map_err(|err| anyhow::anyhow!(err))
 }

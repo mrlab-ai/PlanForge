@@ -444,8 +444,8 @@ impl Invariant {
 
             let eff1_cond_literals = get_literals(&eff1.condition);
             let eff2_cond_literals = get_literals(&eff2.condition);
-            let eff1_neg = negate_literal(&eff1.peffect);
-            let eff2_neg = negate_literal(&eff2.peffect);
+            let eff1_neg = eff1.peffect.negate();
+            let eff2_neg = eff2.peffect.negate();
             let eff1_neg_slice = [&eff1_neg];
             let eff2_neg_slice = [&eff2_neg];
 
@@ -513,7 +513,7 @@ impl Invariant {
         let mut produced_by_pred: HashMap<&str, Vec<&Condition>> = HashMap::new();
         let precond_literals = get_literals(&action.precondition);
         let add_cond_literals = get_literals(&add_effect.condition);
-        let add_neg = negate_literal(&add_effect.peffect);
+        let add_neg = add_effect.peffect.negate();
         for literal in precond_literals
             .iter()
             .chain(add_cond_literals.iter())
@@ -613,7 +613,7 @@ impl Invariant {
     ) -> Option<ConstraintSystem> {
         let mut system = ConstraintSystem::new();
         let del_cond_literals = get_literals(&del_effect.condition);
-        let del_neg = negate_literal(&del_effect.peffect);
+        let del_neg = del_effect.peffect.negate();
         for literal in del_cond_literals.iter().chain(std::iter::once(&&del_neg)) {
             let (negated, predicate, args) = literal_info(literal);
             // The ways in which one of the literals that hold on production
@@ -697,11 +697,6 @@ impl Ord for Invariant {
         other_parts.sort();
         self_parts.cmp(&other_parts)
     }
-}
-
-/// Helper to negate a literal condition
-fn negate_literal(cond: &Condition) -> Condition {
-    cond.negate()
 }
 
 /// Placed here to be accessible from Invariant methods.
@@ -789,11 +784,7 @@ mod tests {
             ])),
             vec![
                 Effect::new(vec![], Condition::Truth, atom("P", &["?p"])),
-                Effect::new(
-                    vec![],
-                    atom("R", &["?p"]),
-                    negate_literal(&atom("Q", &["?p"])),
-                ),
+                Effect::new(vec![], atom("R", &["?p"]), atom("Q", &["?p"]).negate()),
             ],
         );
         assert!(is_unbalanced(&action));
@@ -817,11 +808,7 @@ mod tests {
                     ])),
                     atom("P", &["?y"]),
                 ),
-                Effect::new(
-                    vec![],
-                    Condition::Truth,
-                    negate_literal(&atom("Q", &["?p"])),
-                ),
+                Effect::new(vec![], Condition::Truth, atom("Q", &["?p"]).negate()),
             ],
         );
         assert!(is_unbalanced(&action));

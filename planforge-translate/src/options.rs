@@ -1,14 +1,5 @@
 //! Configuration options for the translator.
 
-/// Whether to use partial encoding (default: true)
-pub const USE_PARTIAL_ENCODING: bool = true;
-
-/// Whether to add implied preconditions (default: false)
-pub const ADD_IMPLIED_PRECONDITIONS: bool = false;
-
-/// Whether to filter unreachable facts (default: true)
-pub const FILTER_UNREACHABLE_FACTS: bool = true;
-
 /// How the translator spreads derived variables over axiom layers.
 ///
 /// Both strategies produce a valid layering; they trade the number of layers

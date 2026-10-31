@@ -200,11 +200,6 @@ impl Task {
         });
 
         let mut function_administrator = DerivedFunctionAdministrator::new();
-        for function in &functions {
-            function_administrator
-                .function_symbols
-                .insert(function.name.clone());
-        }
         let metric = (
             metric_expression.0,
             function_administrator.get_derived_function(&metric_expression.1),
@@ -296,7 +291,6 @@ impl Task {
 /// Manages derived numeric functions (numeric axioms created during instantiation).
 #[derive(Debug, Clone)]
 pub struct DerivedFunctionAdministrator {
-    pub function_symbols: HashSet<String>,
     derived_functions: HashMap<DerivedFunctionKey, NumericAxiom>,
     derived_functions_by_name: HashMap<String, DerivedFunctionKey>,
 }
@@ -317,7 +311,6 @@ impl Default for DerivedFunctionAdministrator {
 impl DerivedFunctionAdministrator {
     pub fn new() -> Self {
         DerivedFunctionAdministrator {
-            function_symbols: HashSet::new(),
             derived_functions: HashMap::new(),
             derived_functions_by_name: HashMap::new(),
         }
@@ -460,7 +453,6 @@ impl DerivedFunctionAdministrator {
 
         let parameters = self.get_default_variables(args.len());
         let axiom = NumericAxiom::new(name.clone(), parameters, op, parts);
-        self.function_symbols.insert(name.clone());
         assert!(
             self.derived_functions_by_name
                 .insert(name.clone(), key.clone())
