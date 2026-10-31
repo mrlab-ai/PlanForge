@@ -299,7 +299,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     )
     .unwrap();
 
-    assert_eq!(distances[function.initial_state(&task).unwrap()], 1.0);
+    assert_eq!(distances[function.initial_state(&task)], 1.0);
     assert_eq!(allocation.entries().len(), 1);
     assert_eq!(
         allocation.entries()[0].source_set.source.propositions()[0],
@@ -396,7 +396,7 @@ impl DomainAbstractionFunction {
             .goal_distances(Deadline::NONE)?;
         Ok(TestDistances {
             distances,
-            initial_state: self.initial_state(task)?,
+            initial_state: self.initial_state(task),
         })
     }
 }
@@ -436,12 +436,10 @@ fn first_plan_step(
     let function = identity_cutpoint_function(task).unwrap();
     let mut refinement = DomainRefinement::new(task, function, limits, &config);
     let view = refinement.view(Deadline::NONE).unwrap();
-    let initial = view
-        .abstract_state(
-            task.get_initial_propositional_state_values(),
-            task.get_initial_numeric_state_values(),
-        )
-        .unwrap();
+    let initial = view.abstract_state(
+        task.get_initial_propositional_state_values(),
+        task.get_initial_numeric_state_values(),
+    );
     view.step_operators(&view.optimal_transition(initial).unwrap())
         .to_vec()
 }

@@ -79,7 +79,7 @@ pub(super) fn abstract_state_ids_into(
     eval_state.fill_values(values)?;
     for (component_id, component) in components.iter().enumerate() {
         if lookup_mask.is_none_or(|mask| mask[component_id]) {
-            ids[component_id] = component.abstract_state_id(values)?;
+            ids[component_id] = component.abstract_state_id(values);
         }
     }
     Ok(())

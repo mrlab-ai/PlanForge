@@ -114,7 +114,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
                             &self.components[component_id],
                             component_id,
                             &self.state_values,
-                        )?;
+                        );
                         self.component_values[component_id] = Some(value);
                         value
                     }

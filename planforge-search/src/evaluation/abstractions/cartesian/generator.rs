@@ -89,7 +89,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             .hierarchy
             .map_state_with(&initial_state.propositional, |var_id| {
                 coordinate_value(views, &initial_state.numeric, var_id)
-            })?;
+            });
         let abstraction = finalize_abstraction(
             working,
             &semantics,

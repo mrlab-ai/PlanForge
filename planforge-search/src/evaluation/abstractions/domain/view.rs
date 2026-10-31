@@ -45,7 +45,7 @@ impl AbstractionView for DomainView<'_> {
         &self,
         propositions: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize> {
+    ) -> usize {
         self.function.abstract_state(propositions, numeric)
     }
 
@@ -63,8 +63,8 @@ impl AbstractionView for DomainView<'_> {
         self.built.distances[state]
     }
 
-    fn is_goal(&self, state: usize) -> Result<bool> {
-        Ok(self.built.transitions.is_goal(state))
+    fn is_goal(&self, state: usize) -> bool {
+        self.built.transitions.is_goal(state)
     }
 
     fn optimal_transition(&self, state: usize) -> Result<TransitionKey> {

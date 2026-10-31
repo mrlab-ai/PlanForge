@@ -147,7 +147,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
         &self,
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize>;
+    ) -> usize;
 
     /// Drops the transitions, which only cost partitioning reads. Lookups
     /// stay intact; saturation fails afterwards.
@@ -220,12 +220,8 @@ pub trait CegarAbstraction: std::fmt::Debug {
 
     /// The goal distance of the abstract state of the concrete state with
     /// these values.
-    fn goal_distance(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<f64> {
-        Ok(self.core().distances[self.abstract_state(propositional, numeric)?])
+    fn goal_distance(&self, propositional: &[ExplicitValueIndex], numeric: &[NumericValue]) -> f64 {
+        self.core().distances[self.abstract_state(propositional, numeric)]
     }
 }
 
@@ -282,9 +278,9 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
 impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
     fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         eval_state.fill_values(&mut self.values)?;
-        self.abstraction
-            .goal_distance(&self.values.propositional, &self.values.numeric)
-            .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))
+        Ok(self
+            .abstraction
+            .goal_distance(&self.values.propositional, &self.values.numeric))
     }
 
     fn proves_initial_state_optimal(&self) -> bool {

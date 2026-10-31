@@ -143,7 +143,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
         };
         let core = AbstractionCore {
             distances,
-            initial_state: function.initial_state(task)?,
+            initial_state: function.initial_state(task),
             relevant_operator_ids: transitions.relevant_operator_ids(),
             num_abstract_operators: transitions.operators.len(),
             metadata: AbstractionMetadata::standalone(

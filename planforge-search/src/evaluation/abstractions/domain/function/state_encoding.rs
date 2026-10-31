@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericValue};
 use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
@@ -331,7 +331,7 @@ impl DomainAbstractionFunction {
     }
 
     /// The abstract state of the task's initial state.
-    pub(crate) fn initial_state(&self, task: &dyn AbstractNumericTask) -> Result<usize> {
+    pub(crate) fn initial_state(&self, task: &dyn AbstractNumericTask) -> usize {
         self.abstract_state(
             task.get_initial_propositional_state_values(),
             task.get_initial_numeric_state_values(),
@@ -344,20 +344,18 @@ impl DomainAbstractionFunction {
         &self,
         propositions: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize> {
+    ) -> usize {
         let domain_sizes = self.layout.domain_sizes();
         let numeric_domain_sizes = self.layout.numeric_domain_sizes();
-        ensure!(
-            propositions.len() == domain_sizes.len(),
-            "concrete state has {} propositional values, the abstraction {}",
+        assert_eq!(
             propositions.len(),
-            domain_sizes.len()
+            domain_sizes.len(),
+            "a concrete state has a value for every propositional variable"
         );
-        ensure!(
-            numeric.len() == numeric_domain_sizes.len(),
-            "concrete state has {} numeric values, the abstraction {}",
+        assert_eq!(
             numeric.len(),
-            numeric_domain_sizes.len()
+            numeric_domain_sizes.len(),
+            "a concrete state has a value for every numeric variable"
         );
         let multipliers = self.layout.multipliers();
 
@@ -389,6 +387,6 @@ impl DomainAbstractionFunction {
             state += multipliers[abs_var.index()] * part;
         }
 
-        Ok(state)
+        state
     }
 }

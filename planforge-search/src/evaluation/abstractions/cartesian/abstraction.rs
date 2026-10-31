@@ -79,7 +79,7 @@ impl CegarAbstraction for CartesianAbstraction {
         &self,
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize> {
+    ) -> usize {
         self.hierarchy.map_state_with(propositional, |var_id| {
             coordinate_value(&self.views, numeric, var_id)
         })

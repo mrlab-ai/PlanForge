@@ -55,7 +55,7 @@ impl Icaps26CartesianGenerator {
                     );
                     let initial_state = working
                         .hierarchy
-                        .map_state(&initial_prop_values, &refinement_root.numeric)?;
+                        .map_state(&initial_prop_values, &refinement_root.numeric);
                     let Some(plan) = abstract_search.find_plan(
                         &working,
                         &semantics,
@@ -148,7 +148,7 @@ impl Icaps26CartesianGenerator {
         );
         let initial_abstract_state = working
             .hierarchy
-            .map_state(&initial_prop_values, &initial_numeric)?;
+            .map_state(&initial_prop_values, &initial_numeric);
         let (transitions, distance_table, relevant_operator_ids) = if self
             .config
             .retain_transition_system
@@ -186,7 +186,7 @@ impl Icaps26CartesianGenerator {
             );
             let root_state_id = working
                 .hierarchy
-                .map_state(&root_prop_values, &refinement_root.numeric)?;
+                .map_state(&root_prop_values, &refinement_root.numeric);
             let h = distance_table.distances[root_state_id];
             ensure!(
                 (plan.cost() - h).abs() <= 1e-7,

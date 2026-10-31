@@ -56,7 +56,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
     let mut prop_values = Vec::new();
     let mut successor_prop_values = Vec::new();
     semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
-    let initial_abstract_state = working.hierarchy().map_state(&prop_values, &numeric)?;
+    let initial_abstract_state = working.hierarchy().map_state(&prop_values, &numeric);
     if !shortest_paths.distance(initial_abstract_state).is_finite() {
         return Ok(PlanCheck::AbstractDeadEnd(initial_abstract_state));
     }
@@ -67,7 +67,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
 
     loop {
         semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
-        let abstract_state = working.hierarchy().map_state(&prop_values, &numeric)?;
+        let abstract_state = working.hierarchy().map_state(&prop_values, &numeric);
         let abstract_distance = shortest_paths.distance(abstract_state);
         ensure!(
             approximately_equal(concrete_cost + abstract_distance, abstract_plan_cost),
@@ -208,7 +208,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
         semantics.concrete_prop_values(state_packer, &propositions, &mut successor_prop_values);
         let concrete_target = working
             .hierarchy
-            .map_state(&successor_prop_values, &numeric)?;
+            .map_state(&successor_prop_values, &numeric);
         if concrete_target != transition.target {
             return Ok(PlanCheck::Refine(split_deviation(
                 working,

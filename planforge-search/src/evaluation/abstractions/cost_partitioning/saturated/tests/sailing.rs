@@ -175,8 +175,7 @@ fn initial_cartesian_scp_value(
             Some(
                 abstraction
                     .hierarchy
-                    .map_state(initial_prop, initial_numeric)
-                    .expect("failed to map sailing initial state"),
+                    .map_state(initial_prop, initial_numeric),
             )
         })
         .collect::<Vec<_>>();
@@ -410,7 +409,7 @@ fn build_handcrafted_abstraction(
     let (distances, _) = transitions.goal_distances(Deadline::NONE)?;
     let core = AbstractionCore {
         distances,
-        initial_state: function.initial_state(transformed_task)?,
+        initial_state: function.initial_state(transformed_task),
         relevant_operator_ids: transitions.relevant_operator_ids(),
         num_abstract_operators: transitions.operators.len(),
         metadata: AbstractionMetadata {
@@ -447,11 +446,7 @@ fn initial_abstract_state_ids(
     heuristic
         .components
         .iter()
-        .map(|component| {
-            component
-                .abstract_state_id(&values)
-                .expect("failed to map the initial state")
-        })
+        .map(|component| component.abstract_state_id(&values))
         .collect()
 }
 

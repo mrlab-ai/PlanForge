@@ -116,7 +116,7 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
         let mut h_values = std::mem::take(&mut self.h_values);
         h_values.clear();
         for (component_id, component) in self.components.iter().enumerate() {
-            let value = standalone_estimate(component, component_id, &self.values)?;
+            let value = standalone_estimate(component, component_id, &self.values);
             if value == f64::INFINITY {
                 self.h_values = h_values;
                 return Ok(f64::INFINITY);

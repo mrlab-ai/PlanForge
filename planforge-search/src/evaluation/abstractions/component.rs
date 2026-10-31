@@ -11,7 +11,6 @@ use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
-use crate::evaluation::evaluator::EvaluationError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbstractionKind {
@@ -92,28 +91,24 @@ impl<'task> AbstractionComponent<'task> {
 
     /// The abstract state of the concrete state `values`; `None` for a state
     /// outside the states a pattern database enumerated.
-    pub fn abstract_state_id(
-        &self,
-        values: &ExplicitState,
-    ) -> Result<Option<usize>, EvaluationError> {
+    pub fn abstract_state_id(&self, values: &ExplicitState) -> Option<usize> {
         match self {
-            Self::Cegar(abstraction) => abstraction
-                .abstract_state(&values.propositional, &values.numeric)
-                .map(Some)
-                .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}"))),
+            Self::Cegar(abstraction) => {
+                Some(abstraction.abstract_state(&values.propositional, &values.numeric))
+            }
             Self::PatternDatabase(pdb) => {
-                Ok(pdb.abstract_state_id(&values.propositional, &values.numeric))
+                pdb.abstract_state_id(&values.propositional, &values.numeric)
             }
         }
     }
 
     /// The goal distance this component alone estimates for `values`.
-    pub fn standalone_value(&self, values: &ExplicitState) -> Result<f64, EvaluationError> {
+    pub fn standalone_value(&self, values: &ExplicitState) -> f64 {
         match self {
-            Self::Cegar(abstraction) => abstraction
-                .goal_distance(&values.propositional, &values.numeric)
-                .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}"))),
-            Self::PatternDatabase(pdb) => Ok(pdb.value(&values.propositional, &values.numeric)),
+            Self::Cegar(abstraction) => {
+                abstraction.goal_distance(&values.propositional, &values.numeric)
+            }
+            Self::PatternDatabase(pdb) => pdb.value(&values.propositional, &values.numeric),
         }
     }
 

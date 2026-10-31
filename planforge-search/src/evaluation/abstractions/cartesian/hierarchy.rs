@@ -131,7 +131,7 @@ impl CartesianRefinementHierarchy {
         &self,
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize> {
+    ) -> usize {
         self.map_state_with(propositional, |var_id| numeric[var_id.index()])
     }
 
@@ -141,24 +141,18 @@ impl CartesianRefinementHierarchy {
         &self,
         propositional: &[ExplicitValueIndex],
         coordinate_value: impl Fn(VariableIndex) -> NumericValue,
-    ) -> Result<usize> {
+    ) -> usize {
         let mut node_id = 0;
         loop {
-            match self
-                .nodes
-                .get(node_id)
-                .with_context(|| format!("missing Cartesian hierarchy node {node_id}"))?
-            {
-                RefinementNode::Leaf { state_id } => return Ok(*state_id),
+            match &self.nodes[node_id] {
+                RefinementNode::Leaf { state_id } => return *state_id,
                 RefinementNode::Propositional {
                     var_id,
                     wanted,
                     wanted_child,
                     other_child,
                 } => {
-                    let value = *propositional.get(var_id.index()).with_context(|| {
-                        format!("propositional state has no value for var {var_id}")
-                    })? as ExplicitValueIndex;
+                    let value = propositional[var_id.index()];
                     node_id = if wanted.binary_search(&value).is_ok() {
                         *wanted_child
                     } else {
@@ -173,7 +167,7 @@ impl CartesianRefinementHierarchy {
                     upper_child,
                 } => {
                     let value = coordinate_value(*var_id);
-                    ensure!(
+                    assert!(
                         value.is_finite(),
                         "numeric state var {var_id} is not finite: {value}"
                     );

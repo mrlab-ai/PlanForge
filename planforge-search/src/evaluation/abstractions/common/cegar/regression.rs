@@ -541,7 +541,7 @@ pub(crate) fn regression_plan_check(
     scope: FlawScope,
 ) -> Result<PlanCheck> {
     let initial_state =
-        view.abstract_state(&refinement_root.propositional, &refinement_root.numeric)?;
+        view.abstract_state(&refinement_root.propositional, &refinement_root.numeric);
     if !view.goal_distance(initial_state).is_finite() {
         return Ok(PlanCheck::AbstractDeadEnd);
     }
@@ -664,7 +664,7 @@ fn flaw_split(
 fn abstract_plan(view: &impl AbstractionView, initial_state: usize) -> Result<Vec<TransitionKey>> {
     let mut plan = Vec::new();
     let mut state = initial_state;
-    while !view.is_goal(state)? {
+    while !view.is_goal(state) {
         ensure!(
             plan.len() <= view.num_states(),
             "optimal abstract transitions contain a cycle"

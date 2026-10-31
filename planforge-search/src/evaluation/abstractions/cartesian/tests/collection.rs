@@ -432,7 +432,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             ("checkpoint-rooted", &abstractions[1]),
             ("initial-state specialist", &abstractions[2]),
         ] {
-            let state_id = abstraction.abstract_state(&propositions, &numeric).unwrap();
+            let state_id = abstraction.abstract_state(&propositions, &numeric);
             let h = abstraction.distances()[state_id];
             assert!(
                 h <= true_distance,
@@ -835,7 +835,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
                 NumericValue::new(4.0),
                 NumericValue::new(2.0),
             ];
-            let state_id = abstraction.abstract_state(&propositions, &numeric).unwrap();
+            let state_id = abstraction.abstract_state(&propositions, &numeric);
             let h = abstraction.distances()[state_id];
             let goal = abstraction
                 .metadata()

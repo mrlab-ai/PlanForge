@@ -82,7 +82,7 @@ impl CegarAbstraction for DomainAbstraction {
         &self,
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize> {
+    ) -> usize {
         self.function.abstract_state(propositional, numeric)
     }
 

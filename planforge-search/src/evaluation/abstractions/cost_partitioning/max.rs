@@ -45,7 +45,7 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
                 component,
                 component_id,
                 &self.state_values,
-            )?);
+            ));
         }
         Ok(best)
     }

@@ -501,12 +501,10 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
             } else {
                 ConditionValue::False
             };
-            let h = component
-                .standalone_value(&ExplicitState {
-                    propositional: vec![ExplicitValueIndex::from_usize(goal_value.as_usize())],
-                    numeric: [x, 1.0, 20.0].map(NumericValue::new).to_vec(),
-                })
-                .unwrap();
+            let h = component.standalone_value(&ExplicitState {
+                propositional: vec![ExplicitValueIndex::from_usize(goal_value.as_usize())],
+                numeric: [x, 1.0, 20.0].map(NumericValue::new).to_vec(),
+            });
             assert_eq!(
                 h,
                 20.0 - x,
