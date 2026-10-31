@@ -149,20 +149,6 @@ fn test_cost_information_storage() {
 }
 
 #[test]
-#[should_panic(expected = "cost numeric variable 1 has no cost slot")]
-fn missing_cost_slot_is_an_invariant_violation() {
-    let task: TaskRef = Arc::new(get_root_task());
-    let mut state_registry = StateRegistry::for_task(task);
-    let initial_state = state_registry.get_initial_state();
-    state_registry.numeric_indices[1] = None;
-
-    let _ = state_registry
-        .view(&initial_state)
-        .numeric_value_unevaluated(VariableIndex::new(1))
-        .unwrap();
-}
-
-#[test]
 fn duplicate_state_keeps_better_metric_cost_information() {
     let variables = vec![ExplicitVariable::new(
         2,
@@ -323,10 +309,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
 
     assert_eq!(first.get_id(), second.get_id());
     assert_eq!(
-        state_registry
-            .view(&first)
-            .numeric_value_unevaluated(VariableIndex::new(0))
-            .unwrap(),
+        state_registry.get_numeric_vars(&first).unwrap()[0],
         NumericValue::new(0.3)
     );
 }

@@ -12,7 +12,7 @@ use planforge_sas::numeric_conditions::{NumericConditionError, NumericConditions
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
     ExplicitVariable, Metric, NumericTaskExt, NumericType, NumericValue, NumericVariable, Operator,
-    OperatorCost, OperatorIndex, TaskRef, VariableIndex,
+    OperatorIndex, TaskRef, VariableIndex,
 };
 use planforge_sas::utils::state_packer::StatePacker;
 
@@ -176,9 +176,7 @@ pub struct ProjectedTask<'task> {
     operator_costs: Vec<f64>,
     base_operator_ids: Vec<OperatorIndex>,
     propositional_packer: Arc<StatePacker>,
-    operator_effect_facts: Vec<Vec<ExplicitFact>>,
     goals: Vec<ExplicitFact>,
-    axiom_effect_facts: Vec<ExplicitFact>,
     state: Vec<ExplicitValueIndex>,
     numeric_state: Vec<NumericValue>,
     projected_var_to_original: Vec<VariableIndex>,
@@ -418,25 +416,6 @@ impl<'task> ProjectedTask<'task> {
             )
             .collect();
 
-        let operator_effect_facts: Vec<Vec<ExplicitFact>> = operators
-            .iter()
-            .map(|operator| {
-                operator
-                    .effects()
-                    .iter()
-                    .map(|effect| {
-                        ExplicitFact::propositional(effect.var_id().index(), effect.value().index())
-                    })
-                    .collect()
-            })
-            .collect();
-        let axiom_effect_facts: Vec<ExplicitFact> = axioms
-            .iter()
-            .map(|axiom| {
-                ExplicitFact::propositional(axiom.var_id().index(), axiom.effect_value().index())
-            })
-            .collect();
-
         let metric_var_id = if base.metric().var_id().is_none() {
             None
         } else {
@@ -471,9 +450,7 @@ impl<'task> ProjectedTask<'task> {
             operator_costs,
             base_operator_ids,
             propositional_packer,
-            operator_effect_facts,
             goals,
-            axiom_effect_facts,
             state: projected_prop_values,
             numeric_state: projected_numeric_values,
             projected_var_to_original,
@@ -700,110 +677,6 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         &self.operators
     }
 
-    fn get_operator_cost(&self, index: OperatorIndex, is_axiom: bool) -> OperatorCost {
-        if is_axiom {
-            OperatorCost::new(0)
-        } else {
-            self.operators[index.index()].cost()
-        }
-    }
-
-    fn get_operator_name(&self, index: OperatorIndex, is_axiom: bool) -> &str {
-        if is_axiom {
-            "<axiom>"
-        } else {
-            self.operators[index.index()].name()
-        }
-    }
-
-    fn get_num_operators(&self) -> usize {
-        self.operators.len()
-    }
-
-    fn get_num_operator_preconditions(&self, index: OperatorIndex, is_axiom: bool) -> usize {
-        if is_axiom {
-            self.axioms[index.index()].conditions().len()
-        } else {
-            self.operators[index.index()].preconditions().len()
-        }
-    }
-
-    fn get_operator_precondition(
-        &self,
-        index: OperatorIndex,
-        precond_index: usize,
-        is_axiom: bool,
-    ) -> &ExplicitFact {
-        if is_axiom {
-            &self.axioms[index.index()].conditions()[precond_index]
-        } else {
-            &self.operators[index.index()].preconditions()[precond_index]
-        }
-    }
-
-    fn get_num_operator_effects(&self, index: OperatorIndex, is_axiom: bool) -> usize {
-        if is_axiom {
-            let _ = &self.axioms[index.index()];
-            1
-        } else {
-            self.operators[index.index()].effects().len()
-        }
-    }
-
-    fn get_num_operator_effect_conditions(
-        &self,
-        index: OperatorIndex,
-        eff_index: usize,
-        is_axiom: bool,
-    ) -> usize {
-        if is_axiom {
-            0
-        } else {
-            self.operators[index.index()].effects()[eff_index]
-                .conditions()
-                .len()
-        }
-    }
-
-    fn get_operator_effect_condition(
-        &self,
-        index: OperatorIndex,
-        eff_index: usize,
-        cond_index: usize,
-        is_axiom: bool,
-    ) -> &ExplicitFact {
-        assert!(
-            !is_axiom,
-            "axioms do not expose conditional effects separately"
-        );
-        &self.operators[index.index()].effects()[eff_index].conditions()[cond_index]
-    }
-
-    fn get_operator_effect(
-        &self,
-        index: OperatorIndex,
-        eff_index: usize,
-        is_axiom: bool,
-    ) -> &ExplicitFact {
-        if is_axiom {
-            assert_eq!(eff_index, 0, "axioms expose exactly one effect");
-            &self.axiom_effect_facts[index.index()]
-        } else {
-            &self.operator_effect_facts[index.index()][eff_index]
-        }
-    }
-
-    fn convert_operator_index(
-        &self,
-        _index: OperatorIndex,
-        _ancestor_task: &dyn AbstractNumericTask,
-    ) {
-    }
-
-    fn get_num_axioms(&self) -> usize {
-        self.axioms.len()
-    }
-
     fn get_num_goals(&self) -> usize {
         self.goals.len()
     }
@@ -818,24 +691,6 @@ impl AbstractNumericTask for ProjectedTask<'_> {
 
     fn get_initial_numeric_state_values(&self) -> &[NumericValue] {
         &self.numeric_state
-    }
-
-    fn convert_ancestor_state_values(
-        &self,
-        ancestor_state_values: &[usize],
-        _ancestor_task: &dyn AbstractNumericTask,
-    ) -> Vec<usize> {
-        if ancestor_state_values.len() == self.variables.len() {
-            return ancestor_state_values.to_vec();
-        }
-        self.projected_var_to_original
-            .iter()
-            .map(|&original| ancestor_state_values[original.index()])
-            .collect()
-    }
-
-    fn get_num_cmp_axioms(&self) -> usize {
-        self.comparison_axioms.len()
     }
 
     fn project_state_values(

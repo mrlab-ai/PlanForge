@@ -3,7 +3,6 @@ pub const ABS_EPSILON: f64 = 1e-12;
 pub const GRID_SCALE: f64 = 1e12;
 /// Above this magnitude, adjacent grid units cannot all be represented in f64.
 pub const GRID_BOUND: f64 = (1u64 << 53) as f64 / GRID_SCALE;
-pub const REL_EPSILON: f64 = 1e-12;
 pub const DIJKSTRA_EPSILON: f64 = 1e-12;
 pub const SEARCH_EPSILON: f64 = 1e-9;
 /// How closely two computations of the same cost or value agree, as in a
@@ -13,9 +12,7 @@ pub const AGREEMENT_EPSILON: f64 = 1e-7;
 pub const LP_EPSILON: f64 = 1e-6;
 
 const _: () = assert!(ABS_EPSILON > f64::EPSILON);
-const _: () = assert!(REL_EPSILON > f64::EPSILON);
 const _: () = assert!(ABS_EPSILON < 1.0);
-const _: () = assert!(REL_EPSILON < 1.0);
 
 /// Round raw arithmetic to the numeric state grid. Only NumericValue's
 /// constructor owns this operation.

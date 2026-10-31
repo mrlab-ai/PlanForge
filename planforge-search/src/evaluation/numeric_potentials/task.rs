@@ -716,7 +716,7 @@ struct AibrClosure {
 
 fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, String> {
     let (initial_props, initial_numeric) = task
-        .evaluated_initial_abstract_state_values()
+        .evaluate_initial_state_values()
         .map_err(|error| format!("numeric bounds could not evaluate initial state: {error}"))?;
     let mut reachable_facts: Vec<Vec<bool>> = task
         .variables()

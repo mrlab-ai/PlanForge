@@ -83,12 +83,19 @@ fn test_compute_effective_operator_costs_plus_constants() {
     let mut state_registry = StateRegistry::for_task(task.clone());
     let initial_state = state_registry.get_initial_state();
 
-    let d0 = state_registry
-        .metric_delta_applying_operator(&initial_state, &task.get_operators()[0])
-        .unwrap();
-    let d1 = state_registry
-        .metric_delta_applying_operator(&initial_state, &task.get_operators()[1])
-        .unwrap();
+    let mut step_cost = |operator| {
+        state_registry
+            .get_successor_state_with_buffers_and_cost(
+                &initial_state,
+                operator,
+                &mut Vec::new(),
+                &mut Vec::new(),
+            )
+            .unwrap()
+            .1
+    };
+    let d0 = step_cost(&task.get_operators()[0]);
+    let d1 = step_cost(&task.get_operators()[1]);
     assert!((d0 - 0.5).abs() < 1e-12);
     assert!((d1 - 0.002).abs() < 1e-12);
 

@@ -42,7 +42,6 @@ impl Metric {
     }
 }
 
-#[allow(unused)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExplicitVariable {
     pub(super) domain_size: usize,

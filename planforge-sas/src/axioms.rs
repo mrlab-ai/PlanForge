@@ -316,12 +316,10 @@ struct LiteralRef {
 }
 
 #[derive(Debug, Clone)]
-#[allow(unused)]
 struct AxiomEvaluatorData {
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
     comparison_axiom_layer: Option<usize>,
-    first_propositional_axiom_layer: Option<usize>,
     last_propositional_axiom_layer: Option<usize>,
     last_arithmetic_axiom_layer: Option<usize>,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
@@ -363,9 +361,9 @@ fn build_compiled_axiom_evaluator_data(
         }
     }
 
-    if first_propositional_axiom_layer.is_some() && numeric_task.get_num_cmp_axioms() > 0 {
+    // The comparison axioms occupy the lowest propositional layer.
+    if !numeric_task.comparison_axioms().is_empty() {
         comparison_axiom_layer = first_propositional_axiom_layer;
-        first_propositional_axiom_layer = first_propositional_axiom_layer.map(|x| x + 1);
     }
 
     for var in numeric_task.variables().iter() {
@@ -422,7 +420,6 @@ fn build_compiled_axiom_evaluator_data(
         axiom_literals,
         rules,
         comparison_axiom_layer,
-        first_propositional_axiom_layer,
         last_propositional_axiom_layer,
         last_arithmetic_axiom_layer,
         nbf_info_by_layer,
@@ -433,18 +430,18 @@ fn build_compiled_axiom_evaluator_data(
     }
 }
 
-#[allow(unused)]
 pub struct AxiomEvaluator<'a> {
     pub numeric_task: TaskRef<'a>,
     state_packer: Arc<StatePacker>,
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
     comparison_axiom_layer: Option<usize>,
-    first_propositional_axiom_layer: Option<usize>,
     last_propositional_axiom_layer: Option<usize>,
     last_arithmetic_axiom_layer: Option<usize>,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
     axiom_default_values: Vec<ExplicitValueIndex>,
+    has_numeric_axioms: bool,
+    has_propositional_axioms: bool,
 }
 
 /// Scratch buffers for the propositional axiom closure.
@@ -477,7 +474,8 @@ impl<'a> AxiomEvaluator<'a> {
             axiom_literals: compiled.axiom_literals,
             rules: compiled.rules,
             comparison_axiom_layer: compiled.comparison_axiom_layer,
-            first_propositional_axiom_layer: compiled.first_propositional_axiom_layer,
+            has_numeric_axioms: compiled.has_numeric_axioms,
+            has_propositional_axioms: compiled.has_propositional_axioms,
             last_propositional_axiom_layer: compiled.last_propositional_axiom_layer,
             last_arithmetic_axiom_layer: compiled.last_arithmetic_axiom_layer,
             nbf_info_by_layer: compiled.nbf_info_by_layer,
@@ -494,11 +492,6 @@ impl<'a> AxiomEvaluator<'a> {
         }
 
         Ok(())
-    }
-    pub fn affected_vars_by_arithmetic_axioms(&self, affected: &mut Vec<VariableIndex>) {
-        for axiom in self.numeric_task.assignment_axioms() {
-            affected.push(axiom.get_affected_var_id());
-        }
     }
 
     pub fn evaluate_comparison_axioms(
@@ -518,12 +511,6 @@ impl<'a> AxiomEvaluator<'a> {
         }
 
         Ok(true)
-    }
-
-    pub fn affected_vars_by_comparison_axioms(&self, affected: &mut Vec<VariableIndex>) {
-        for axiom in self.numeric_task.comparison_axioms() {
-            affected.push(axiom.get_affected_var_id());
-        }
     }
 
     /// Compute the propositional axiom closure over `buffer`.
@@ -717,28 +704,15 @@ impl<'a> AxiomEvaluator<'a> {
         Ok(())
     }
 
-    pub fn affected_propositional_vars(&self, affected_prop_vars: &mut Vec<VariableIndex>) {
-        if self.has_axioms() {
-            self.affected_vars_by_comparison_axioms(affected_prop_vars);
-        }
-    }
-
-    pub fn affected_numeric_vars(&self, affected_numeric_vars: &mut Vec<VariableIndex>) {
-        if self.has_numeric_axioms() {
-            self.affected_vars_by_arithmetic_axioms(affected_numeric_vars);
-        }
-    }
-
     pub fn has_axioms(&self) -> bool {
         self.has_numeric_axioms() || self.has_propositional_axioms()
     }
 
     pub fn has_numeric_axioms(&self) -> bool {
-        !self.numeric_task.assignment_axioms().is_empty()
-            || !self.numeric_task.comparison_axioms().is_empty()
+        self.has_numeric_axioms
     }
 
     pub fn has_propositional_axioms(&self) -> bool {
-        !self.numeric_task.axioms().is_empty()
+        self.has_propositional_axioms
     }
 }

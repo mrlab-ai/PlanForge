@@ -91,9 +91,9 @@ fn projection_builds_a_compact_restricted_transition_system() {
 
     assert_eq!(projected.get_num_variables(), 2);
     assert_eq!(projected.numeric_variables().len(), 2);
-    assert_eq!(projected.get_num_operators(), 1);
-    assert_eq!(projected.get_num_cmp_axioms(), 1);
-    assert_eq!(projected.get_num_axioms(), 0);
+    assert_eq!(projected.get_operators().len(), 1);
+    assert_eq!(projected.comparison_axioms().len(), 1);
+    assert_eq!(projected.axioms().len(), 0);
     assert_eq!(projected.get_num_goals(), 1);
     assert_eq!(
         projected.get_initial_numeric_state_values(),
@@ -116,13 +116,13 @@ fn borrowed_task_extension_methods_preserve_projected_overrides() {
     let forwarded: &dyn AbstractNumericTask = &task_object;
 
     let expected = projected
-        .abstract_state_values(
+        .project_state_values(
             task.get_initial_propositional_state_values(),
             task.get_initial_numeric_state_values(),
         )
         .unwrap();
     let actual = forwarded
-        .abstract_state_values(
+        .project_state_values(
             task.get_initial_propositional_state_values(),
             task.get_initial_numeric_state_values(),
         )
@@ -352,7 +352,7 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
     .unwrap();
 
     assert_eq!(projected.numeric_variables().len(), 3);
-    assert_eq!(projected.get_num_operators(), 2);
+    assert_eq!(projected.get_operators().len(), 2);
     assert_eq!(
         projected.get_operators()[0].assignment_effects()[0].var_id(),
         VariableIndex::from_usize(2)
@@ -401,7 +401,7 @@ fn projection_closes_over_selected_comparison_operands() {
     .unwrap();
 
     assert_eq!(projected.numeric_variables().len(), 2);
-    assert_eq!(projected.get_num_cmp_axioms(), 1);
+    assert_eq!(projected.comparison_axioms().len(), 1);
     assert_eq!(projected.get_num_goals(), 1);
 }
 
@@ -580,7 +580,7 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
     // the pattern omits, so the projected task keeps no goal at all.
     assert_eq!(projected.get_num_variables(), 1);
     assert_eq!(projected.get_num_goals(), 0);
-    assert_eq!(projected.get_num_axioms(), 1);
+    assert_eq!(projected.axioms().len(), 1);
     assert!(projected.axioms()[0].conditions().is_empty());
 }
 

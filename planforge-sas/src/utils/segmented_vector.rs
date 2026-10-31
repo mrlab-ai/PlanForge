@@ -11,7 +11,7 @@ pub struct SegmentedArrayVector<T: Clone> {
     segment_mask: usize,
     elements_per_segment: usize,
     // Flat arrays per segment.
-    pub segments: Vec<Box<[T]>>,
+    segments: Vec<Box<[T]>>,
     // Number of elements (each of size `elements_per_array`).
     size: usize,
 }
@@ -86,16 +86,6 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
         // No actual deallocation; reuse on next push_back.
     }
 
-    pub fn resize(&mut self, new_size: usize, entry: &[T]) {
-        debug_assert_eq!(entry.len(), self.elements_per_array);
-        while self.size < new_size {
-            self.push_back(entry);
-        }
-        while self.size > new_size {
-            self.pop_back();
-        }
-    }
-
     pub fn get(&self, index: usize) -> Option<&[T]> {
         if index >= self.size {
             return None;
@@ -114,10 +104,6 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
 
     pub fn len(&self) -> usize {
         self.size
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.size == 0
     }
 }
 

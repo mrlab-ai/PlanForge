@@ -173,9 +173,6 @@ enum ConcreteStateViewBacking<'a> {
         numeric_template: &'a [NumericValue],
         regular_numeric_slots: &'a [(usize, usize)],
         cost_numeric_indices: &'a [(usize, usize)],
-        numeric_var_types: &'a [NumericType],
-        numeric_indices: &'a [Option<usize>],
-        numeric_constants: &'a [NumericValue],
         compact_numeric_values: &'a RefCell<CompactNumericValues>,
         cost_info: &'a RefCell<DenseCostInformation>,
         axiom_evaluator: &'a AxiomEvaluator<'a>,
@@ -304,53 +301,6 @@ impl<'a> ConcreteStateView<'a> {
     pub fn fill_explicit(self, state: &mut ExplicitState) -> Result<(), AssignmentAxiomError> {
         self.fill_propositional(&mut state.propositional);
         self.fill_numeric(&mut state.numeric)
-    }
-
-    pub fn numeric_value_unevaluated(
-        self,
-        var_id: VariableIndex,
-    ) -> Result<NumericValue, InvalidIndex> {
-        match self.backing {
-            ConcreteStateViewBacking::Decoded(values) => {
-                values.get(var_id.index()).copied().ok_or(InvalidIndex {
-                    index: var_id.index(),
-                    length: values.len(),
-                })
-            }
-            ConcreteStateViewBacking::Registered {
-                state_id,
-                numeric_var_types,
-                numeric_indices,
-                numeric_constants,
-                compact_numeric_values,
-                cost_info,
-                ..
-            } => {
-                let Some(&numeric_type) = numeric_var_types.get(var_id.index()) else {
-                    return Err(InvalidIndex {
-                        index: var_id.index(),
-                        length: numeric_var_types.len(),
-                    });
-                };
-                let value = match numeric_type {
-                    NumericType::Cost => {
-                        let cost_idx = numeric_indices[var_id.index()].unwrap_or_else(|| {
-                            panic!("cost numeric variable {var_id} has no cost slot")
-                        });
-                        cost_info.borrow().get(state_id)[cost_idx]
-                    }
-                    NumericType::Constant => {
-                        numeric_constants[numeric_indices[var_id.index()].unwrap()]
-                    }
-                    NumericType::Regular => compact_numeric_values.borrow().value(
-                        self.packer
-                            .get(self.prop, numeric_indices[var_id.index()].unwrap()),
-                    ),
-                    NumericType::Derived => NumericValue::new(0.0),
-                };
-                Ok(value)
-            }
-        }
     }
 }
 
@@ -595,9 +545,6 @@ impl<'a> StateRegistry<'a> {
                 numeric_template: &self.numeric_template,
                 regular_numeric_slots: &self.regular_numeric_slots,
                 cost_numeric_indices: &self.cost_numeric_indices,
-                numeric_var_types: &self.numeric_var_types,
-                numeric_indices: &self.numeric_indices,
-                numeric_constants: &self.numeric_constants,
                 compact_numeric_values: &self.compact_numeric_values,
                 cost_info: &self.cost_info,
                 axiom_evaluator: &self.axiom_evaluator,
@@ -618,7 +565,7 @@ impl<'a> StateRegistry<'a> {
     }
 
     /// Create a new state registry for the given planning task.
-    pub fn new(
+    fn new(
         task: TaskRef<'a>,
         global_state_packer: Arc<StatePacker>,
         axiom_evaluator: Arc<AxiomEvaluator<'a>>,
@@ -1096,7 +1043,7 @@ impl<'a> StateRegistry<'a> {
             .map(|(state, _is_new)| state)
     }
 
-    pub fn register_state_with_status(
+    fn register_state_with_status(
         &mut self,
         values: Vec<u64>,
         numeric_values: Vec<NumericValue>,
@@ -1516,37 +1463,6 @@ impl<'a> StateRegistry<'a> {
         Ok(result)
     }
 
-    /// Writes the propositional and numeric values of `state`, the latter
-    /// before the arithmetic axioms unless `evaluate_arithmetic_axioms`; see
-    /// [`ConcreteStateView::fill_numeric_unevaluated`].
-    pub fn fill_state_and_numeric_vars_with_options(
-        &self,
-        state: &ConcreteState,
-        propositional_output: &mut Vec<ExplicitValueIndex>,
-        numeric_output: &mut Vec<NumericValue>,
-        evaluate_arithmetic_axioms: bool,
-    ) -> Result<(), AssignmentAxiomError> {
-        let view = self.view(state);
-        view.fill_propositional(propositional_output);
-        if evaluate_arithmetic_axioms {
-            view.fill_numeric(numeric_output)
-        } else {
-            view.fill_numeric_unevaluated(numeric_output);
-            Ok(())
-        }
-    }
-
-    /// Apply numeric assignment effects to create a successor state.
-    ///
-    /// This is the improved version that works directly with buffers for efficiency.
-    fn apply_numeric_effects(
-        &self,
-        transition: NumericTransition<'_>,
-        operator: &Operator,
-    ) -> Result<(), StateInsertError> {
-        self.apply_numeric_effects_inner(transition, operator, true)
-    }
-
     /// Like `apply_numeric_effects`, but if `run_full_axioms` is false the
     /// comparison and propositional axiom passes are skipped (arithmetic
     /// axioms still run because the metric and any subsequent computations
@@ -1708,68 +1624,6 @@ impl<'a> StateRegistry<'a> {
         }
     }
 
-    /// Compute the *raw* metric delta obtained by applying `operator` in `state`.
-    /// - Evaluate the metric in the given state.
-    /// - Apply the operator's propositional + numeric effects (without checking applicability).
-    /// - Evaluate the metric in the resulting values.
-    /// - Return `metric_after - metric_before`.
-    pub fn metric_delta_applying_operator(
-        &self,
-        state: &ConcreteState,
-        operator: &Operator,
-    ) -> Result<f64, StateInsertError> {
-        if !self.task.metric().use_metric() {
-            // Numeric-FD treats non-metric tasks as unit-cost.
-            return Ok(1.0);
-        }
-
-        let old_metric = self
-            .metric_value_for_state(state)
-            .map_err(|e| StateInsertError {
-                message: format!("Failed to read metric value for state: {e:?}"),
-            })?;
-
-        let previous_buffer = state.buffer(self);
-        let mut next_buffer = previous_buffer.to_vec();
-        let mut successor_numeric_values = Vec::with_capacity(self.task.numeric_variables().len());
-        self.view(state)
-            .fill_numeric(&mut successor_numeric_values)
-            .map_err(|e| StateInsertError {
-                message: format!("Failed to read numeric variables for state: {e:?}"),
-            })?;
-
-        let mut cost_values = Vec::new();
-        self.fill_cost_information(state, &mut cost_values);
-        let expected_cost_vars = self.count_cost_variables();
-        if cost_values.len() < expected_cost_vars {
-            cost_values.resize(expected_cost_vars, NumericValue::new(0.0));
-        }
-
-        // `successor_numeric_values` still holds `state`'s values here, so this
-        // snapshot is the parent every effect must read from.
-        let parent_numeric_values = successor_numeric_values.clone();
-
-        self.apply_propositional_effects(&mut next_buffer, previous_buffer, operator);
-        self.apply_numeric_effects(
-            NumericTransition {
-                parent_values: &parent_numeric_values,
-                current_values: &mut successor_numeric_values,
-                cost_part: cost_values.as_mut_slice(),
-                next_buffer: &mut next_buffer,
-                previous_buffer,
-            },
-            operator,
-        )?;
-
-        let new_metric = self
-            .evaluate_metric(&successor_numeric_values)
-            .map_err(|e| StateInsertError {
-                message: format!("Failed to evaluate metric after applying operator: {e:?}"),
-            })?;
-
-        Ok(new_metric.value() - old_metric.value())
-    }
-
     fn metric_value_for_state(
         &self,
         state: &ConcreteState,
@@ -1842,7 +1696,8 @@ impl<'a> StateRegistry<'a> {
     ///
     /// This corresponds to the C++ `g_cost_information[state]` access pattern.
     /// Return an empty vector if no cost information is stored for the state.
-    pub fn get_cost_information(&self, state: &ConcreteState) -> Vec<NumericValue> {
+    #[cfg(test)]
+    pub(crate) fn get_cost_information(&self, state: &ConcreteState) -> Vec<NumericValue> {
         self.cost_info.borrow().get(state.get_id()).to_vec()
     }
 

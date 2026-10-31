@@ -103,27 +103,23 @@ pub(crate) struct HelperPreconditionLists {
 }
 
 #[derive(Debug, Clone)]
-#[allow(unused)]
 pub(crate) struct HelperConditionalExplicitFactEffect {
     pub(crate) preconditions: HelperPreconditionLists,
     pub(crate) add_fact: ExplicitFact,
-    pub(crate) del_fact: Option<ExplicitFact>,
 }
 
+/// A conditional additive effect. Its condition is relaxed away: the
+/// heuristics count its change wherever that helps them.
 #[derive(Debug, Clone)]
-#[allow(unused)]
 pub(crate) struct HelperConditionalNumericEffect {
-    pub(crate) source_assignment_effect_id: usize,
-    pub(crate) preconditions: HelperPreconditionLists,
     pub(crate) target_local_var_id: VariableIndex,
     pub(crate) delta: f64,
 }
 
+/// A conditional constant assignment, its condition relaxed away as for
+/// [`HelperConditionalNumericEffect`].
 #[derive(Debug, Clone)]
-#[allow(unused)]
 pub(crate) struct HelperConditionalAssignmentEffect {
-    pub(crate) source_assignment_effect_id: usize,
-    pub(crate) preconditions: HelperPreconditionLists,
     pub(crate) target_local_var_id: VariableIndex,
     pub(crate) assigned_value: f64,
 }
@@ -168,7 +164,6 @@ pub(crate) struct HelperActionModel {
     pub(crate) cost_constant: f64,
 }
 
-#[allow(unused)]
 impl NumericTaskHelper {
     /// `default_value_axioms` are the rules describing how a derived variable
     /// takes its default value. They are not part of the task -- the consumer
@@ -438,22 +433,10 @@ impl NumericTaskHelper {
             .copied()
     }
 
-    pub(crate) fn proposition_fact(&self, proposition_id: usize) -> Option<&ExplicitFact> {
-        self.proposition_facts.get(proposition_id)
-    }
-
-    pub(crate) fn proposition_var_id(&self, proposition_id: usize) -> Option<usize> {
-        self.proposition_var_ids.get(proposition_id).copied()
-    }
-
     pub(crate) fn get_proposition_name(&self, proposition_id: usize) -> Option<&str> {
         self.proposition_names
             .get(proposition_id)
             .map(String::as_str)
-    }
-
-    pub(crate) fn comparison_axiom_id_for_var(&self, variable_id: VariableIndex) -> Option<usize> {
-        self.comparison_axiom_by_var.get(&variable_id).copied()
     }
 
     pub(crate) fn fact_to_axiom_marker(&self, variable_id: VariableIndex) -> Option<Option<usize>> {
@@ -505,24 +488,6 @@ impl NumericTaskHelper {
             .map(Vec::as_slice)
     }
 
-    pub(crate) fn goal_helper_propositional_facts(
-        &self,
-        variable_id: VariableIndex,
-    ) -> Option<&[ExplicitFact]> {
-        self.goal_helper_propositional_facts
-            .get(&variable_id)
-            .map(Vec::as_slice)
-    }
-
-    pub(crate) fn goal_helper_numeric_conditions(
-        &self,
-        variable_id: VariableIndex,
-    ) -> Option<&[LinearNumericCondition]> {
-        self.goal_helper_numeric_conditions
-            .get(&variable_id)
-            .map(Vec::as_slice)
-    }
-
     pub(crate) fn goal_helper_numeric_condition_group_ids(
         &self,
         variable_id: VariableIndex,
@@ -547,17 +512,6 @@ impl NumericTaskHelper {
                     .copied()
             })
             .collect()
-    }
-
-    pub(crate) fn goal_materialized_conditions(
-        &self,
-        goal_id: usize,
-    ) -> Vec<LinearNumericCondition> {
-        self.goal_model(goal_id)
-            .map(|goal_model| {
-                self.materialized_conditions_for_group_ids(&goal_model.numeric_group_ids)
-            })
-            .unwrap_or_default()
     }
 
     pub(crate) fn condition_group_condition_ids(&self, group_id: usize) -> Option<&[usize]> {
@@ -656,33 +610,6 @@ impl NumericTaskHelper {
             .iter()
             .map(|condition| base_condition.add(condition))
             .collect()
-    }
-
-    pub(crate) fn preconditions_for_assignment_effect(
-        &self,
-        action_id: usize,
-        assignment_effect_id: usize,
-    ) -> Option<&HelperPreconditionLists> {
-        let action_model = self.action_model(action_id)?;
-        action_model
-            .linear_effects
-            .iter()
-            .find(|effect| effect.source_assignment_effect_id == assignment_effect_id)
-            .map(|effect| &effect.preconditions)
-            .or_else(|| {
-                action_model
-                    .conditional_numeric_effects
-                    .iter()
-                    .find(|effect| effect.source_assignment_effect_id == assignment_effect_id)
-                    .map(|effect| &effect.preconditions)
-            })
-            .or_else(|| {
-                action_model
-                    .conditional_assignment_effects
-                    .iter()
-                    .find(|effect| effect.source_assignment_effect_id == assignment_effect_id)
-                    .map(|effect| &effect.preconditions)
-            })
     }
 
     pub(crate) fn linear_effect_for_assignment_effect(
@@ -1006,23 +933,11 @@ impl NumericTaskHelper {
                         effect.conditions(),
                         precision,
                     );
-                let mut extended_precondition_values = base_precondition_values.clone();
-                for condition in effect.conditions() {
-                    extended_precondition_values
-                        .insert(condition.var_index(), condition.value_index());
-                }
-                let del_fact = extended_precondition_values
-                    .get(&(effect.var_id()))
-                    .copied()
-                    .map(|pre_value| {
-                        ExplicitFact::propositional(effect.var_id().index(), pre_value.index())
-                    });
                 action_model
                     .conditional_fact_effects
                     .push(HelperConditionalExplicitFactEffect {
                         preconditions: conditional_preconditions,
                         add_fact,
-                        del_fact,
                     });
             }
         }
@@ -1118,25 +1033,15 @@ impl NumericTaskHelper {
         };
 
         let final_expression = final_expression_from_effect(linear_effect);
-        let conditional_preconditions =
-            if assignment_effect.is_conditional() || !assignment_effect.conditions().is_empty() {
-                Some(self.build_conditional_precondition_lists_with_redundancy(
-                    base_preconditions,
-                    assignment_effect.conditions(),
-                    precision,
-                ))
-            } else {
-                None
-            };
+        let is_conditional =
+            assignment_effect.is_conditional() || !assignment_effect.conditions().is_empty();
 
         if is_simple_numeric_effect(linear_effect) {
             let delta = linear_effect.delta.constant;
-            if let Some(preconditions) = conditional_preconditions {
+            if is_conditional {
                 action_model
                     .conditional_numeric_effects
                     .push(HelperConditionalNumericEffect {
-                        source_assignment_effect_id: assignment_effect_id,
-                        preconditions,
                         target_local_var_id: local_var_id,
                         delta,
                     });
@@ -1154,11 +1059,9 @@ impl NumericTaskHelper {
             separate_constant_assignment,
         ) {
             let assigned_value = final_expression.constant;
-            if let Some(preconditions) = conditional_preconditions {
+            if is_conditional {
                 action_model.conditional_assignment_effects.push(
                     HelperConditionalAssignmentEffect {
-                        source_assignment_effect_id: assignment_effect_id,
-                        preconditions,
                         target_local_var_id: local_var_id,
                         assigned_value,
                     },
@@ -1179,7 +1082,15 @@ impl NumericTaskHelper {
             source_assignment_effect_id: assignment_effect_id,
             source_var_id: assignment_effect.var_id(),
             operation: assignment_effect.operation().clone(),
-            preconditions: conditional_preconditions.unwrap_or_default(),
+            preconditions: if is_conditional {
+                self.build_conditional_precondition_lists_with_redundancy(
+                    base_preconditions,
+                    assignment_effect.conditions(),
+                    precision,
+                )
+            } else {
+                HelperPreconditionLists::default()
+            },
             target_local_var_id: local_var_id,
             coefficients,
             constant: final_expression.constant,
