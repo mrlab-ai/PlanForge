@@ -425,7 +425,7 @@ fn registration_rejects_a_distinct_canonical_constant() {
     registry.view(&initial).fill_numeric(&mut numeric).unwrap();
     numeric[1] += NumericValue::new(1e-12);
     let error = registry.register_state(vec![1], numeric).unwrap_err();
-    assert!(error.message.contains("Constant numeric variable 1"));
+    assert!(error.message.contains("constant numeric variable 1"));
 }
 
 /// Maximising a metric charges its decrease: `spend` lowers `score` by 3.

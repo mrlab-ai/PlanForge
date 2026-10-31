@@ -61,45 +61,12 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
         self.size += 1;
     }
 
-    pub fn push_copy(&mut self, index: usize) {
-        debug_assert!(index < self.size);
-        let (source_segment, source_offset) = self.get_segment_index(index);
-        let source_ptr = self.segments[source_segment][source_offset..].as_ptr();
-
-        let (dest_segment, dest_offset) = self.get_segment_index(self.size);
-        if dest_segment == self.segments.len() {
-            self.add_segment();
-        }
-
-        let dest_ptr = self.segments[dest_segment][dest_offset..].as_mut_ptr();
-        for offset in 0..self.elements_per_array {
-            unsafe {
-                *dest_ptr.add(offset) = (*source_ptr.add(offset)).clone();
-            }
-        }
-        self.size += 1;
-    }
-
-    pub fn pop_back(&mut self) {
-        debug_assert!(self.size > 0);
-        self.size -= 1;
-        // No actual deallocation; reuse on next push_back.
-    }
-
     pub fn get(&self, index: usize) -> Option<&[T]> {
         if index >= self.size {
             return None;
         }
         let (segment, offset) = self.get_segment_index(index);
         Some(&self.segments[segment][offset..offset + self.elements_per_array])
-    }
-
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut [T]> {
-        if index >= self.size {
-            return None;
-        }
-        let (segment, offset) = self.get_segment_index(index);
-        Some(&mut self.segments[segment][offset..offset + self.elements_per_array])
     }
 
     pub fn len(&self) -> usize {
