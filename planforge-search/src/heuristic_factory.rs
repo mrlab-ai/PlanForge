@@ -60,12 +60,16 @@ impl TaskRequirements {
         }
     }
 
-    fn validate(self, task: &dyn AbstractNumericTask) -> Result<(), String> {
+    /// A task that is not restricted is a usage error, since `--restrict-task`
+    /// would restrict it; a goal no abstraction can express is a task the
+    /// heuristic does not support.
+    fn validate(self, task: &dyn AbstractNumericTask) -> Result<(), HeuristicBuildError> {
         if self.restricted {
-            validate_restricted_task(task)?;
+            validate_restricted_task(task).map_err(HeuristicBuildError::Failure)?;
         }
         if self.abstractable_goal {
-            crate::evaluation::validate_abstractable_goal(task)?;
+            crate::evaluation::validate_abstractable_goal(task)
+                .map_err(HeuristicBuildError::Unsupported)?;
         }
         Ok(())
     }

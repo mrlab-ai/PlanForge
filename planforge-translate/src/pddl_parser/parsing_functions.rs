@@ -65,7 +65,7 @@ pub fn parse_typed_list(
                         "an either type must name at least one type"
                     );
                     for name in &words[1..] {
-                        assert!(types.contains(*name), "undeclared type {name}");
+                        assert!(types.contains(name), "undeclared type {name}");
                     }
                     format!("either-{}", words[1..].join("-"))
                 }

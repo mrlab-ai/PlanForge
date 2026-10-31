@@ -61,18 +61,23 @@ fn maps_search_statuses_to_exit_codes() {
 fn normalizes_wrapped_timeout_signal() {
     let status = std::process::ExitStatus::from_raw(libc::SIGXCPU);
     assert_eq!(
-        normalize_wrapped_exit(status, Some(Duration::from_secs(1)), None),
+        normalize_wrapped_exit(status, false, Some(Duration::from_secs(1))),
         EXIT_TIMEOUT
     );
 }
 
 #[cfg(unix)]
 #[test]
-fn normalizes_wrapped_memory_signal() {
-    let status = std::process::ExitStatus::from_raw(libc::SIGSEGV);
+fn only_the_memory_watchdog_reports_out_of_memory() {
+    let killed = std::process::ExitStatus::from_raw(libc::SIGKILL);
     assert_eq!(
-        normalize_wrapped_exit(status, None, Some(1024)),
+        normalize_wrapped_exit(killed, true, None),
         EXIT_OUT_OF_MEMORY
+    );
+    let crashed = std::process::ExitStatus::from_raw((128 + libc::SIGSEGV) << 8);
+    assert_eq!(
+        normalize_wrapped_exit(crashed, false, None),
+        128 + libc::SIGSEGV
     );
 }
 
@@ -81,7 +86,7 @@ fn normalizes_wrapped_memory_signal() {
 fn normalizes_wrapped_timeout_exit_code() {
     let status = std::process::ExitStatus::from_raw((128 + libc::SIGXCPU) << 8);
     assert_eq!(
-        normalize_wrapped_exit(status, Some(Duration::from_secs(1)), None),
+        normalize_wrapped_exit(status, false, Some(Duration::from_secs(1))),
         EXIT_TIMEOUT
     );
 }

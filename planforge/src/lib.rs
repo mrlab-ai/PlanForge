@@ -288,13 +288,13 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
 
     let mut child = command.spawn()?;
     #[cfg(target_os = "linux")]
-    let status = match memory_limit {
+    let (status, killed_for_memory) = match memory_limit {
         Some(memory_limit) => limits::wait_with_memory_limit(&mut child, memory_limit)?,
-        None => child.wait()?,
+        None => (child.wait()?, false),
     };
     #[cfg(not(target_os = "linux"))]
-    let status = child.wait()?;
-    let exit_code = normalize_wrapped_exit(status, time_limit, memory_limit);
+    let (status, killed_for_memory) = (child.wait()?, false);
+    let exit_code = normalize_wrapped_exit(status, killed_for_memory, time_limit);
 
     std::process::exit(exit_code)
 }
@@ -496,7 +496,12 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             build_restricted_task(&task)
         };
         if let Some(restricted_task) = restricted_task.map_err(|err| {
-            std::io::Error::other(format!("failed to build restricted task: {err:#}"))
+            let kind = if planforge_search::unsupported::is_unsupported_task(&err) {
+                std::io::ErrorKind::Unsupported
+            } else {
+                std::io::ErrorKind::Other
+            };
+            std::io::Error::new(kind, format!("failed to build restricted task: {err:#}"))
         })? {
             task = restricted_task.into_task();
             info!(
