@@ -207,7 +207,7 @@ mod fact_namespace {
             CONDITION_VAR,
             0,
         )]);
-        let precondition = *task.get_operators()[0].preconditions().last().unwrap();
+        let precondition = *task.operators()[0].preconditions().last().unwrap();
         assert_eq!(precondition.var(), CONDITION_VAR);
         assert_eq!(precondition.namespace(), FactNamespace::Condition);
         assert_fact_namespaces(&task);

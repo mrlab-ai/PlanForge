@@ -37,7 +37,7 @@ impl<'a> PropositionalSkeletons<'a> {
         function: &'a DomainAbstractionFunction,
         task: &dyn AbstractNumericTask,
     ) -> Self {
-        let num_variables = task.get_num_variables();
+        let num_variables = task.variables().len();
         Self {
             function,
             precondition_on_var: vec![None; num_variables],

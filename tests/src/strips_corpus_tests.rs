@@ -59,7 +59,7 @@ fn operators_named<'t>(task: &'t NumericRootTask, names: &[&str]) -> Vec<&'t Ope
     names
         .iter()
         .map(|name| {
-            task.get_operators()
+            task.operators()
                 .iter()
                 .find(|op| op.name() == *name)
                 .unwrap_or_else(|| panic!("no operator named {name:?} in the translated task"))
@@ -238,7 +238,7 @@ fn a_pure_strips_task_translates_without_numeric_planning() {
         .map(|(id, _)| id)
         .collect();
     assert!(!cost_var_ids.is_empty(), "expected a total-cost variable");
-    for op in task.get_operators() {
+    for op in task.operators() {
         for effect in op.assignment_effects() {
             assert!(
                 cost_var_ids.contains(&effect.affected_var_id().index()),
@@ -261,12 +261,10 @@ fn a_pure_strips_task_translates_without_numeric_planning() {
             "a pure STRIPS task must not have conditioned axioms"
         );
     }
-    for op in task.get_operators() {
+    for op in task.operators() {
         for effect in op.effects() {
             assert!(
-                task.get_variable_axiom_layer(effect.var_id())
-                    .expect("effect variable is in range")
-                    .is_none(),
+                task.variable(effect.var_id()).axiom_layer().is_none(),
                 "operator {:?} writes derived variable {}",
                 op.name(),
                 effect.var_id()
@@ -277,11 +275,8 @@ fn a_pure_strips_task_translates_without_numeric_planning() {
     // The multi-valued structure the transcription depends on: each block gets
     // one variable covering holding / on / ontable, so "a block on two supports
     // at once" is not representable in a per-variable simplex.
-    let domain_sizes: Vec<usize> = (0..task.get_num_variables())
-        .map(|v| {
-            task.get_variable_domain_size(VariableIndex::from_usize(v))
-                .expect("variable is in range")
-        })
+    let domain_sizes: Vec<usize> = (0..task.variables().len())
+        .map(|v| task.variable(VariableIndex::from_usize(v)).domain_size())
         .collect();
     assert!(
         domain_sizes.iter().any(|&size| size > 2),

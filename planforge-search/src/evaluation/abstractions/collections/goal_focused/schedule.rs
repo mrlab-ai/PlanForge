@@ -161,7 +161,7 @@ impl<'task> CollectionState<'task> {
         task: &'task dyn AbstractNumericTask,
         schedule: &GoalFocusedSchedule,
     ) -> Result<Self> {
-        let goal_count = task.get_num_goals();
+        let goal_count = task.goals().len();
         assert!(goal_count > 0, "a goal-free task has a single member");
         let variants_per_goal = schedule.variants_per_goal;
         let abstraction_count = goal_count

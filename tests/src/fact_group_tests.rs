@@ -18,7 +18,7 @@ fn hydropower_time_points_form_one_variable() {
     let time_variables: Vec<usize> = (0..task.variables().len())
         .filter(|&var| {
             (0..task.variables()[var].domain_size()).any(|value| {
-                task.get_fact_name(&ExplicitFact::propositional(var, value))
+                task.fact_name(&ExplicitFact::propositional(var, value))
                     .starts_with("Atom timenow(")
             })
         })

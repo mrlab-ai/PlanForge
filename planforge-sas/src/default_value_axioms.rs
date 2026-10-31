@@ -69,30 +69,25 @@ struct DerivedVariables {
 impl DerivedVariables {
     fn of(task: &dyn AbstractNumericTask) -> Self {
         let conditions = task.numeric_conditions();
-        let num_variables = task.get_num_variables();
+        let num_variables = task.variables().len();
         let mut is_derived = Vec::with_capacity(num_variables);
         let mut default_value = Vec::with_capacity(num_variables);
         for var in 0..num_variables as u32 {
             let var_index = VariableIndex::new(var);
-            let layer = task
-                .get_variable_axiom_layer(var_index)
-                .expect("variable id below the variable count is in bounds");
+            let layer = task.variable(var_index).axiom_layer();
             let derived = layer.is_some() && !conditions.is_condition_var(var_index);
             if derived {
                 // The negation is stated as one rule per default value, and
                 // `other_value` needs the complement to be unique, so a derived
                 // variable that is not binary would have no single answer.
                 assert_eq!(
-                    task.get_variable_domain_size(var_index),
-                    Ok(2),
+                    task.variable(var_index).domain_size(),
+                    2,
                     "derived variable {var} is not binary, so it has no single default-value rule"
                 );
             }
             is_derived.push(derived);
-            default_value.push(
-                task.get_variable_default_axiom_value(var_index)
-                    .expect("variable id below the variable count is in bounds"),
-            );
+            default_value.push(task.variable(var_index).axiom_default_value());
         }
         DerivedVariables {
             is_derived,
@@ -125,7 +120,7 @@ struct Dependencies {
 
 impl Dependencies {
     fn of(task: &dyn AbstractNumericTask, derived: &DerivedVariables) -> Self {
-        let num_variables = task.get_num_variables();
+        let num_variables = task.variables().len();
         let mut dependencies = Dependencies {
             nondefault: vec![Vec::new(); num_variables],
             default: vec![Vec::new(); num_variables],
@@ -281,7 +276,7 @@ fn relevant_default_values(
     for goal in task.goals() {
         require(goal, &mut needed, &mut queue);
     }
-    for operator in task.get_operators() {
+    for operator in task.operators() {
         for precondition in operator.preconditions() {
             require(precondition, &mut needed, &mut queue);
         }
@@ -349,9 +344,7 @@ fn refuting_bodies(
             let mut clause = BTreeSet::new();
             for condition in task.axioms()[axiom_id.index()].conditions() {
                 let var = condition.var_index();
-                let domain_size = task
-                    .get_variable_domain_size(var)
-                    .expect("an axiom condition names a variable of the task");
+                let domain_size = task.variable(var).domain_size();
                 for value in 0..domain_size {
                     if value != condition.value() {
                         clause.insert(conditions.fact(var.index(), value));

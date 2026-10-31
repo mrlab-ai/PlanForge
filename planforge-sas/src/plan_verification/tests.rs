@@ -116,7 +116,7 @@ fn replay(task: NumericRootTask, names: &[&str]) -> Replay {
     let operators: Vec<&Operator> = names
         .iter()
         .map(|name| {
-            arc.get_operators()
+            arc.operators()
                 .iter()
                 .find(|op| op.name() == *name)
                 .unwrap_or_else(|| panic!("no operator named {name}"))

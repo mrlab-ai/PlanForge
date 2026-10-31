@@ -106,11 +106,11 @@ impl<'task> CartesianSemantics<'task> {
     ) -> Result<Self> {
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
         let coordinates = Coordinates::new(task);
-        for (op_id, op) in task.get_operators().iter().enumerate() {
+        for (op_id, op) in task.operators().iter().enumerate() {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
 
-        let mut propositional_axioms_by_prop_var = vec![Vec::new(); task.get_num_variables()];
+        let mut propositional_axioms_by_prop_var = vec![Vec::new(); task.variables().len()];
         for (axiom_id, axiom) in task.axioms().iter().enumerate() {
             let var_id = axiom.var_id();
             ensure!(
@@ -120,11 +120,11 @@ impl<'task> CartesianSemantics<'task> {
             propositional_axioms_by_prop_var[var_id.index()].push(axiom_id);
         }
         let operator_costs = task
-            .get_operators()
+            .operators()
             .iter()
             .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
-        let operator_count = task.get_operators().len();
+        let operator_count = task.operators().len();
         let additive_numeric_views = coordinates.views();
         let mut target_split_boundaries = task
             .numeric_variables()
@@ -132,7 +132,7 @@ impl<'task> CartesianSemantics<'task> {
             .enumerate()
             .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
             .filter_map(|(numeric_var_id, _)| {
-                task.get_initial_numeric_state_values()
+                task.initial_numeric_values()
                     .get(numeric_var_id)
                     .copied()
                     .filter(|value| value.is_finite())
@@ -140,16 +140,16 @@ impl<'task> CartesianSemantics<'task> {
             .collect::<Vec<_>>();
         target_split_boundaries.sort();
         target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
-        let mut prop_split_dependent_operators = (0..task.get_num_variables())
+        let mut prop_split_dependent_operators = (0..task.variables().len())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();
         let mut numeric_split_dependent_operators = (0..task.numeric_variables().len())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();
-        for (op_id, op) in task.get_operators().iter().enumerate() {
-            let mut prop_dependencies = vec![false; task.get_num_variables()];
+        for (op_id, op) in task.operators().iter().enumerate() {
+            let mut prop_dependencies = vec![false; task.variables().len()];
             let mut numeric_dependencies = vec![false; task.numeric_variables().len()];
-            let mut visiting = vec![false; task.get_num_variables()];
+            let mut visiting = vec![false; task.variables().len()];
             for precondition in op.preconditions() {
                 mark_fact_split_dependencies(
                     task,
@@ -187,7 +187,7 @@ impl<'task> CartesianSemantics<'task> {
             }
             debug_assert_eq!(
                 prop_dependencies.len(),
-                task.get_num_variables(),
+                task.variables().len(),
                 "operator {op_id} propositional dependency width changed"
             );
             for (var_id, depends) in prop_dependencies.into_iter().enumerate() {
@@ -204,12 +204,12 @@ impl<'task> CartesianSemantics<'task> {
         }
         let icaps_random = (config.pick == Icaps26SplitSelection::Random)
             .then(|| RefCell::new(ArtifactMt19937::new(config.random_seed)));
-        let initial_numeric = task.get_initial_numeric_state_values();
+        let initial_numeric = task.initial_numeric_values();
         let mut numeric_integer_lattice = initial_numeric
             .iter()
             .map(|&value| approximately_equal(value.value(), value.value().round()))
             .collect::<Vec<_>>();
-        for op in task.get_operators() {
+        for op in task.operators() {
             for effect in op.assignment_effects() {
                 let rhs = initial_numeric[effect.var_id().index()];
                 let preserves_integers = match effect.operation() {

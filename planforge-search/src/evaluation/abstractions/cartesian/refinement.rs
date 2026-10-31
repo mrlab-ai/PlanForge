@@ -34,7 +34,7 @@ impl WorkingAbstraction {
         self.leaf_node_ids[old_state_id] = old_leaf;
         self.leaf_node_ids.push(new_leaf);
 
-        let operator_count = semantics.task().get_operators().len();
+        let operator_count = semantics.task().operators().len();
         let old_self_loops = std::mem::replace(
             &mut self.self_loop_operator_ids[old_state_id],
             OperatorBitSet::empty(operator_count),

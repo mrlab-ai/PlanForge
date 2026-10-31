@@ -10,7 +10,7 @@ const X: VariableIndex = VariableIndex::new(0);
 /// A box over the task's numeric variables in which `x` lies in `x` and
 /// the constants keep their values; propositional variables are free.
 fn state(task: &dyn AbstractNumericTask, numeric: Vec<Interval>) -> CartesianSet {
-    let propositions = (0..task.get_num_variables())
+    let propositions = (0..task.variables().len())
         .map(|var| {
             (0..task.variables()[var].domain_size())
                 .map(ExplicitValueIndex::from_usize)
@@ -59,7 +59,7 @@ fn search_in_scope(
 ) -> Vec<RegressionFlaw> {
     let coordinates = Coordinates::new(task);
     ensure_regressable(task, &coordinates).unwrap();
-    let propositions = task.get_initial_propositional_state_values();
+    let propositions = task.initial_propositional_values();
     find_regression_flaws(
         task,
         &coordinates,

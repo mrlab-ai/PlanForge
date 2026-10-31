@@ -113,8 +113,8 @@ fn metric_operator_costs_are_the_constant_increments() {
             .unwrap()
             .1
     };
-    let d0 = step_cost(&task.get_operators()[0]);
-    let d1 = step_cost(&task.get_operators()[1]);
+    let d0 = step_cost(&task.operators()[0]);
+    let d1 = step_cost(&task.operators()[1]);
     assert!((d0 - 0.5).abs() < 1e-12);
     assert!((d1 - 0.002).abs() < 1e-12);
 

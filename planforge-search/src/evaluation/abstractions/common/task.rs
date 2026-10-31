@@ -7,8 +7,7 @@ use std::sync::Arc;
 use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorIndex, VariableIndex,
-    ZERO_VALUE,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorIndex, ZERO_VALUE,
 };
 
 /// A task view that changes only the goal condition.
@@ -28,19 +27,19 @@ impl<'task> SingleGoalTask<'task> {
 }
 
 impl AbstractNumericTask for SingleGoalTask<'_> {
-    fn variables(&self) -> &Vec<ExplicitVariable> {
+    fn variables(&self) -> &[ExplicitVariable] {
         self.base.variables()
     }
 
-    fn numeric_variables(&self) -> &Vec<NumericVariable> {
+    fn numeric_variables(&self) -> &[NumericVariable] {
         self.base.numeric_variables()
     }
 
-    fn assignment_axioms(&self) -> &Vec<AssignmentAxiom> {
+    fn assignment_axioms(&self) -> &[AssignmentAxiom] {
         self.base.assignment_axioms()
     }
 
-    fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
+    fn comparison_axioms(&self) -> &[ComparisonAxiom] {
         self.base.comparison_axioms()
     }
 
@@ -48,7 +47,7 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.numeric_conditions()
     }
 
-    fn axioms(&self) -> &Vec<PropositionalAxiom> {
+    fn axioms(&self) -> &[PropositionalAxiom] {
         self.base.axioms()
     }
 
@@ -56,60 +55,28 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.metric()
     }
 
-    fn get_num_variables(&self) -> usize {
-        self.base.get_num_variables()
-    }
-
-    fn get_variable_name(&self, index: VariableIndex) -> Result<&str, &str> {
-        self.base.get_variable_name(index)
-    }
-
-    fn get_variable_domain_size(&self, index: VariableIndex) -> Result<usize, &str> {
-        self.base.get_variable_domain_size(index)
-    }
-
-    fn get_variable_axiom_layer(&self, index: VariableIndex) -> Result<Option<usize>, &str> {
-        self.base.get_variable_axiom_layer(index)
-    }
-
-    fn get_variable_default_axiom_value(
-        &self,
-        index: VariableIndex,
-    ) -> Result<ExplicitValueIndex, &str> {
-        self.base.get_variable_default_axiom_value(index)
-    }
-
-    fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
-        self.base.get_fact_name(fact)
+    fn fact_name(&self, fact: &ExplicitFact) -> &str {
+        self.base.fact_name(fact)
     }
 
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
         self.base.are_facts_mutex(fact1, fact2)
     }
 
-    fn get_operators(&self) -> &Vec<Operator> {
-        self.base.get_operators()
+    fn operators(&self) -> &[Operator] {
+        self.base.operators()
     }
 
     fn goals(&self) -> &[ExplicitFact] {
         std::slice::from_ref(&self.goal)
     }
 
-    fn get_num_goals(&self) -> usize {
-        1
+    fn initial_propositional_values(&self) -> &[ExplicitValueIndex] {
+        self.base.initial_propositional_values()
     }
 
-    fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
-        assert_eq!(index, 0, "SingleGoalTask only exposes one goal");
-        &self.goal
-    }
-
-    fn get_initial_propositional_state_values(&self) -> &[ExplicitValueIndex] {
-        self.base.get_initial_propositional_state_values()
-    }
-
-    fn get_initial_numeric_state_values(&self) -> &[NumericValue] {
-        self.base.get_initial_numeric_state_values()
+    fn initial_numeric_values(&self) -> &[NumericValue] {
+        self.base.initial_numeric_values()
     }
 
     fn evaluate_initial_state_values(
@@ -122,8 +89,8 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.effective_operator_costs()
     }
 
-    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> f64 {
-        self.base.operator_cost_for_abstraction(operator_id)
+    fn operator_cost(&self, operator_id: OperatorIndex) -> f64 {
+        self.base.operator_cost(operator_id)
     }
 }
 
@@ -135,10 +102,10 @@ pub(crate) fn validate_abstraction_operator(
     operator: &Operator,
     operator_id: OperatorIndex,
 ) -> Result<()> {
-    let mut propositional_effect_by_var = vec![None; task.get_num_variables()];
+    let mut propositional_effect_by_var = vec![None; task.variables().len()];
     for (effect_id, effect) in operator.effects().iter().enumerate() {
         ensure!(
-            effect.var_id().index() < task.get_num_variables(),
+            effect.var_id().index() < task.variables().len(),
             "operator {operator_id} ({}) propositional effect {effect_id} targets missing variable {}",
             operator.name(),
             effect.var_id()
@@ -159,7 +126,7 @@ pub(crate) fn validate_abstraction_operator(
     }
 
     let numeric_variables = task.numeric_variables();
-    let initial_numeric = task.get_initial_numeric_state_values();
+    let initial_numeric = task.initial_numeric_values();
     let mut numeric_effect_by_var = vec![None; numeric_variables.len()];
     for (effect_id, effect) in operator.assignment_effects().iter().enumerate() {
         ensure_supported!(

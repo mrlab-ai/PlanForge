@@ -17,8 +17,8 @@ use pyo3::exceptions::{PyException, PyFileNotFoundError, PyIndexError, PyValueEr
 use pyo3::prelude::*;
 
 use planforge_sas::numeric_task::{
-    AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, NumericRootTask, NumericTaskExt,
-    NumericType, NumericValue, Operator, OperatorIndex, TaskRef, VariableIndex,
+    AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, NumericRootTask, NumericType,
+    NumericValue, Operator, OperatorIndex, TaskRef, VariableIndex,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
@@ -1138,14 +1138,14 @@ fn state_space_to_py(
         .map(|(variable, explicit_variable)| {
             (0..explicit_variable.domain_size())
                 .map(|value| {
-                    task.get_fact_name(&ExplicitFact::propositional(variable, value))
+                    task.fact_name(&ExplicitFact::propositional(variable, value))
                         .to_string()
                 })
                 .collect()
         })
         .collect::<Vec<Vec<String>>>();
     let operator_names = task
-        .get_operators()
+        .operators()
         .iter()
         .map(|operator| operator.name().to_string())
         .collect::<Vec<String>>();
@@ -1222,7 +1222,7 @@ impl Task {
 
     #[getter]
     fn num_operators(&self) -> usize {
-        self.task.get_operators().len()
+        self.task.operators().len()
     }
 
     /// The number of ground atoms: every value of every finite-domain variable.
@@ -1237,7 +1237,7 @@ impl Task {
 
     #[getter]
     fn num_goals(&self) -> usize {
-        self.task.get_num_goals()
+        self.task.goals().len()
     }
 
     #[getter]
@@ -1259,8 +1259,8 @@ impl Task {
         (0..self.task.variables().len())
             .map(|i| {
                 self.task
-                    .get_variable_name(VariableIndex::from_usize(i))
-                    .expect("variable index came from task.variables()")
+                    .variable(VariableIndex::from_usize(i))
+                    .name()
                     .to_string()
             })
             .collect()
@@ -1310,7 +1310,7 @@ impl Task {
             .map(|(variable, value)| {
                 let name = self
                     .task
-                    .get_fact_name(&ExplicitFact::propositional(variable, value))
+                    .fact_name(&ExplicitFact::propositional(variable, value))
                     .to_string();
                 let (negated, predicate, arguments) = split_fact_name(&name);
                 Py::new(
@@ -1332,7 +1332,7 @@ impl Task {
     fn operators(&self, py: Python<'_>) -> Vec<Py<PyOperator>> {
         let task_id = self.registry.borrow().id();
         self.task
-            .get_operators()
+            .operators()
             .iter()
             .enumerate()
             .map(|(operator_id, operator)| {
@@ -1342,7 +1342,7 @@ impl Task {
                     Some(operator_id),
                     Some(task_id),
                     self.task
-                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
+                        .operator_cost(OperatorIndex::from_usize(operator_id)),
                 )
                 .expect("creating a Python Operator should not fail")
             })
@@ -1372,20 +1372,16 @@ impl Task {
         let task_id = reg.id();
         ids.into_iter()
             .map(|operator_id| {
-                let operator = self
-                    .task
-                    .get_operators()
-                    .get(operator_id)
-                    .unwrap_or_else(|| {
-                        panic!("successor generator returned invalid operator id {operator_id}")
-                    });
+                let operator = self.task.operators().get(operator_id).unwrap_or_else(|| {
+                    panic!("successor generator returned invalid operator id {operator_id}")
+                });
                 operator_to_py(
                     py,
                     operator,
                     Some(operator_id),
                     Some(task_id),
                     self.task
-                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
+                        .operator_cost(OperatorIndex::from_usize(operator_id)),
                 )
             })
             .collect()
@@ -1439,7 +1435,7 @@ impl Task {
         let mut reg = self.registry.borrow_mut();
         let cstate = self.lookup(state, &reg)?;
         let ids = self.applicable_operator_ids(&cstate, &reg);
-        let operators = self.task.get_operators();
+        let operators = self.task.operators();
         let task_id = reg.id();
         let mut out = Vec::with_capacity(ids.len());
         let (mut b1, mut b2) = (Vec::new(), Vec::new());
@@ -1462,7 +1458,7 @@ impl Task {
                 Some(operator_id),
                 Some(task_id),
                 self.task
-                    .abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
+                    .operator_cost(OperatorIndex::from_usize(operator_id)),
             )?;
             let snap = State::snapshot(&succ, &reg);
             out.push((py_op, snap, cost));
@@ -1575,10 +1571,10 @@ impl Task {
         let operator_id = operator.id.ok_or_else(|| {
             PyValueError::new_err("plan-result Operator cannot be applied to a Task")
         })?;
-        if operator_id >= self.task.get_operators().len() {
+        if operator_id >= self.task.operators().len() {
             return Err(PyValueError::new_err(format!(
                 "operator id {operator_id} is out of bounds for {} operators",
-                self.task.get_operators().len()
+                self.task.operators().len()
             )));
         }
         Ok(operator_id)
@@ -1599,7 +1595,7 @@ impl Task {
                 operator_id, operator.name
             )));
         }
-        let rust_operator = &self.task.get_operators()[operator_id];
+        let rust_operator = &self.task.operators()[operator_id];
         let (mut numeric_buffer, mut cost_buffer) = (Vec::new(), Vec::new());
         let (successor, cost) = registry
             .get_successor_state_with_buffers_and_cost(

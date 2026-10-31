@@ -319,7 +319,7 @@ fn load_enumeration_task(
             &arguments.inputs[1],
             grounding_limits,
         )
-        .map_err(|error| std::io::Error::other(error.to_string()))?
+        .map_err(translation_error)?
     } else {
         NumericRootTask::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
     };
@@ -479,7 +479,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 problem,
                 cli.grounding.limits(),
             )
-            .map_err(|err| std::io::Error::other(err.to_string()))?,
+            .map_err(translation_error)?,
             format!("{domain} + {problem} (in-memory)"),
         )
     } else {
@@ -530,4 +530,19 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     print_search_result(&result);
 
     Ok(result)
+}
+
+/// The error a failed translation ends the run with: PDDL the translator does
+/// not implement is `Unsupported`, so the run exits with the unsupported code.
+fn translation_error(error: anyhow::Error) -> std::io::Error {
+    let unsupported = error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<planforge_translate::ParseError>())
+        .any(|parse_error| parse_error.kind == planforge_translate::ParseErrorKind::Unsupported);
+    let kind = if unsupported {
+        std::io::ErrorKind::Unsupported
+    } else {
+        std::io::ErrorKind::Other
+    };
+    std::io::Error::new(kind, format!("{error:#}"))
 }

@@ -1,3 +1,4 @@
+use crate::pddl::f_expression::{FluentKind, TOTAL_COST};
 use std::collections::{HashMap, HashSet};
 
 use planforge_sas::numeric_task::NumericValue;
@@ -173,9 +174,9 @@ impl Task {
         }));
 
         let mut functions = domain.functions;
-        if !functions.iter().any(|f| f.name == "total-cost") {
+        if !functions.iter().any(|f| f.name == TOTAL_COST) {
             functions.push(Function::new(
-                "total-cost".to_string(),
+                TOTAL_COST.to_string(),
                 vec![],
                 "number".to_string(),
             ));
@@ -185,7 +186,7 @@ impl Task {
             for action in &mut actions {
                 action.cost = Some(FunctionAssignment::new(
                     "+".to_string(),
-                    PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+                    PrimitiveNumericExpression::total_cost(),
                     FunctionalExpression::NumericConstant(NumericConstant::new(1.0)),
                 ));
             }
@@ -194,7 +195,7 @@ impl Task {
             (
                 "<".to_string(),
                 FunctionalExpression::PrimitiveNumericExpression(
-                    PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+                    PrimitiveNumericExpression::total_cost(),
                 ),
             )
         });
@@ -410,7 +411,11 @@ impl DerivedFunctionAdministrator {
         };
 
         if let Some(axiom) = self.derived_functions.get(&key) {
-            return PrimitiveNumericExpression::with_type(axiom.name.clone(), args, 'D');
+            return PrimitiveNumericExpression::with_kind(
+                axiom.name.clone(),
+                args,
+                FluentKind::Derived,
+            );
         }
 
         let name = self.symbol_from_key(&key);
@@ -423,10 +428,10 @@ impl DerivedFunctionAdministrator {
                 let subexpression = &subexpressions[0];
                 let default_args = self.get_default_variables(args.len());
                 let rewritten = FunctionalExpression::PrimitiveNumericExpression(
-                    PrimitiveNumericExpression::with_type(
+                    PrimitiveNumericExpression::with_kind(
                         subexpression.symbol.clone(),
                         default_args.iter().map(|p| p.name.clone()).collect(),
-                        'D',
+                        FluentKind::Derived,
                     ),
                 );
                 ("-".to_string(), vec![rewritten])
@@ -442,7 +447,11 @@ impl DerivedFunctionAdministrator {
                         .map(|p| p.name.clone())
                         .collect();
                     rewritten_parts.push(FunctionalExpression::PrimitiveNumericExpression(
-                        PrimitiveNumericExpression::with_type(df.symbol.clone(), slice, 'D'),
+                        PrimitiveNumericExpression::with_kind(
+                            df.symbol.clone(),
+                            slice,
+                            FluentKind::Derived,
+                        ),
                     ));
                     arg_index = end;
                 }
@@ -460,7 +469,7 @@ impl DerivedFunctionAdministrator {
             "two derived expressions generated the same symbol {name}"
         );
         self.derived_functions.insert(key, axiom);
-        PrimitiveNumericExpression::with_type(name, args, 'D')
+        PrimitiveNumericExpression::with_kind(name, args, FluentKind::Derived)
     }
 }
 

@@ -207,7 +207,7 @@ pub fn linearize_numeric_var<T: AbstractNumericTask + ?Sized>(
     let assignment_lookup = task
         .assignment_axiom_lookup()
         .map_err(LinearizationError::InvalidAssignmentAxiomLayout)?;
-    let initial_numeric_values = task.get_initial_numeric_state_values().to_vec();
+    let initial_numeric_values = task.initial_numeric_values().to_vec();
     let mut visiting = vec![false; task.numeric_variables().len()];
     linearize_numeric_var_with_lookup(
         task,
@@ -223,7 +223,7 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
     task: &T,
     operator_id: OperatorIndex,
 ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
-    let operators = task.get_operators();
+    let operators = task.operators();
     let operator =
         operators
             .get(operator_id.index())
@@ -234,7 +234,7 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
     let assignment_lookup = task
         .assignment_axiom_lookup()
         .map_err(LinearizationError::InvalidAssignmentAxiomLayout)?;
-    let initial_numeric_values = task.get_initial_numeric_state_values().to_vec();
+    let initial_numeric_values = task.initial_numeric_values().to_vec();
     let num_numeric_vars = task.numeric_variables().len();
     let mut effects = Vec::with_capacity(operator.assignment_effects().len());
 

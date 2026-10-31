@@ -395,7 +395,7 @@ fn an_unbounded_decimal_linear_part_does_not_claim_constant_floating_deltas() {
         coordinates.value_lattices()[coordinate.index()],
         ValueLattice::GRID
     );
-    let mut values = task.get_initial_numeric_state_values().to_vec();
+    let mut values = task.initial_numeric_values().to_vec();
     values[1] = NumericValue::new(40_964.0);
     let value = coordinates.views()[coordinate.index()]
         .as_ref()

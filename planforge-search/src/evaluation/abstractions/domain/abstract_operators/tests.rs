@@ -411,7 +411,7 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
         &function,
         OperatorIndex::new(0),
         &[],
-        task.get_operators()[0].assignment_effects(),
+        task.operators()[0].assignment_effects(),
         Deadline::NONE,
     )
     .unwrap();

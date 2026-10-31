@@ -189,8 +189,10 @@ impl GoalFocusedBackend for ScriptedBackend {
     ) -> Result<Member> {
         assert_eq!(construction.scope, RefinementScope::default());
         // Goal `i` of the counter task is the condition variable `i`.
-        let goals = (0..task.get_num_goals())
-            .map(|index| task.get_goal_fact(index).var_index().index())
+        let goals = task
+            .goals()
+            .iter()
+            .map(|goal| goal.var_index().index())
             .collect::<Vec<_>>();
         let call = Call {
             goals: goals.clone(),

@@ -346,10 +346,8 @@ fn build_compiled_axiom_evaluator_data(
         last_arithmetic_axiom_layer = max(last_arithmetic_axiom_layer, numeric_var.axiom_layer());
     }
 
-    for i in 0..numeric_task.get_num_variables() as u32 {
-        let axiom_layer = numeric_task
-            .get_variable_axiom_layer(VariableIndex::new(i))
-            .unwrap();
+    for i in 0..numeric_task.variables().len() as u32 {
+        let axiom_layer = numeric_task.variable(VariableIndex::new(i)).axiom_layer();
         if axiom_layer.is_none() {
             continue;
         }
@@ -392,17 +390,16 @@ fn build_compiled_axiom_evaluator_data(
         vec![],
     );
 
-    let axiom_default_values: Vec<ExplicitValueIndex> = (0..numeric_task.get_num_variables()
-        as u32)
+    let axiom_default_values: Vec<ExplicitValueIndex> = (0..numeric_task.variables().len() as u32)
         .map(|var_id| {
             numeric_task
-                .get_variable_default_axiom_value(VariableIndex::new(var_id))
-                .expect("variable id below the variable count is in bounds")
+                .variable(VariableIndex::new(var_id))
+                .axiom_default_value()
         })
         .collect();
     for (var_id, &default_value) in axiom_default_values.iter().enumerate() {
         let var_index = VariableIndex::new(var_id as u32);
-        let axiom_layer = numeric_task.get_variable_axiom_layer(var_index).unwrap();
+        let axiom_layer = numeric_task.variable(var_index).axiom_layer();
         // A condition variable is computed, not proven: `seed_queue_from_state`
         // already queues the verdict `evaluate_comparison_axioms` wrote for it,
         // so there is no "stayed at its default" case left to announce. Queuing
@@ -574,12 +571,9 @@ impl<'a> AxiomEvaluator<'a> {
         buffer: &mut [u64],
         queue: &mut Vec<LiteralRef>,
     ) -> Result<(), AxiomEvalError> {
-        for var_id in 0..self.numeric_task.get_num_variables() {
+        for var_id in 0..self.numeric_task.variables().len() {
             let var_index = VariableIndex::new(var_id as u32);
-            let axiom_layer = self
-                .numeric_task
-                .get_variable_axiom_layer(var_index)
-                .unwrap();
+            let axiom_layer = self.numeric_task.variable(var_index).axiom_layer();
             if axiom_layer.is_none() || axiom_layer == self.comparison_axiom_layer {
                 queue.push(LiteralRef {
                     var_id: var_index,

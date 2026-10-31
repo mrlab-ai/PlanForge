@@ -1,7 +1,7 @@
 /// Main PDDL parsing functions that convert S-expressions into PDDL AST.
 mod numeric_literals;
 
-use super::lisp_parser::SExpr;
+use super::lisp_parser::{Form, ParseError, ParseResult, SExpr};
 use crate::pddl::actions::Action;
 use crate::pddl::axioms::Axiom;
 use crate::pddl::conditions::*;
@@ -10,7 +10,7 @@ use crate::pddl::f_expression::*;
 use crate::pddl::functions::Function;
 use crate::pddl::pddl_types::{Type, TypeHierarchy, TypedObject};
 use crate::pddl::predicates::Predicate;
-use crate::pddl::tasks::{DomainDefinition, ProblemDefinition, Task};
+use crate::pddl::tasks::{DomainDefinition, ProblemDefinition};
 
 /// What a typed list declares, which decides what it may contain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,86 +32,110 @@ pub enum TypedList {
 /// need a disjunction of type atoms in grounding, and on an object it names no
 /// type, so both are rejected rather than grounded as a type nothing has.
 pub fn parse_typed_list(
-    alist: &[SExpr],
+    items: Form<'_>,
     list: TypedList,
     types: &TypeHierarchy,
-) -> Vec<TypedObject> {
+) -> ParseResult<Vec<TypedObject>> {
     let mut result = vec![];
-    let mut untyped_items: Vec<String> = vec![];
+    let mut untyped_items: Vec<&SExpr> = vec![];
     let mut i = 0;
-
-    while i < alist.len() {
-        let item = alist[i].as_atom();
-        if item == "-" {
+    while i < items.len() {
+        let item = &items.items[i];
+        if item.atom() != Some("-") {
+            untyped_items.push(item);
             i += 1;
-            let type_name: String = match &alist[i] {
-                SExpr::Atom(name) => {
-                    assert!(types.contains(name), "undeclared type {name}");
-                    name.clone()
-                }
-                SExpr::List(parts) => {
-                    let words: Vec<&str> = parts.iter().map(SExpr::as_atom).collect();
-                    assert_eq!(
-                        words.first().copied(),
-                        Some("either"),
-                        "a type is a single word or (either WORD...), got {parts:?}"
-                    );
-                    assert!(
-                        list == TypedList::Declaration,
-                        "(either ...) types are supported in predicate and function declarations only, got {parts:?}"
-                    );
-                    assert!(
-                        words.len() > 1,
-                        "an either type must name at least one type"
-                    );
-                    for name in &words[1..] {
-                        assert!(types.contains(name), "undeclared type {name}");
-                    }
-                    format!("either-{}", words[1..].join("-"))
-                }
-            };
-            for name in untyped_items.drain(..) {
-                result.push(typed_item(name, &type_name, list));
-            }
-        } else {
-            untyped_items.push(item.to_string());
+            continue;
         }
-        i += 1;
+        let type_expr = items.get(i + 1, "a type after `-`")?;
+        let type_name = match type_expr {
+            SExpr::Atom(name, line) => {
+                check_type_declared(types, name, *line)?;
+                name.clone()
+            }
+            SExpr::List(..) => {
+                let parts = type_expr.expect_list("a type")?;
+                if parts.head("`either`")? != "either" {
+                    return Err(ParseError::malformed(
+                        parts.line,
+                        format!("a type is a single word or (either WORD...), got {type_expr}"),
+                    ));
+                }
+                if list != TypedList::Declaration {
+                    return Err(ParseError::unsupported(
+                        parts.line,
+                        format!(
+                            "(either ...) types are supported in predicate and function declarations only, got {type_expr}"
+                        ),
+                    ));
+                }
+                if parts.len() < 2 {
+                    return Err(ParseError::malformed(
+                        parts.line,
+                        "an either type must name at least one type",
+                    ));
+                }
+                let mut names = Vec::new();
+                for part in parts.rest(1).items {
+                    let name = part.expect_atom("a type name")?;
+                    check_type_declared(types, name, part.line())?;
+                    names.push(name);
+                }
+                format!("either-{}", names.join("-"))
+            }
+        };
+        for item in untyped_items.drain(..) {
+            result.push(typed_item(item, &type_name, list)?);
+        }
+        i += 2;
     }
-    for name in untyped_items {
-        result.push(typed_item(name, "object", list));
+    for item in untyped_items {
+        result.push(typed_item(item, "object", list)?);
     }
-    result
+    Ok(result)
 }
 
-fn typed_item(name: String, type_name: &str, list: TypedList) -> TypedObject {
-    if list != TypedList::Objects {
-        assert!(name.starts_with('?'), "expected a variable, got {name}");
+fn check_type_declared(types: &TypeHierarchy, name: &str, line: u32) -> ParseResult<()> {
+    if types.contains(name) {
+        Ok(())
+    } else {
+        Err(ParseError::malformed(
+            line,
+            format!("undeclared type {name}"),
+        ))
     }
-    TypedObject::new(&name, type_name)
 }
 
-pub fn parse_type_list(alist: &[SExpr]) -> Vec<Type> {
+fn typed_item(item: &SExpr, type_name: &str, list: TypedList) -> ParseResult<TypedObject> {
+    let name = item.expect_atom("a name")?;
+    if list != TypedList::Objects && !name.starts_with('?') {
+        return Err(ParseError::malformed(
+            item.line(),
+            format!("expected a variable, got {name}"),
+        ));
+    }
+    Ok(TypedObject::new(name, type_name))
+}
+
+pub fn parse_type_list(items: Form<'_>) -> ParseResult<Vec<Type>> {
     let mut result = vec![];
-    let mut untyped_items: Vec<String> = vec![];
+    let mut untyped_items: Vec<&str> = vec![];
     let mut i = 0;
-
-    while i < alist.len() {
-        let item = alist[i].as_atom();
+    while i < items.len() {
+        let item = items.items[i].expect_atom("a type name")?;
         if item == "-" {
-            i += 1;
-            let basetype_name = alist[i].as_atom();
-            for name in &untyped_items {
+            let basetype_name = items
+                .get(i + 1, "a supertype after `-`")?
+                .expect_atom("a supertype")?;
+            for name in untyped_items.drain(..) {
                 result.push(Type::new(name, Some(basetype_name)));
             }
-            untyped_items.clear();
+            i += 2;
         } else {
-            untyped_items.push(item.to_string());
+            untyped_items.push(item);
+            i += 1;
         }
-        i += 1;
     }
-
-    for name in &untyped_items {
+    for name in untyped_items {
         result.push(Type::new(name, Some("object")));
     }
 
@@ -130,16 +154,14 @@ pub fn parse_type_list(alist: &[SExpr]) -> Vec<Type> {
     for name in &implicit {
         result.push(Type::new(name, Some("object")));
     }
-
-    result
+    Ok(result)
 }
 
 /// The `:requirements` a task may declare.
 ///
-/// The list used to be parsed and thrown away, so a domain declaring
-/// `:durative-actions` was accepted and then translated as if the durations were
-/// not there. Refusing the input is the only honest answer: a planner that
-/// silently ignores a requirement answers a question nobody asked.
+/// A planner that silently ignores a declared requirement, such as
+/// `:durative-actions`, answers a question nobody asked, so any other
+/// requirement is refused.
 const SUPPORTED_REQUIREMENTS: &[&str] = &[
     // Everything the Fast Downward translator accepts.
     ":strips",
@@ -164,485 +186,491 @@ const SUPPORTED_REQUIREMENTS: &[&str] = &[
 /// A declared requirement it *does* implement needs no action: support is a
 /// property of the code, not of the list, and every construct is handled
 /// wherever it appears whether or not the domain announced it.
-fn check_requirements(requirements: &[SExpr]) {
-    for requirement in requirements {
-        let name = requirement.as_atom();
-        assert!(
-            SUPPORTED_REQUIREMENTS.contains(&name),
-            "unsupported requirement {name}; this translator implements {}",
-            SUPPORTED_REQUIREMENTS.join(" ")
-        );
-    }
-}
-
-pub fn parse_predicate(alist: &[SExpr], types: &TypeHierarchy) -> Predicate {
-    let name = alist[0].as_atom().to_string();
-    let arguments = parse_typed_list(&alist[1..], TypedList::Declaration, types);
-    Predicate::new(name, arguments)
-}
-
-pub fn parse_function(alist: &[SExpr], type_name: &str, types: &TypeHierarchy) -> Function {
-    let name = alist[0].as_atom().to_string();
-    let arguments = parse_typed_list(&alist[1..], TypedList::Declaration, types);
-    Function::new(name, arguments, type_name.to_string())
-}
-
-pub fn parse_condition(alist: &SExpr, types: &TypeHierarchy) -> Condition {
-    match alist {
-        SExpr::List(items) if items.is_empty() => Condition::Truth,
-        SExpr::List(items) => parse_condition_aux(items, types),
-        // A condition is a parenthesised form in PDDL, so a bare atom here is
-        // malformed input. This used to return `Truth`, which turned a
-        // misspelled condition into no condition at all and made the operator
-        // holding it unconditionally applicable.
-        SExpr::Atom(atom) => panic!(
-            "expected a parenthesised condition, got the bare atom {atom}; \
-             a nullary predicate is written ({atom})"
-        ),
-    }
-}
-
-fn parse_condition_aux(alist: &[SExpr], types: &TypeHierarchy) -> Condition {
-    if alist.is_empty() {
-        return Condition::Truth;
-    }
-    let tag = alist[0].as_atom();
-    match tag {
-        "and" => {
-            let parts: Vec<Condition> = alist[1..]
-                .iter()
-                .map(|item| parse_condition(item, types))
-                .collect();
-            Condition::Conjunction(Conjunction::new(parts))
+fn check_requirements(requirements: Form<'_>) -> ParseResult<()> {
+    for requirement in requirements.items {
+        let name = requirement.expect_atom("a requirement")?;
+        if !SUPPORTED_REQUIREMENTS.contains(&name) {
+            return Err(ParseError::unsupported(
+                requirement.line(),
+                format!(
+                    "requirement {name}; this translator implements {}",
+                    SUPPORTED_REQUIREMENTS.join(" ")
+                ),
+            ));
         }
-        "or" => {
-            let parts: Vec<Condition> = alist[1..]
-                .iter()
-                .map(|item| parse_condition(item, types))
-                .collect();
-            Condition::Disjunction(Disjunction::new(parts))
-        }
+    }
+    Ok(())
+}
+
+pub fn parse_predicate(form: Form<'_>, types: &TypeHierarchy) -> ParseResult<Predicate> {
+    let name = form.head("a predicate name")?.to_string();
+    let arguments = parse_typed_list(form.rest(1), TypedList::Declaration, types)?;
+    Ok(Predicate::new(name, arguments))
+}
+
+pub fn parse_function(
+    form: Form<'_>,
+    type_name: &str,
+    types: &TypeHierarchy,
+) -> ParseResult<Function> {
+    let name = form.head("a function name")?.to_string();
+    let arguments = parse_typed_list(form.rest(1), TypedList::Declaration, types)?;
+    Ok(Function::new(name, arguments, type_name.to_string()))
+}
+
+/// The terms `items` lists: object names and variables.
+fn parse_terms(items: Form<'_>) -> ParseResult<Vec<String>> {
+    items
+        .items
+        .iter()
+        .map(|item| item.expect_atom("a term").map(str::to_string))
+        .collect()
+}
+
+pub fn parse_condition(expr: &SExpr, types: &TypeHierarchy) -> ParseResult<Condition> {
+    // A condition is a parenthesised form in PDDL, so a bare atom is
+    // malformed input; reading it as no condition would make the operator
+    // holding a misspelled condition unconditionally applicable.
+    if let SExpr::Atom(atom, line) = expr {
+        return Err(ParseError::malformed(
+            *line,
+            format!(
+                "expected a parenthesised condition, got the bare atom {atom}; \
+                 a nullary predicate is written ({atom})"
+            ),
+        ));
+    }
+    let form = expr.expect_list("a condition")?;
+    if form.is_empty() {
+        return Ok(Condition::Truth);
+    }
+    let tag = form.head("a condition keyword or predicate")?;
+    let parts = |types| -> ParseResult<Vec<Condition>> {
+        form.rest(1)
+            .items
+            .iter()
+            .map(|item| parse_condition(item, types))
+            .collect()
+    };
+    Ok(match tag {
+        "and" => Condition::Conjunction(Conjunction::new(parts(types)?)),
+        "or" => Condition::Disjunction(Disjunction::new(parts(types)?)),
         "not" => {
-            assert_eq!(alist.len(), 2, "not takes exactly one argument");
-            let inner = &alist[1];
-            let inner_list = inner.as_list();
-            // Check if it's a function comparison
-            if is_function_comparison(inner_list) {
-                match parse_function_comparison(inner_list, types) {
+            form.expect_len(2, "not takes exactly one argument")?;
+            let inner = form.get(1, "a negated condition")?;
+            let inner_form = inner.expect_list("a negated condition")?;
+            if is_function_comparison(inner_form.items) {
+                match parse_function_comparison(inner_form)? {
                     Condition::FunctionComparison(comparison) => {
                         Condition::NegatedFunctionComparison(comparison)
                     }
-                    other => panic!("expected a comparison inside not, got {other}"),
+                    other => unreachable!("a function comparison parses to one, got {other}"),
                 }
             } else if matches!(
-                inner_list.first().map(SExpr::as_atom),
+                inner_form.items.first().and_then(SExpr::atom),
                 Some("and" | "or" | "not" | "imply" | "forall" | "exists")
             ) {
                 // `not` around a compound condition, which ADL domains use
-                // freely: `(not (exists (?a - airplane) ...))`. This used to fall
-                // through to the negated-literal case below, which read `exists`
-                // as a predicate name and then crashed on its typed parameter
-                // list. Negating properly is now a call, because
+                // freely: `(not (exists (?a - airplane) ...))`.
                 // `Condition::negate` puts any condition into negation normal
                 // form.
-                parse_condition(&alist[1], types).negate()
+                parse_condition(inner, types)?.negate()
             } else {
-                // It's a negated literal
-                let pred = inner_list[0].as_atom().to_string();
-                let args: Vec<String> = inner_list[1..]
-                    .iter()
-                    .map(|a| a.as_atom().to_string())
-                    .collect();
-                Condition::NegatedAtom(NegatedAtom::new(pred, args))
+                let predicate = inner_form.head("a predicate")?.to_string();
+                Condition::NegatedAtom(NegatedAtom::new(
+                    predicate,
+                    parse_terms(inner_form.rest(1))?,
+                ))
             }
         }
         "imply" => {
-            assert_eq!(alist.len(), 3, "imply takes exactly two arguments");
-            let left = parse_condition(&alist[1], types);
-            let right = parse_condition(&alist[2], types);
+            form.expect_len(3, "imply takes exactly two arguments")?;
+            let left = parse_condition(form.get(1, "an antecedent")?, types)?;
+            let right = parse_condition(form.get(2, "a consequent")?, types)?;
             // `(imply a b)` is `(or (not a) b)`, for any antecedent.
-            //
-            // This used to special-case a literal antecedent and fall through to
-            // putting a compound one in *unnegated*, so `(imply (and p q) r)`
-            // became `(or (and p q) r)`. That is not a weaker reading of the
-            // implication, it is a different condition: it holds exactly when the
-            // implication is violated. `Condition::negate` puts any antecedent
-            // into negation normal form, so there is no case left to special-case.
             Condition::Disjunction(Disjunction::new(vec![left.negate(), right]))
         }
-        "forall" => {
-            let params_list = alist[1].as_list();
-            let parameters = parse_typed_list(params_list, TypedList::Parameters, types);
-            let body = parse_condition(&alist[2], types);
-            Condition::UniversalCondition(UniversalCondition::new(parameters, vec![body]))
+        "forall" | "exists" => {
+            form.expect_len(3, &format!("{tag} takes a parameter list and a condition"))?;
+            let parameters = parse_typed_list(
+                form.get(1, "a parameter list")?
+                    .expect_list("a parameter list")?,
+                TypedList::Parameters,
+                types,
+            )?;
+            let body = parse_condition(form.get(2, "a quantified condition")?, types)?;
+            if tag == "forall" {
+                Condition::UniversalCondition(UniversalCondition::new(parameters, vec![body]))
+            } else {
+                Condition::ExistentialCondition(ExistentialCondition::new(parameters, vec![body]))
+            }
         }
-        "exists" => {
-            let params_list = alist[1].as_list();
-            let parameters = parse_typed_list(params_list, TypedList::Parameters, types);
-            let body = parse_condition(&alist[2], types);
-            Condition::ExistentialCondition(ExistentialCondition::new(parameters, vec![body]))
-        }
-        // `=` is two different operators in PDDL. Between numeric expressions it
-        // is a comparison; between terms it is object equality, which this
+        // `=` is two different operators in PDDL: between numeric expressions
+        // it is a comparison; between terms it is object equality, which this
         // translator encodes as the predicate `=` and supports by adding
         // `(= o o)` to the initial state for every object.
-        //
-        // The tag alone cannot tell them apart, and dispatching on it sent
-        // `(= ?sold spl1)` down the numeric path, where the two objects became
-        // nullary numeric functions named `?sold` and `spl1` and the comparison
-        // became a derived difference of them. `settlers` has no arithmetic at
-        // all, so the numeric variable that difference needed never existed.
-        // `is_function_comparison` already made this distinction for the `not`
-        // arm below; it is asked here too now.
-        "=" if !is_function_comparison(alist) => {
-            assert_eq!(alist.len(), 3, "object equality takes exactly two terms");
-            Condition::Atom(Atom::new(
-                "=".to_string(),
-                vec![
-                    alist[1].as_atom().to_string(),
-                    alist[2].as_atom().to_string(),
-                ],
-            ))
+        "=" if !is_function_comparison(form.items) => {
+            form.expect_len(3, "object equality takes exactly two terms")?;
+            Condition::Atom(Atom::new("=".to_string(), parse_terms(form.rest(1))?))
         }
         "<" | "<=" | "=" | ">=" | ">" => {
-            assert!(
-                is_function_comparison(alist),
-                "{tag} compares numeric expressions, got {alist:?}"
-            );
-            parse_function_comparison(alist, types)
+            if !is_function_comparison(form.items) {
+                return Err(ParseError::malformed(
+                    form.line,
+                    format!("{tag} compares numeric expressions, got {expr}"),
+                ));
+            }
+            parse_function_comparison(form)?
         }
-        _ => {
-            // It's a literal (atom)
-            let pred = tag.to_string();
-            let args: Vec<String> = alist[1..].iter().map(|a| a.as_atom().to_string()).collect();
-            Condition::Atom(Atom::new(pred, args))
-        }
-    }
+        _ => Condition::Atom(Atom::new(tag.to_string(), parse_terms(form.rest(1))?)),
+    })
 }
 
-fn is_function_comparison(alist: &[SExpr]) -> bool {
+fn is_function_comparison(items: &[SExpr]) -> bool {
     fn expression_looks_numeric(expr: &SExpr) -> bool {
         match expr {
-            SExpr::Atom(atom) => atom.parse::<f64>().is_ok(),
-            SExpr::List(items) => {
-                if items.is_empty() {
-                    false
-                } else {
-                    let _head = items[0].as_atom();
-                    true
-                }
-            }
+            SExpr::Atom(atom, _) => atom.parse::<f64>().is_ok(),
+            SExpr::List(items, _) => items.first().is_some_and(|head| head.atom().is_some()),
         }
     }
 
-    if alist.is_empty() {
-        return false;
-    }
-    if let SExpr::Atom(tag) = &alist[0] {
-        match tag.as_str() {
-            "<" | "<=" | ">=" | ">" => true,
-            "=" => {
-                alist.len() == 3
-                    && (expression_looks_numeric(&alist[1]) || expression_looks_numeric(&alist[2]))
-            }
-            _ => false,
+    match items.first().and_then(SExpr::atom) {
+        Some("<" | "<=" | ">=" | ">") => true,
+        Some("=") => {
+            items.len() == 3
+                && (expression_looks_numeric(&items[1]) || expression_looks_numeric(&items[2]))
         }
-    } else {
-        false
+        _ => false,
     }
 }
 
-/// Parse a function comparison like (< (f x) 5)
-fn parse_function_comparison(alist: &[SExpr], _types: &TypeHierarchy) -> Condition {
-    let comparator = alist[0].as_atom().to_string();
-    let parts: Vec<FunctionalExpression> = alist[1..].iter().map(parse_expression).collect();
-    assert_eq!(
-        parts.len(),
-        2,
-        "numeric comparisons must have exactly two parts"
-    );
+/// Parses a function comparison like `(< (f x) 5)` into `(f x) - 5 < 0`.
+fn parse_function_comparison(form: Form<'_>) -> ParseResult<Condition> {
+    let comparator = form.head("a comparator")?.to_string();
+    form.expect_len(3, &format!("{comparator} compares exactly two expressions"))?;
+    let parts = form
+        .rest(1)
+        .items
+        .iter()
+        .map(parse_expression)
+        .collect::<ParseResult<Vec<_>>>()?;
     let difference = FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
         "-".to_string(),
         parts,
     ));
     let zero = FunctionalExpression::NumericConstant(NumericConstant::new(0.0));
-    Condition::FunctionComparison(Comparison::new(comparator, vec![difference, zero]))
+    Ok(Condition::FunctionComparison(Comparison::new(
+        comparator,
+        vec![difference, zero],
+    )))
 }
 
-pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
+pub fn parse_expression(expr: &SExpr) -> ParseResult<FunctionalExpression> {
     fn classify_pne(symbol: String, args: Vec<String>) -> PrimitiveNumericExpression {
-        if symbol == "total-cost" && args.is_empty() {
-            PrimitiveNumericExpression::with_type(symbol, args, 'I')
+        if symbol == TOTAL_COST && args.is_empty() {
+            PrimitiveNumericExpression::total_cost()
         } else {
             PrimitiveNumericExpression::new(symbol, args)
         }
     }
 
-    match alist {
-        SExpr::Atom(s) => {
-            // Try to parse as a number
-            if let Ok(val) = s.parse::<f64>() {
-                FunctionalExpression::NumericConstant(NumericConstant::new(val))
-            } else {
-                // It's a function symbol with no arguments
-                FunctionalExpression::PrimitiveNumericExpression(classify_pne(s.clone(), vec![]))
+    match expr {
+        SExpr::Atom(text, _) => Ok(match text.parse::<f64>() {
+            Ok(value) => FunctionalExpression::NumericConstant(NumericConstant::new(value)),
+            // A function symbol with no arguments.
+            Err(_) => {
+                FunctionalExpression::PrimitiveNumericExpression(classify_pne(text.clone(), vec![]))
             }
-        }
-        SExpr::List(items) => {
-            if items.is_empty() {
-                panic!("Empty expression list");
-            }
-            let tag = items[0].as_atom();
-            match tag {
+        }),
+        SExpr::List(..) => {
+            let form = expr.expect_list("a numeric expression")?;
+            let tag = form.head("an arithmetic operator or function")?;
+            Ok(match tag {
+                "-" if form.len() == 2 => {
+                    FunctionalExpression::AdditiveInverse(AdditiveInverse::new(vec![
+                        parse_expression(&form.items[1])?,
+                    ]))
+                }
                 "+" | "-" | "*" | "/" => {
-                    if tag == "-" && items.len() == 2 {
-                        // Unary minus / additive inverse
-                        let inner = parse_expression(&items[1]);
-                        FunctionalExpression::AdditiveInverse(AdditiveInverse::new(vec![inner]))
-                    } else {
-                        let parts: Vec<FunctionalExpression> =
-                            items[1..].iter().map(parse_expression).collect();
-                        FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
-                            tag.to_string(),
-                            parts,
-                        ))
-                    }
+                    let parts = form
+                        .rest(1)
+                        .items
+                        .iter()
+                        .map(parse_expression)
+                        .collect::<ParseResult<Vec<_>>>()?;
+                    FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
+                        tag.to_string(),
+                        parts,
+                    ))
                 }
-                _ => {
-                    // It's a function application: (f arg1 arg2 ...)
-                    let symbol = tag.to_string();
-                    let args: Vec<String> =
-                        items[1..].iter().map(|a| a.as_atom().to_string()).collect();
-                    FunctionalExpression::PrimitiveNumericExpression(classify_pne(symbol, args))
-                }
-            }
+                _ => FunctionalExpression::PrimitiveNumericExpression(classify_pne(
+                    tag.to_string(),
+                    parse_terms(form.rest(1))?,
+                )),
+            })
         }
     }
 }
 
-pub fn parse_assignment(alist: &[SExpr]) -> FunctionAssignment {
-    let tag = alist[0].as_atom();
+/// The fluent `expr` names, as the target of an assignment or numeric init.
+fn parse_fluent(expr: &SExpr) -> ParseResult<PrimitiveNumericExpression> {
+    match parse_expression(expr)? {
+        FunctionalExpression::PrimitiveNumericExpression(fluent) => Ok(fluent),
+        other => Err(ParseError::malformed(
+            expr.line(),
+            format!("expected a fluent, got the expression {other}"),
+        )),
+    }
+}
+
+pub fn parse_assignment(form: Form<'_>) -> ParseResult<FunctionAssignment> {
+    let tag = form.head("an assignment operator")?;
     let symbol = match tag {
         "assign" => "=",
         "increase" => "+",
         "decrease" => "-",
         "scale-up" => "*",
         "scale-down" => "/",
-        _ => panic!("Unknown assignment operator: {}", tag),
+        _ => {
+            return Err(ParseError::malformed(
+                form.line,
+                format!("unknown assignment operator {tag}"),
+            ));
+        }
     };
-    let fluent_expr = parse_expression(&alist[1]);
-    let fluent = match fluent_expr {
-        FunctionalExpression::PrimitiveNumericExpression(pne) => pne,
-        _ => panic!("Expected primitive numeric expression as fluent in assignment"),
-    };
-    let expression = parse_expression(&alist[2]);
-    FunctionAssignment::new(symbol.to_string(), fluent, expression)
+    form.expect_len(3, &format!("{tag} takes a fluent and an expression"))?;
+    let fluent = parse_fluent(&form.items[1])?;
+    let expression = parse_expression(&form.items[2])?;
+    Ok(FunctionAssignment::new(
+        symbol.to_string(),
+        fluent,
+        expression,
+    ))
 }
 
-/// Parses the effects section and returns an EffectType.
-pub fn parse_effects(alist: &SExpr, types: &TypeHierarchy) -> EffectType {
-    let items = alist.as_list();
-    if items.is_empty() {
-        return EffectType::Conjunctive(ConjunctiveEffect::new(vec![]));
+/// Parses the effects section.
+pub fn parse_effects(expr: &SExpr, types: &TypeHierarchy) -> ParseResult<EffectType> {
+    if expr.expect_list("an effect")?.is_empty() {
+        return Ok(EffectType::Conjunctive(ConjunctiveEffect::new(vec![])));
     }
-    parse_effect(alist, types)
+    parse_effect(expr, types)
 }
 
-fn parse_effect(alist: &SExpr, types: &TypeHierarchy) -> EffectType {
-    let items = alist.as_list();
-    let tag = items[0].as_atom();
-    match tag {
-        // `and` is handled here rather than only at the top level. It used to
-        // live in `parse_effects`, which meant a conjunction nested inside a
-        // `when` or a `forall` fell through to the literal case below, was read
-        // as a predicate named "and", and crashed on the first of its parts that
-        // was not an atom. That shape is the norm in ADL domains:
-        // `(forall (?p) (when <cond> (and (not (boarded ?p)) (served ?p))))`.
+fn parse_effect(expr: &SExpr, types: &TypeHierarchy) -> ParseResult<EffectType> {
+    let form = expr.expect_list("an effect")?;
+    let tag = form.head("an effect keyword or predicate")?;
+    Ok(match tag {
         "and" => EffectType::Conjunctive(ConjunctiveEffect::new(
-            items[1..]
+            form.rest(1)
+                .items
                 .iter()
                 .map(|item| parse_effect(item, types))
-                .collect(),
+                .collect::<ParseResult<_>>()?,
         )),
         "not" => {
-            let inner = items[1].as_list();
-            let pred = inner[0].as_atom().to_string();
-            let args: Vec<String> = inner[1..].iter().map(|a| a.as_atom().to_string()).collect();
+            form.expect_len(2, "not takes exactly one atom")?;
+            let inner = form.items[1].expect_list("a negated atom")?;
             EffectType::Simple(SimpleEffect::new(Condition::NegatedAtom(NegatedAtom::new(
-                pred, args,
+                inner.head("a predicate")?.to_string(),
+                parse_terms(inner.rest(1))?,
             ))))
         }
         "when" => {
-            let condition = parse_condition(&items[1], types);
-            let effect = parse_effect(&items[2], types);
+            form.expect_len(3, "when takes a condition and an effect")?;
+            let condition = parse_condition(&form.items[1], types)?;
+            let effect = parse_effect(&form.items[2], types)?;
             EffectType::Conditional(ConditionalEffect::new(condition, effect))
         }
         "forall" => {
-            let params_list = items[1].as_list();
-            let parameters = parse_typed_list(params_list, TypedList::Parameters, types);
-            let effect = parse_effect(&items[2], types);
+            form.expect_len(3, "forall takes a parameter list and an effect")?;
+            let parameters = parse_typed_list(
+                form.items[1].expect_list("a parameter list")?,
+                TypedList::Parameters,
+                types,
+            )?;
+            let effect = parse_effect(&form.items[2], types)?;
             EffectType::Universal(UniversalEffect::new(parameters, effect))
         }
         "assign" | "increase" | "decrease" | "scale-up" | "scale-down" => {
-            let assignment = parse_assignment(items);
-            EffectType::Numeric(NumericEffect::new(assignment))
+            EffectType::Numeric(NumericEffect::new(parse_assignment(form)?))
         }
-        _ => {
-            // Anything else is an add effect, whose arguments are terms.
-            let pred = tag.to_string();
-            let args: Vec<String> = items[1..]
-                .iter()
-                .map(|arg| match arg {
-                    SExpr::Atom(name) => name.clone(),
-                    SExpr::List(_) => panic!(
-                        "effect ({pred} ...) has a compound argument; an effect is a \
-                         literal, a conjunction, a `when`, a `forall` or a numeric \
-                         assignment"
-                    ),
-                })
-                .collect();
-            EffectType::Simple(SimpleEffect::new(Condition::Atom(Atom::new(pred, args))))
-        }
-    }
+        // Anything else is an add effect, whose arguments are terms.
+        _ => EffectType::Simple(SimpleEffect::new(Condition::Atom(Atom::new(
+            tag.to_string(),
+            parse_terms(form.rest(1))?,
+        )))),
+    })
 }
 
-pub fn parse_action(alist: &[SExpr], types: &TypeHierarchy) -> Action {
-    // alist is the contents of (:action ...)
-    // Expected: name :parameters (...) :precondition (...) :effect (...)
-    let name = alist[0].as_atom().to_string();
+/// The `:key value` pairs of an action-like block, with `allowed` the keys it
+/// may use.
+fn keyed_values<'a>(
+    form: Form<'a>,
+    owner: &str,
+    allowed: &[&str],
+) -> ParseResult<Vec<(&'a str, &'a SExpr)>> {
+    let mut pairs = Vec::new();
+    let mut i = 0;
+    while i < form.len() {
+        let key = form.items[i].expect_atom("a keyword")?;
+        if !allowed.contains(&key) {
+            return Err(ParseError::malformed(
+                form.items[i].line(),
+                format!(
+                    "{owner}: unknown key {key}, expected {}",
+                    allowed.join(", ")
+                ),
+            ));
+        }
+        pairs.push((key, form.get(i + 1, &format!("a value for {key}"))?));
+        i += 2;
+    }
+    Ok(pairs)
+}
+
+pub fn parse_action(form: Form<'_>, types: &TypeHierarchy) -> ParseResult<Action> {
+    let name = form.head("an action name")?.to_string();
     let mut parameters = vec![];
     let mut precondition = Condition::Truth;
     let mut effect_type: Option<EffectType> = None;
     let mut cost: Option<FunctionAssignment> = None;
 
-    let mut i = 1;
-
-    while i < alist.len() {
-        let key = alist[i].as_atom();
+    for (key, value) in keyed_values(
+        form.rest(1),
+        &format!("action {name}"),
+        &[":parameters", ":precondition", ":effect"],
+    )? {
         match key {
             ":parameters" => {
-                i += 1;
-                let params_list = alist[i].as_list();
-                parameters = parse_typed_list(params_list, TypedList::Parameters, types);
+                parameters = parse_typed_list(
+                    value.expect_list("a parameter list")?,
+                    TypedList::Parameters,
+                    types,
+                )?;
             }
-            ":precondition" => {
-                i += 1;
-                precondition = parse_condition(&alist[i], types);
-            }
+            ":precondition" => precondition = parse_condition(value, types)?,
             ":effect" => {
-                i += 1;
-                let eff = parse_effects(&alist[i], types);
-                // Extract cost
-                let (remaining, c) = eff.extract_cost();
+                let (remaining, action_cost) = parse_effects(value, types)?.extract_cost();
                 effect_type = Some(remaining);
-                cost = c;
+                cost = action_cost;
             }
-            unknown => panic!(
-                "action {name}: unknown key {unknown}, expected :parameters, :precondition, or :effect"
-            ),
+            _ => unreachable!("keyed_values admits only the listed keys"),
         }
-        i += 1;
     }
 
     let num_external = parameters.len();
-
     let mut action = Action::new(name, parameters, num_external, precondition, vec![], cost);
-
-    // Re-do effect normalization properly
-    let mut literal_effects = vec![];
-    // An action may declare no `:effect` at all, which parses to no effects
-    // rather than to an error. That is a no-op action, which is legal if
-    // pointless, so it is not rejected here.
-    if let Some(ref eff) = effect_type {
-        let normalized = eff.normalize();
-        for (params, condition, kind) in normalized {
+    // An action may declare no `:effect` at all: a legal, if pointless, no-op.
+    if let Some(effect) = &effect_type {
+        for (params, condition, kind) in effect.normalize() {
             match kind {
-                EffectKind::Literal(lit) => {
-                    literal_effects.push(Effect::new(params, condition, lit));
+                EffectKind::Literal(literal) => {
+                    action.effects.push(Effect::new(params, condition, literal));
                 }
-                EffectKind::Numeric(assign) => {
-                    action.assign_effects.push((params, condition, assign));
+                EffectKind::Numeric(assignment) => {
+                    action.assign_effects.push((params, condition, assignment));
                 }
             }
         }
     }
-
-    action.effects = literal_effects;
-    action
+    Ok(action)
 }
 
-pub fn parse_global_constraint(alist: &[SExpr], types: &TypeHierarchy) -> Axiom {
-    let name = alist[0].as_atom().to_string();
+pub fn parse_global_constraint(form: Form<'_>, types: &TypeHierarchy) -> ParseResult<Axiom> {
+    let name = form.head("a global constraint name")?.to_string();
     let mut parameters = vec![];
     let mut condition = Condition::Truth;
-
-    let mut i = 1;
-    while i < alist.len() {
-        let key = alist[i].as_atom();
+    for (key, value) in keyed_values(
+        form.rest(1),
+        &format!("global constraint {name}"),
+        &[":parameters", ":condition"],
+    )? {
         match key {
             ":parameters" => {
-                i += 1;
-                let params_list = alist[i].as_list();
-                parameters = parse_typed_list(params_list, TypedList::Parameters, types);
+                parameters = parse_typed_list(
+                    value.expect_list("a parameter list")?,
+                    TypedList::Parameters,
+                    types,
+                )?;
             }
-            ":condition" => {
-                i += 1;
-                condition = parse_condition(&alist[i], types);
-            }
-            // Not skipped: a key this parser does not know is either a typo in
-            // the domain or a construct it does not implement, and silently
-            // ignoring it translates a task the author did not write.
-            unknown => panic!(
-                "global constraint {name}: unknown key {unknown}, expected :parameters or :condition"
-            ),
+            ":condition" => condition = parse_condition(value, types)?,
+            _ => unreachable!("keyed_values admits only the listed keys"),
         }
-        i += 1;
     }
-
     let num_external = parameters.len();
-    Axiom::new_global_constraint(name, parameters, num_external, condition)
+    Ok(Axiom::new_global_constraint(
+        name,
+        parameters,
+        num_external,
+        condition,
+    ))
 }
 
 /// Parses the body of a `(:derived (HEAD ?x - t ...) CONDITION)` block, i.e.
-/// `alist` is the block with `:derived` already stripped.
+/// `form` is the block with `:derived` already stripped.
 ///
 /// A derived predicate quantifies over exactly its head's arguments, so all of
 /// them are external and the body may not introduce free variables of its own.
-pub fn parse_axiom(alist: &[SExpr], types: &TypeHierarchy) -> Axiom {
-    assert_eq!(
-        alist.len(),
-        2,
-        "(:derived HEAD CONDITION) takes exactly two elements, got {}: {alist:?}",
-        alist.len()
-    );
-    assert!(
-        alist[0].is_list(),
-        "the head of a derived predicate is `(NAME ?x - t ...)`, got the atom {:?}",
-        alist[0].as_atom()
-    );
-
-    let head = parse_predicate(alist[0].as_list(), types);
-    let condition = parse_condition(&alist[1], types);
+pub fn parse_axiom(form: Form<'_>, types: &TypeHierarchy) -> ParseResult<Axiom> {
+    form.expect_len(2, "(:derived HEAD CONDITION) takes exactly two elements")?;
+    let head = parse_predicate(
+        form.items[0].expect_list("the head of a derived predicate, (NAME ?x - t ...),")?,
+        types,
+    )?;
+    let condition = parse_condition(&form.items[1], types)?;
     let num_external = head.arguments.len();
-    Axiom::new(head.name, head.arguments, num_external, condition)
+    Ok(Axiom::new(
+        head.name,
+        head.arguments,
+        num_external,
+        condition,
+    ))
 }
 
 /// Combines parsed domain and problem S-expressions into a Task.
-pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> anyhow::Result<Task> {
-    numeric_literals::validate(domain_pddl, false)?;
-    numeric_literals::validate(task_pddl, false)?;
-    let domain = parse_domain_pddl(domain_pddl.as_list())?;
-    let problem = parse_task_pddl(task_pddl.as_list(), &domain.types);
-    Ok(Task::new(domain, problem))
+#[cfg(test)]
+pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> ParseResult<crate::pddl::tasks::Task> {
+    let domain = parse_domain(domain_pddl)?;
+    let problem = parse_problem(task_pddl, &domain.types)?;
+    Ok(crate::pddl::tasks::Task::new(domain, problem))
 }
 
 /// Parses a `(define (domain ...))` form.
-fn parse_domain_pddl(items: &[SExpr]) -> anyhow::Result<DomainDefinition> {
-    assert_eq!(items[0].as_atom(), "define", "Expected (define ...)");
+pub fn parse_domain(domain_pddl: &SExpr) -> ParseResult<DomainDefinition> {
+    numeric_literals::validate(domain_pddl, false)?;
+    parse_domain_pddl(domain_pddl)
+}
 
-    let domain_name_list = items[1].as_list();
-    assert_eq!(domain_name_list[0].as_atom(), "domain");
+/// Parses a `(define (problem ...))` form over the domain's `types`.
+pub fn parse_problem(task_pddl: &SExpr, types: &TypeHierarchy) -> ParseResult<ProblemDefinition> {
+    numeric_literals::validate(task_pddl, false)?;
+    parse_task_pddl(task_pddl, types)
+}
 
+/// The sections of a `(define (KIND NAME) SECTION...)` form.
+fn define_sections<'a>(expr: &'a SExpr, kind: &str) -> ParseResult<Form<'a>> {
+    let form = expr.expect_list(&format!("(define ({kind} ...) ...)"))?;
+    if form.head("define")? != "define" {
+        return Err(ParseError::malformed(
+            form.line,
+            format!("expected (define ({kind} ...) ...)"),
+        ));
+    }
+    let header = form
+        .get(1, &format!("({kind} NAME)"))?
+        .expect_list(&format!("({kind} NAME)"))?;
+    if header.head(kind)? != kind {
+        return Err(ParseError::malformed(
+            header.line,
+            format!("expected ({kind} NAME), got {}", form.items[1]),
+        ));
+    }
+    Ok(form.rest(2))
+}
+
+/// Parses a `(define (domain ...))` form.
+fn parse_domain_pddl(expr: &SExpr) -> ParseResult<DomainDefinition> {
+    let sections = define_sections(expr, "domain")?;
     let mut type_list: Vec<Type> = vec![];
     let mut constants: Vec<TypedObject> = vec![];
     let mut predicates: Vec<Predicate> = vec![];
@@ -653,60 +681,58 @@ fn parse_domain_pddl(items: &[SExpr]) -> anyhow::Result<DomainDefinition> {
     // Domain sections are not required to put `:types` before declarations
     // that use them, so build the complete type table before parsing any such
     // declaration.
-    for item in &items[2..] {
-        let section = item.as_list();
-        if section.first().is_some_and(|tag| tag.as_atom() == ":types") {
-            type_list = parse_type_list(&section[1..]);
+    for item in sections.items {
+        let section = item.expect_list("a domain section")?;
+        if section.items.first().and_then(SExpr::atom) == Some(":types") {
+            type_list = parse_type_list(section.rest(1))?;
         }
     }
-    let types = TypeHierarchy::new(&type_list).map_err(anyhow::Error::msg)?;
+    let types = TypeHierarchy::new(&type_list)
+        .map_err(|error| ParseError::malformed(sections.line, error))?;
 
-    for item in &items[2..] {
-        let section = item.as_list();
+    for item in sections.items {
+        let section = item.expect_list("a domain section")?;
         if section.is_empty() {
             continue;
         }
-        let tag = section[0].as_atom();
+        let tag = section.head("a section keyword")?;
+        let body = section.rest(1);
         match tag {
-            // The translation supports one PDDL fragment and reports what it
-            // cannot handle when it meets the construct itself, so the declared
-            // requirement list adds nothing. It still has to be matched here,
-            // or it would be reported as an unknown section.
-            ":requirements" => check_requirements(&section[1..]),
+            ":requirements" => check_requirements(body)?,
             ":types" => {}
-            ":constants" => {
-                constants = parse_typed_list(&section[1..], TypedList::Objects, &types);
-            }
+            ":constants" => constants = parse_typed_list(body, TypedList::Objects, &types)?,
             ":predicates" => {
-                predicates = section[1..]
+                predicates = body
+                    .items
                     .iter()
-                    .map(|p| parse_predicate(p.as_list(), &types))
-                    .collect();
+                    .map(|predicate| parse_predicate(predicate.expect_list("a predicate")?, &types))
+                    .collect::<ParseResult<_>>()?;
             }
-            ":functions" => {
-                // Functions can have a return type after "-"
-                functions = parse_function_list(&section[1..], &types);
-            }
-            ":action" => {
-                actions.push(parse_action(&section[1..], &types));
-            }
-            ":derived" => {
-                axioms.push(parse_axiom(&section[1..], &types));
-            }
+            ":functions" => functions = parse_function_list(body, &types)?,
+            ":action" => actions.push(parse_action(body, &types)?),
+            ":derived" => axioms.push(parse_axiom(body, &types)?),
+            ":global-constraint" => axioms.push(parse_global_constraint(body, &types)?),
             ":durative-action" | ":constraints" | ":safety" => {
-                panic!("domain section {tag} is valid PDDL but not supported")
+                return Err(ParseError::unsupported(
+                    section.line,
+                    format!("domain section {tag}"),
+                ));
             }
             // PDDL 2.1's `(:axiom :vars ... :context ... :implies ...)` is a
-            // different block shape, not a spelling of `:derived`; parsing it
-            // as one would silently take `:vars` for the head predicate.
-            ":axiom" => panic!(
-                "domain section :axiom is valid PDDL but not supported; write the derived \
-                 predicate as `(:derived (NAME ?x - t) CONDITION)`"
-            ),
-            ":global-constraint" => {
-                axioms.push(parse_global_constraint(&section[1..], &types));
+            // different block shape, not a spelling of `:derived`.
+            ":axiom" => {
+                return Err(ParseError::unsupported(
+                    section.line,
+                    "domain section :axiom; write the derived predicate as \
+                     `(:derived (NAME ?x - t) CONDITION)`",
+                ));
             }
-            unknown => panic!("unknown domain section {unknown}"),
+            unknown => {
+                return Err(ParseError::malformed(
+                    section.line,
+                    format!("unknown domain section {unknown}"),
+                ));
+            }
         }
     }
 
@@ -720,135 +746,183 @@ fn parse_domain_pddl(items: &[SExpr]) -> anyhow::Result<DomainDefinition> {
     })
 }
 
-/// Parse function declarations with types
-fn parse_function_list(items: &[SExpr], types: &TypeHierarchy) -> Vec<Function> {
+/// Parses function declarations, each group optionally followed by
+/// `- TYPE`; the default type is `number`.
+fn parse_function_list(items: Form<'_>, types: &TypeHierarchy) -> ParseResult<Vec<Function>> {
     let mut result = vec![];
-    let mut current_functions: Vec<&SExpr> = vec![];
+    let mut pending: Vec<&SExpr> = vec![];
     let mut i = 0;
-
     while i < items.len() {
-        match &items[i] {
-            SExpr::Atom(s) if s == "-" => {
-                i += 1;
-                let type_name = items[i].as_atom();
-                for func_expr in &current_functions {
-                    let func_list = func_expr.as_list();
-                    result.push(parse_function(func_list, type_name, types));
-                }
-                current_functions.clear();
+        let item = &items.items[i];
+        if item.atom() == Some("-") {
+            let type_name = items
+                .get(i + 1, "a function type after `-`")?
+                .expect_atom("a function type")?;
+            for function in pending.drain(..) {
+                result.push(parse_function(
+                    function.expect_list("a function")?,
+                    type_name,
+                    types,
+                )?);
             }
-            other => {
-                current_functions.push(other);
-            }
+            i += 2;
+        } else {
+            pending.push(item);
+            i += 1;
         }
-        i += 1;
     }
-
-    // Remaining functions have default type "number"
-    for func_expr in &current_functions {
-        let func_list = func_expr.as_list();
-        result.push(parse_function(func_list, "number", types));
+    for function in pending {
+        result.push(parse_function(
+            function.expect_list("a function")?,
+            "number",
+            types,
+        )?);
     }
-
-    result
+    Ok(result)
 }
 
-fn parse_task_pddl(items: &[SExpr], types: &TypeHierarchy) -> ProblemDefinition {
-    assert_eq!(items[0].as_atom(), "define");
-
-    let problem_list = items[1].as_list();
-    assert_eq!(problem_list[0].as_atom(), "problem");
-
+fn parse_task_pddl(expr: &SExpr, types: &TypeHierarchy) -> ParseResult<ProblemDefinition> {
+    let sections = define_sections(expr, "problem")?;
     let mut objects: Vec<TypedObject> = vec![];
     let mut init: Vec<Atom> = vec![];
+    let mut denied: Vec<(Atom, u32)> = vec![];
     let mut num_init: Vec<FunctionAssignment> = vec![];
     let mut goal = Condition::Truth;
     let mut metric: Option<(String, FunctionalExpression)> = None;
 
-    for item in &items[2..] {
-        let section = item.as_list();
+    for item in sections.items {
+        let section = item.expect_list("a problem section")?;
         if section.is_empty() {
             continue;
         }
-        let tag = section[0].as_atom();
+        let tag = section.head("a section keyword")?;
+        let body = section.rest(1);
         match tag {
             // The problem names the domain it belongs to; nothing checks
             // that against the domain file, which the caller chose.
             ":domain" => {}
-            ":requirements" => check_requirements(&section[1..]),
-            ":objects" => {
-                objects = parse_typed_list(&section[1..], TypedList::Objects, types);
-            }
+            ":requirements" => check_requirements(body)?,
+            ":objects" => objects = parse_typed_list(body, TypedList::Objects, types)?,
             ":init" => {
-                for item in &section[1..] {
-                    let init_item = item.as_list();
-                    if init_item.is_empty() {
+                for fact in body.items {
+                    let fact_form = fact.expect_list("an initial fact")?;
+                    if fact_form.is_empty() {
                         continue;
                     }
-                    let first = init_item[0].as_atom();
-                    if first == "=" {
-                        // Numeric init: (= (func args) value)
-                        let fluent_expr = parse_expression(&init_item[1]);
-                        let value_expr = parse_expression(&init_item[2]);
-                        let fluent = match fluent_expr {
-                            FunctionalExpression::PrimitiveNumericExpression(pne) => pne,
-                            _ => panic!("Expected PNE in numeric init"),
-                        };
-                        num_init.push(FunctionAssignment::new("=".to_string(), fluent, value_expr));
-                    } else if matches!(first, "not") {
-                        // Negative init fact - these are not standard PDDL but we handle them
-                        // Just skip, closed world assumption handles this
-                    } else {
-                        // Positive init fact
-                        let pred = first.to_string();
-                        let args: Vec<String> = init_item[1..]
-                            .iter()
-                            .map(|a| a.as_atom().to_string())
-                            .collect();
-                        init.push(Atom::new(pred, args));
+                    match fact_form.head("a predicate, `=` or `not`")? {
+                        "=" => {
+                            fact_form
+                                .expect_len(3, "a numeric initial value is (= FLUENT VALUE)")?;
+                            let fluent = parse_fluent(&fact_form.items[1])?;
+                            let value = parse_expression(&fact_form.items[2])?;
+                            num_init.push(FunctionAssignment::new("=".to_string(), fluent, value));
+                        }
+                        // A negative fact repeats what the closed world says,
+                        // unless the initial state also asserts it.
+                        "not" => {
+                            fact_form.expect_len(2, "not takes exactly one atom")?;
+                            let atom = fact_form.items[1].expect_list("a denied atom")?;
+                            denied.push((
+                                Atom::new(
+                                    atom.head("a predicate")?.to_string(),
+                                    parse_terms(atom.rest(1))?,
+                                ),
+                                atom.line,
+                            ));
+                        }
+                        predicate => init.push(Atom::new(
+                            predicate.to_string(),
+                            parse_terms(fact_form.rest(1))?,
+                        )),
                     }
                 }
             }
             ":goal" => {
-                goal = parse_condition(&section[1], types);
+                section.expect_len(2, "(:goal CONDITION) has one condition")?;
+                goal = parse_condition(&section.items[1], types)?;
             }
             ":metric" => {
-                // (:metric minimize (func))
-                let direction = section[1].as_atom();
-                let dir_symbol = match direction {
+                section.expect_len(3, "(:metric DIRECTION EXPRESSION)")?;
+                let direction = section.items[1].expect_atom("a metric direction")?;
+                let symbol = match direction {
                     "minimize" => "<",
                     "maximize" => ">",
-                    unknown => panic!(
-                        "unrecognized metric direction `{unknown}`, expected `minimize` or `maximize`"
-                    ),
+                    unknown => {
+                        return Err(ParseError::malformed(
+                            section.items[1].line(),
+                            format!(
+                                "unrecognized metric direction `{unknown}`, expected `minimize` or `maximize`"
+                            ),
+                        ));
+                    }
                 };
-                metric = Some((dir_symbol.to_string(), parse_expression(&section[2])));
+                metric = Some((symbol.to_string(), parse_expression(&section.items[2])?));
             }
             ":constraints" | ":length" | ":situation" | ":expansion" => {
-                panic!("problem section {tag} is valid PDDL but not supported")
+                return Err(ParseError::unsupported(
+                    section.line,
+                    format!("problem section {tag}"),
+                ));
             }
-            unknown => panic!("unknown problem section {unknown}"),
+            unknown => {
+                return Err(ParseError::malformed(
+                    section.line,
+                    format!("unknown problem section {unknown}"),
+                ));
+            }
         }
     }
+    if let Some((atom, line)) = denied.into_iter().find(|(atom, _)| init.contains(atom)) {
+        return Err(ParseError::malformed(
+            line,
+            format!("the initial state both asserts and denies {atom}"),
+        ));
+    }
 
-    ProblemDefinition {
+    Ok(ProblemDefinition {
         objects,
         init,
         num_init,
         goal,
         metric,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{TypeHierarchy, parse_action, parse_domain_pddl, parse_task_pddl};
     use crate::pddl::f_expression::FunctionalExpression;
-    use crate::pddl_parser::lisp_parser::parse_nested_list_string;
+    use crate::pddl::tasks::{DomainDefinition, ProblemDefinition};
+    use crate::pddl_parser::lisp_parser::{ParseError, ParseErrorKind, parse_nested_list_string};
 
-    fn parse_problem(problem: &str) -> crate::pddl::tasks::ProblemDefinition {
+    fn try_parse_problem(problem: &str) -> Result<ProblemDefinition, ParseError> {
         let form = parse_nested_list_string(problem).expect("test problem is valid S-expression");
-        parse_task_pddl(form.as_list(), &object_types())
+        parse_task_pddl(&form, &object_types())
+    }
+
+    fn parse_problem(problem: &str) -> ProblemDefinition {
+        try_parse_problem(problem).unwrap()
+    }
+
+    /// The error parsing `problem` reports, which must be of `kind` and say
+    /// `message`.
+    fn problem_error(problem: &str, kind: ParseErrorKind, message: &str) -> ParseError {
+        let error = try_parse_problem(problem).unwrap_err();
+        assert_eq!(error.kind, kind, "{error}");
+        assert!(error.message.contains(message), "{error}");
+        error
+    }
+
+    fn try_parse_domain(domain: &str) -> Result<DomainDefinition, ParseError> {
+        let form = parse_nested_list_string(domain).expect("test domain is valid S-expression");
+        parse_domain_pddl(&form)
+    }
+
+    fn domain_error(domain: &str, kind: ParseErrorKind, message: &str) -> ParseError {
+        let error = try_parse_domain(domain).unwrap_err();
+        assert_eq!(error.kind, kind, "{error}");
+        assert!(error.message.contains(message), "{error}");
+        error
     }
 
     fn object_types() -> TypeHierarchy {
@@ -856,13 +930,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unknown problem section :goals")]
     fn rejects_unknown_problem_section() {
-        parse_problem(
+        problem_error(
             "(define (problem misspelled-goal)
                 (:domain typo-test)
                 (:init)
                 (:goals (and)))",
+            ParseErrorKind::Malformed,
+            "unknown problem section :goals",
         );
     }
 
@@ -878,31 +953,32 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unsupported requirement :durative-actions")]
     fn validates_problem_requirements() {
-        parse_problem(
+        problem_error(
             "(define (problem temporal-problem)
                 (:domain temporal-test)
                 (:requirements :durative-actions)
                 (:init)
                 (:goal (and)))",
+            ParseErrorKind::Unsupported,
+            "requirement :durative-actions",
         );
     }
 
     #[test]
-    #[should_panic(expected = "problem section :constraints is valid PDDL but not supported")]
     fn rejects_unsupported_valid_problem_section_distinctly() {
-        parse_problem(
+        problem_error(
             "(define (problem constrained-problem)
                 (:domain constraint-test)
                 (:init)
                 (:goal (and))
                 (:constraints (always (p))))",
+            ParseErrorKind::Unsupported,
+            "problem section :constraints",
         );
     }
 
     #[test]
-    #[should_panic(expected = "action move: unknown key :preconditions")]
     fn rejects_unknown_action_key() {
         let form = parse_nested_list_string(
             "(:action move
@@ -911,27 +987,32 @@ mod tests {
                 :effect (and))",
         )
         .expect("test action is valid S-expression");
-
-        parse_action(&form.as_list()[1..], &object_types());
+        let action = form.expect_list("an action").unwrap().rest(1);
+        let error = parse_action(action, &object_types()).unwrap_err();
+        assert_eq!(error.kind, ParseErrorKind::Malformed);
+        assert!(
+            error
+                .message
+                .contains("action move: unknown key :preconditions"),
+            "{error}"
+        );
+        assert_eq!(error.line, Some(3));
     }
 
     #[test]
-    #[should_panic(expected = "unknown domain section :predicate")]
     fn rejects_unknown_domain_section() {
-        let form = parse_nested_list_string(
+        domain_error(
             "(define (domain typo-test)
                 (:requirements :strips)
                 (:predicate (p)))",
-        )
-        .expect("test domain is valid S-expression");
-
-        parse_domain_pddl(form.as_list()).unwrap();
+            ParseErrorKind::Malformed,
+            "unknown domain section :predicate",
+        );
     }
 
     #[test]
-    #[should_panic(expected = "domain section :durative-action is valid PDDL but not supported")]
     fn rejects_unsupported_valid_domain_section_distinctly() {
-        parse_domain(
+        domain_error(
             "(define (domain temporal-test)
                 (:requirements :strips)
                 (:durative-action wait
@@ -939,18 +1020,21 @@ mod tests {
                     :duration (= ?duration 1)
                     :condition (and)
                     :effect (and)))",
+            ParseErrorKind::Unsupported,
+            "domain section :durative-action",
         );
     }
 
     #[test]
-    #[should_panic(expected = "unrecognized metric direction `minimise`")]
     fn rejects_unrecognized_metric_direction() {
-        parse_problem(
+        problem_error(
             "(define (problem bad-direction)
                 (:domain metric-test)
                 (:init (= (total-cost) 0))
                 (:goal (and))
                 (:metric minimise (total-cost)))",
+            ParseErrorKind::Malformed,
+            "unrecognized metric direction `minimise`",
         );
     }
 
@@ -984,9 +1068,8 @@ mod tests {
         ));
     }
 
-    fn parse_domain(domain: &str) -> crate::pddl::tasks::DomainDefinition {
-        let form = parse_nested_list_string(domain).expect("test domain is valid S-expression");
-        parse_domain_pddl(form.as_list()).unwrap()
+    fn parse_domain(domain: &str) -> DomainDefinition {
+        try_parse_domain(domain).unwrap()
     }
 
     /// `settlersnumeric` declares `(:types place vehicle - store resource)`:
@@ -1028,17 +1111,16 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "(either ...) types are supported in predicate and function declarations only"
-    )]
     fn an_either_type_on_an_action_parameter_is_rejected() {
-        parse_domain(
+        domain_error(
             "(define (domain either-parameter)
                 (:requirements :typing)
                 (:types a b)
                 (:predicates (p ?x - a))
                 (:action act :parameters (?x - (either a b))
                     :precondition () :effect (p ?x)))",
+            ParseErrorKind::Unsupported,
+            "(either ...) types are supported in predicate and function declarations only",
         );
     }
 
@@ -1050,7 +1132,7 @@ mod tests {
                 (:types a - b b - a))",
         )
         .expect("test domain is valid S-expression");
-        let error = parse_domain_pddl(form.as_list()).unwrap_err().to_string();
+        let error = parse_domain_pddl(&form).unwrap_err().to_string();
         assert!(error.contains("is its own supertype"), "{error}");
     }
 
@@ -1073,32 +1155,33 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "undeclared type typoo")]
     fn rejects_undeclared_predicate_parameter_type() {
-        parse_domain(
+        domain_error(
             "(define (domain bad-predicate-type)
                 (:requirements :typing)
                 (:types place)
                 (:predicates (at ?x - typoo)))",
+            ParseErrorKind::Malformed,
+            "undeclared type typoo",
         );
     }
 
     #[test]
-    #[should_panic(expected = "undeclared type typoo")]
     fn rejects_undeclared_action_parameter_type() {
-        parse_domain(
+        domain_error(
             "(define (domain bad-action-type)
                 (:requirements :typing)
                 (:types place)
                 (:predicates (p))
                 (:action a :parameters (?x - typoo) :effect (p)))",
+            ParseErrorKind::Malformed,
+            "undeclared type typoo",
         );
     }
 
     #[test]
-    #[should_panic(expected = "undeclared type typoo")]
     fn rejects_undeclared_universal_parameter_type() {
-        parse_domain(
+        domain_error(
             "(define (domain bad-forall-type)
                 (:requirements :adl)
                 (:types place)
@@ -1106,13 +1189,14 @@ mod tests {
                 (:action a :parameters ()
                     :precondition (forall (?x - typoo) (p ?x))
                     :effect (p nowhere)))",
+            ParseErrorKind::Malformed,
+            "undeclared type typoo",
         );
     }
 
     #[test]
-    #[should_panic(expected = "undeclared type typoo")]
     fn rejects_undeclared_existential_parameter_type() {
-        parse_domain(
+        domain_error(
             "(define (domain bad-exists-type)
                 (:requirements :adl)
                 (:types place)
@@ -1120,6 +1204,57 @@ mod tests {
                 (:action a :parameters ()
                     :precondition (exists (?x - typoo) (p ?x))
                     :effect (p nowhere)))",
+            ParseErrorKind::Malformed,
+            "undeclared type typoo",
         );
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::parse_task;
+    use crate::pddl_parser::lisp_parser::{ParseErrorKind, parse_nested_list_string};
+
+    fn task_error(domain: &str, problem: &str) -> crate::pddl_parser::lisp_parser::ParseError {
+        let domain = parse_nested_list_string(domain).unwrap();
+        let problem = parse_nested_list_string(problem).unwrap();
+        parse_task(&domain, &problem).unwrap_err()
+    }
+
+    const DOMAIN: &str = "(define (domain d)\n (:predicates (p) (q ?x))\n (:action a :parameters () :precondition (p) :effect (q)))";
+
+    #[test]
+    fn malformed_input_is_an_error_with_its_line_not_a_panic() {
+        for (problem, line, message) in [
+            (
+                "(define (problem p) (:domain d)\n (:init (p))\n (:goal))",
+                3,
+                "(:goal CONDITION)",
+            ),
+            (
+                "(define (problem p) (:domain d)\n (:init (= (p)))\n (:goal (p)))",
+                2,
+                "(= FLUENT VALUE)",
+            ),
+            (
+                "(define (problem p) (:domain d)\n (:init (p) (not (p)))\n (:goal (p)))",
+                2,
+                "asserts and denies",
+            ),
+            ("(define problem)", 1, "(problem NAME)"),
+        ] {
+            let error = task_error(DOMAIN, problem);
+            assert_eq!(error.kind, ParseErrorKind::Malformed, "{error}");
+            assert_eq!(error.line, Some(line), "{error}");
+            assert!(error.message.contains(message), "{error}");
+        }
+    }
+
+    #[test]
+    /// The innermost list still open at the end of the file is reported.
+    fn an_unbalanced_file_names_the_unclosed_list() {
+        let error = parse_nested_list_string("(define (domain d)\n (:predicates (p)").unwrap_err();
+        assert_eq!(error.line, Some(2));
+        assert!(error.message.contains("no closing parenthesis"), "{error}");
     }
 }

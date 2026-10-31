@@ -80,7 +80,7 @@ fn partitions_from_cutpoints(cutpoints: &[NumericValue]) -> Vec<Interval> {
 }
 
 fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<NumericPartitions> {
-    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let initial_numeric_values = task.initial_numeric_values();
     let num_numeric_vars = task.numeric_variables().len();
 
     let mut cutpoints_by_var: Vec<BTreeSet<NumericValue>> = vec![BTreeSet::new(); num_numeric_vars];
@@ -437,8 +437,8 @@ fn first_plan_step(
     let mut refinement = DomainRefinement::new(task, function, limits, &config);
     let view = refinement.view(Deadline::NONE).unwrap();
     let initial = view.abstract_state(
-        task.get_initial_propositional_state_values(),
-        task.get_initial_numeric_state_values(),
+        task.initial_propositional_values(),
+        task.initial_numeric_values(),
     );
     view.step_operators(&view.optimal_transition(initial).unwrap())
         .to_vec()

@@ -81,7 +81,7 @@ impl<'task> RandomWalkSampler<'task> {
                     break;
                 }
                 let operator_id = applicable[self.rng.index(applicable.len())];
-                let operator = &self.task.get_operators()[operator_id.index()];
+                let operator = &self.task.operators()[operator_id.index()];
                 (state, _) = expansion.successor(registry, operator).map_err(|error| {
                     format!(
                         "numeric_potential random walk failed applying operator {} (`{}`): {error:?}",

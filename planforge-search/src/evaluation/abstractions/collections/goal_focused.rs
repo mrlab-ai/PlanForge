@@ -96,7 +96,7 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     );
     let start = Instant::now();
     let mut budget = CollectionBudget::new(schedule.limits, start)?;
-    if task.get_num_goals() == 0 {
+    if task.goals().is_empty() {
         return build_goal_free_member(task, schedule, backend, budget, start);
     }
 
@@ -223,8 +223,7 @@ fn build_member<B: GoalFocusedBackend>(
 ) -> Result<BuiltMember<B::Member>> {
     let full_task = !schedule.single_goal_tasks;
     let construction = schedule.construction(member, budget);
-    let goal_task =
-        (!full_task).then(|| SingleGoalTask::new(task, *task.get_goal_fact(member.goal_id)));
+    let goal_task = (!full_task).then(|| SingleGoalTask::new(task, task.goals()[member.goal_id]));
     let member_task = goal_task
         .as_ref()
         .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);

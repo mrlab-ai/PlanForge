@@ -588,19 +588,25 @@ fn translate_strips_operator_aux(
         if eff_condition_list.is_none() {
             continue; // Impossible condition
         }
-        if let Some(pairs) = translation.dictionary.get(fact) {
-            for &(var, val) in pairs {
-                effects_by_variable
-                    .entry(var)
-                    .or_default()
-                    .entry(val)
-                    .or_default()
-                    .extend(eff_condition_list.clone().unwrap());
-                add_conds_by_variable
-                    .entry(var)
-                    .or_default()
-                    .push(conditions_list.clone());
-            }
+        // An add effect of a reachable operator is a reachable atom, which
+        // the dictionary encodes.
+        let pairs = translation.dictionary.get(fact).unwrap_or_else(|| {
+            panic!(
+                "add effect {fact} of operator {} has no SAS encoding",
+                operator.name
+            )
+        });
+        for &(var, val) in pairs {
+            effects_by_variable
+                .entry(var)
+                .or_default()
+                .entry(val)
+                .or_default()
+                .extend(eff_condition_list.clone().unwrap());
+            add_conds_by_variable
+                .entry(var)
+                .or_default()
+                .push(conditions_list.clone());
         }
     }
 
@@ -613,6 +619,8 @@ fn translate_strips_operator_aux(
         if eff_condition_list.is_none() {
             continue;
         }
+        // An atom without an encoding is never true, so deleting it does
+        // nothing.
         if let Some(pairs) = translation.dictionary.get(fact) {
             for &(var, val) in pairs {
                 del_effects_by_variable
@@ -1204,7 +1212,7 @@ fn translate_task(
             ));
         };
         num_init_values[var] = nc.value;
-        if fact.fluent.ntype == 'R' {
+        if fact.fluent.kind == FluentKind::Regular {
             relevant_numeric.push(var);
         }
     }
@@ -1318,7 +1326,7 @@ fn translate_task(
     let num_var_types: Vec<String> = translation
         .numeric_names
         .iter()
-        .map(|entry| entry.ntype.to_string())
+        .map(|entry| entry.kind.sas_letter().to_string())
         .collect();
 
     let numeric_variables =
@@ -1333,8 +1341,8 @@ fn translate_task(
     let sas_init = SASInit::new(init_values, translation.num_vals.clone());
 
     // Look up task.metric fluent
-    let sas_metric = if task.metric.1.symbol.is_empty() || task.metric.1.ntype == 'X' {
-        // Unit cost or special marker
+    let sas_metric = if task.metric.1.symbol.is_empty() {
+        // Unit cost
         (task.metric.0.clone(), -1i64)
     } else {
         let idx = translation.numeric.get(&task.metric.1).unwrap_or_else(|| {
@@ -1445,23 +1453,13 @@ pub fn translate_grounded_task(
     } = explored;
     let goal = &task.goal;
 
-    fn type_rank(ntype: char) -> u8 {
-        match ntype {
-            'I' => 4,
-            'R' => 3,
-            'D' => 2,
-            'C' => 1,
-            _ => 0,
-        }
-    }
-
     fn merge_numeric_fluent_type(
         merged: &mut HashMap<(String, Vec<String>), PrimitiveNumericExpression>,
         pne: PrimitiveNumericExpression,
     ) {
         let key = (pne.symbol.clone(), pne.args.clone());
         match merged.get(&key) {
-            Some(existing) if type_rank(existing.ntype) >= type_rank(pne.ntype) => {}
+            Some(existing) if existing.kind.merge_rank() >= pne.kind.merge_rank() => {}
             _ => {
                 merged.insert(key, pne);
             }
@@ -1481,7 +1479,7 @@ pub fn translate_grounded_task(
         left.symbol
             .cmp(&right.symbol)
             .then_with(|| left.args.cmp(&right.args))
-            .then_with(|| left.ntype.cmp(&right.ntype))
+            .then_with(|| left.kind.cmp(&right.kind))
     });
 
     // Build goal list
@@ -1761,7 +1759,7 @@ mod tests {
             assign_effects: vec![],
             cost: Some(FunctionAssignment::new(
                 "+".to_string(),
-                PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+                PrimitiveNumericExpression::total_cost(),
                 FunctionalExpression::PrimitiveNumericExpression(expression),
             )),
         };

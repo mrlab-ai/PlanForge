@@ -95,7 +95,7 @@ impl PotentialTask {
         simple_action_bounds: bool,
     ) -> Result<Self, String> {
         validate_abstractable_goal(task)?;
-        for (operator_id, operator) in task.get_operators().iter().enumerate() {
+        for (operator_id, operator) in task.operators().iter().enumerate() {
             for effect in operator.effects() {
                 if !effect.conditions().is_empty() {
                     return Err(format!(
@@ -198,8 +198,8 @@ impl PotentialTask {
         }
 
         let mut assignment_targets = vec![false; numeric_count];
-        let mut primitive_deltas = Vec::with_capacity(task.get_operators().len());
-        for (operator_id, operator) in task.get_operators().iter().enumerate() {
+        let mut primitive_deltas = Vec::with_capacity(task.operators().len());
+        for (operator_id, operator) in task.operators().iter().enumerate() {
             let linearized = task
                 .linearized_assignment_effects(OperatorIndex::from_usize(operator_id))
                 .map_err(|error| {
@@ -250,7 +250,7 @@ impl PotentialTask {
                         .any(|(variable_id, _)| assignment_targets[variable_id.index()])
             })
             .collect();
-        let initial_numeric = task.get_initial_numeric_state_values();
+        let initial_numeric = task.initial_numeric_values();
         let mut global_linear_equalities = Vec::new();
         for lhs in 0..numeric_count {
             if task.numeric_variables()[lhs].get_type() != &NumericType::Regular
@@ -295,7 +295,7 @@ impl PotentialTask {
         }
 
         let operators = task
-            .get_operators()
+            .operators()
             .iter()
             .enumerate()
             .map(|(operator_id, operator)| {
@@ -337,7 +337,7 @@ impl PotentialTask {
                         })
                         .collect(),
                     numeric_precondition_bounds: sparse_bounds(numeric_precondition_bounds),
-                    cost: task.abstract_operator_cost(OperatorIndex::from_usize(operator_id)),
+                    cost: task.operator_cost(OperatorIndex::from_usize(operator_id)),
                     reachable: true,
                 })
             })
@@ -386,7 +386,7 @@ impl PotentialTask {
             bounds_provider,
             BoundsProvider::Monotone | BoundsProvider::All
         ) {
-            let initial = task.get_initial_numeric_state_values();
+            let initial = task.initial_numeric_values();
             for (feature_id, feature) in features.iter().enumerate() {
                 if assignment_target_features[feature_id] {
                     continue;
@@ -569,7 +569,7 @@ fn build_cpp_numeric_features(
         // rule refuting `v` names comes from a body of a rule proving `v` --
         // so refuting rules never contribute a variable, nor a position in
         // the order, that the proving rules have not already contributed.
-        for operator in task.get_operators() {
+        for operator in task.operators() {
             for precondition in operator.preconditions() {
                 record_fact(precondition);
             }
@@ -801,7 +801,7 @@ fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, S
                 reachable_facts[axiom.var_id().index()][axiom.effect_value().index()] = true;
             }
         }
-        for operator in task.get_operators() {
+        for operator in task.operators() {
             if !operator
                 .preconditions()
                 .iter()

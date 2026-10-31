@@ -68,7 +68,7 @@ impl CartesianSemantics<'_> {
     ) -> Result<bool> {
         let op = self
             .task
-            .get_operators()
+            .operators()
             .get(op_id.index())
             .with_context(|| format!("missing operator {op_id}"))?;
         for fact in op.preconditions() {
@@ -91,7 +91,7 @@ impl CartesianSemantics<'_> {
                 && self.propositional_axioms_by_prop_var[var_id.index()].is_empty(),
             "derived proposition {var_id} has no explicit transition relation"
         );
-        let op = &self.task.get_operators()[op_id.index()];
+        let op = &self.task.operators()[op_id.index()];
         if let Some(effect) = op.effects().iter().find(|effect| effect.var_id() == var_id) {
             debug_assert!(
                 effect.conditions().is_empty(),
@@ -156,7 +156,7 @@ impl CartesianSemantics<'_> {
         var_id: VariableIndex,
     ) -> Result<Interval> {
         let mut interval = Interval::unbounded();
-        for fact in self.task.get_operators()[op_id.index()].preconditions() {
+        for fact in self.task.operators()[op_id.index()].preconditions() {
             let Some(tree_id) = self.task.numeric_conditions().id_for_var(fact.var_index()) else {
                 continue;
             };
@@ -204,7 +204,7 @@ impl CartesianSemantics<'_> {
         if !self.operator_may_apply(source, op_id)? {
             return Ok(false);
         }
-        for var_id in 0..self.task.get_num_variables() {
+        for var_id in 0..self.task.variables().len() {
             if self
                 .task
                 .numeric_conditions()
@@ -270,14 +270,14 @@ impl CartesianSemantics<'_> {
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(Some(preimage));
         }
-        let op = &self.task.get_operators()[op_id.index()];
+        let op = &self.task.operators()[op_id.index()];
         for effect in op
             .assignment_effects()
             .iter()
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
             .rev()
         {
-            let rhs = self.task.get_initial_numeric_state_values()[effect.var_id().index()];
+            let rhs = self.task.initial_numeric_values()[effect.var_id().index()];
             match effect.operation() {
                 AssignmentOperation::Assign => {
                     if !preimage.contains(rhs) {

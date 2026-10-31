@@ -9,7 +9,7 @@ use super::abstract_operators::DomainMapping;
 pub(crate) fn identity_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
 ) -> (DomainMapping, Vec<usize>) {
-    let num_vars = task.get_num_variables();
+    let num_vars = task.variables().len();
     let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
     let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
     for var_id in (0..num_vars).map(VariableIndex::from_usize) {

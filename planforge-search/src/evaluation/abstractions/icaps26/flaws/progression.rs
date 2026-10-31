@@ -32,13 +32,11 @@ fn concrete_is_goal(
     state_packer: &StatePacker,
     propositions: &[u64],
 ) -> bool {
-    (0..semantics.task().get_num_goals()).all(|goal_id| {
-        fact_is_held(
-            semantics.task().get_goal_fact(goal_id),
-            state_packer,
-            propositions,
-        )
-    })
+    semantics
+        .task()
+        .goals()
+        .iter()
+        .all(|goal| fact_is_held(goal, state_packer, propositions))
 }
 
 pub(in super::super) fn replay_optimal_abstract_trace(
@@ -85,8 +83,10 @@ pub(in super::super) fn replay_optimal_abstract_trace(
                     cost: concrete_cost,
                 }));
             }
-            let failed_goals = (0..semantics.task().get_num_goals())
-                .map(|goal_id| semantics.task().get_goal_fact(goal_id))
+            let failed_goals = semantics
+                .task()
+                .goals()
+                .iter()
                 .filter(|goal| !fact_is_held(goal, state_packer, &propositions))
                 .collect::<Vec<_>>();
             ensure!(
@@ -153,7 +153,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
             "Cartesian shortest path references missing transition {transition:?}"
         );
         let op_id = transition.concrete_op_id;
-        let op = &semantics.task().get_operators()[op_id.index()];
+        let op = &semantics.task().operators()[op_id.index()];
         let failed_preconditions = op
             .preconditions()
             .iter()
@@ -251,7 +251,7 @@ pub(in super::super) fn validate_concrete_plan(
     for (step, &op_id) in plan.operator_ids.iter().enumerate() {
         let op = semantics
             .task()
-            .get_operators()
+            .operators()
             .get(op_id.index())
             .with_context(|| format!("concrete plan step {step} has invalid operator {op_id}"))?;
         for precondition in op.preconditions() {

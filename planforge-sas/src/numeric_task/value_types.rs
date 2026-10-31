@@ -96,6 +96,11 @@ impl ExplicitVariable {
     pub fn domain_size(&self) -> usize {
         self.domain_size
     }
+
+    /// The value a derived variable is reset to before its axioms run.
+    pub fn axiom_default_value(&self) -> ExplicitValueIndex {
+        self.axiom_default_value
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

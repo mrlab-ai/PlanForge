@@ -482,7 +482,7 @@ pub(in super::super) fn split_deviation_candidates(
         }
         let value = successor_prop[var_id.index()];
         if allowed.binary_search(&value).is_err() {
-            let op = &semantics.task().get_operators()[op_id.index()];
+            let op = &semantics.task().operators()[op_id.index()];
             let unaffected = !op.effects().iter().any(|effect| effect.var_id() == var_id);
             ensure!(
                 unaffected,
@@ -566,7 +566,7 @@ pub(in super::super) fn split_deviation_candidates(
     ensure!(
         !candidates.is_empty(),
         "concrete successor maps from Cartesian state {source_state_id} to a state other than abstract target {target_state_id}, but no sound strict split exists for operator {op_id} ({}); numeric split rejections: [{}]",
-        semantics.task().get_operators()[op_id.index()].name(),
+        semantics.task().operators()[op_id.index()].name(),
         rejected_numeric_splits.join("; ")
     );
     Ok(candidates)

@@ -36,9 +36,7 @@ pub(crate) fn log_final_abstraction(
         .enumerate()
         .filter(|(_, size)| **size > 1)
     {
-        let name = task
-            .get_variable_name(VariableIndex::from_usize(var_id))
-            .expect("every propositional variable has a name");
+        let name = task.variable(VariableIndex::from_usize(var_id)).name();
         info!("  p{var_id}={name}, size={size}");
     }
 }

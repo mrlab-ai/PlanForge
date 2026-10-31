@@ -71,7 +71,7 @@ fn analyze_additive_numeric_view(
         return None;
     };
     let operator_deltas = task
-        .get_operators()
+        .operators()
         .iter()
         .map(|operator| additive_view_delta_for_operator(task, terms, operator))
         .collect::<Option<Vec<_>>>()?;
@@ -155,7 +155,7 @@ fn constant_effect_delta(
     if task.numeric_variables()[effect.var_id().index()].get_type() != &NumericType::Constant {
         return None;
     }
-    let rhs = task.get_initial_numeric_state_values()[effect.var_id().index()];
+    let rhs = task.initial_numeric_values()[effect.var_id().index()];
     if !rhs.is_finite() {
         return None;
     }
@@ -252,7 +252,7 @@ impl<'task> Coordinates<'task> {
     /// The values of the task's numeric variables in its initial state, with
     /// every derived coordinate evaluated through its view.
     pub(crate) fn initial_values(&self) -> Vec<NumericValue> {
-        let mut values = self.task.get_initial_numeric_state_values().to_vec();
+        let mut values = self.task.initial_numeric_values().to_vec();
         for (numeric_var_id, view) in self.views.iter().enumerate() {
             if let Some(view) = view {
                 // A view reads regular variables only, which keep their values.
@@ -292,8 +292,8 @@ impl<'task> Coordinates<'task> {
             );
         }
         let mut preimage = target;
-        let initial = self.task.get_initial_numeric_state_values();
-        for effect in self.task.get_operators()[op_id.index()]
+        let initial = self.task.initial_numeric_values();
+        for effect in self.task.operators()[op_id.index()]
             .assignment_effects()
             .iter()
             .filter(|effect| effect.affected_var_id() == coordinate)
@@ -336,8 +336,8 @@ pub(crate) fn coordinate_image(
         image.apply_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
         return image;
     }
-    let initial = task.get_initial_numeric_state_values();
-    for effect in task.get_operators()[op_id.index()]
+    let initial = task.initial_numeric_values();
+    for effect in task.operators()[op_id.index()]
         .assignment_effects()
         .iter()
         .filter(|effect| effect.affected_var_id() == coordinate)
@@ -376,7 +376,7 @@ fn condition_requirement(
     {
         return None;
     }
-    let threshold = task.get_initial_numeric_state_values()[threshold_var.index()];
+    let threshold = task.initial_numeric_values()[threshold_var.index()];
     let values = match required_op {
         CompOp::Lt => Interval::new(NEG_INF_VALUE, threshold, false, false),
         CompOp::Le => Interval::new(NEG_INF_VALUE, threshold, false, true),

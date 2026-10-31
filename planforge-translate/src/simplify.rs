@@ -2,7 +2,7 @@
 use std::collections::{HashMap, HashSet};
 
 use planforge_sas::numeric_task::ZERO_VALUE;
-use tracing::{Level, debug, info};
+use tracing::{debug, info};
 
 use super::sas_tasks::*;
 
@@ -612,10 +612,6 @@ fn build_renaming(dtgs: &[DomainTransitionGraph]) -> VarValueRenaming {
 /// Simplifies the task in-place. Returns Err(Impossible) or Err(TriviallySolvable)
 /// if the task is detected as unsolvable or trivially solvable.
 pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), SimplifyError> {
-    if tracing::enabled!(Level::DEBUG) {
-        sas_task.validate();
-    }
-
     let dtgs = build_dtgs(sas_task);
     let renaming = build_renaming(&dtgs);
 
@@ -623,10 +619,7 @@ pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), Sim
 
     info!("{} propositions removed", renaming.num_removed_values);
 
-    if tracing::enabled!(Level::DEBUG) {
-        sas_task.validate();
-    }
-
+    sas_task.validate();
     Ok(())
 }
 

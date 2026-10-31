@@ -4,12 +4,12 @@ use super::*;
 
 impl CartesianSemantics<'_> {
     pub(in super::super) fn trivial_region(&self) -> Result<CartesianSet> {
-        let propositions = (0..self.task.get_num_variables())
+        let propositions = (0..self.task.variables().len())
             .map(|var_id| {
                 let size = self
                     .task
-                    .get_variable_domain_size(VariableIndex::from_usize(var_id))
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                    .variable(VariableIndex::from_usize(var_id))
+                    .domain_size();
                 ensure!(size > 0, "propositional var {var_id} has an empty domain");
                 ensure!(
                     u32::try_from(size).is_ok(),
@@ -18,7 +18,7 @@ impl CartesianSemantics<'_> {
                 Ok((0..size as u32).map(ExplicitValueIndex::new).collect())
             })
             .collect::<Result<Vec<_>>>()?;
-        let initial_numeric = self.task.get_initial_numeric_state_values();
+        let initial_numeric = self.task.initial_numeric_values();
         let numeric: Vec<_> = self
             .task
             .numeric_variables()
@@ -46,7 +46,7 @@ impl CartesianSemantics<'_> {
         region: &CartesianSet,
         fact: &ExplicitFact,
     ) -> Result<bool> {
-        let mut visiting = vec![false; self.task.get_num_variables()];
+        let mut visiting = vec![false; self.task.variables().len()];
         self.region_admits_fact_inner(region, fact, &mut visiting)
     }
 
@@ -108,7 +108,7 @@ impl CartesianSemantics<'_> {
         region: &CartesianSet,
         fact: &ExplicitFact,
     ) -> Result<bool> {
-        let mut visiting = vec![false; self.task.get_num_variables()];
+        let mut visiting = vec![false; self.task.variables().len()];
         self.region_guarantees_fact_inner(region, fact, &mut visiting)
     }
 
@@ -236,8 +236,8 @@ impl CartesianSemantics<'_> {
     }
 
     pub(in super::super) fn region_is_goal(&self, region: &CartesianSet) -> Result<bool> {
-        for goal_id in 0..self.task.get_num_goals() {
-            if !self.region_admits_fact(region, self.task.get_goal_fact(goal_id))? {
+        for goal in self.task.goals() {
+            if !self.region_admits_fact(region, goal)? {
                 return Ok(false);
             }
         }
@@ -252,7 +252,7 @@ impl CartesianSemantics<'_> {
     ) {
         out.clear();
         out.extend(
-            (0..self.task.get_num_variables())
+            (0..self.task.variables().len())
                 .map(|var_id| ExplicitValueIndex::from_usize(packer.get(packed, var_id) as usize)),
         );
     }

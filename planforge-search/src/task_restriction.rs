@@ -52,7 +52,7 @@ pub fn validate_restricted_task(task: &dyn AbstractNumericTask) -> std::result::
             }
         }
     }
-    for (operator_id, operator) in task.get_operators().iter().enumerate() {
+    for (operator_id, operator) in task.operators().iter().enumerate() {
         for (effect_id, effect) in operator.assignment_effects().iter().enumerate() {
             let affected = task
                 .numeric_variables()
@@ -203,7 +203,7 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
         );
     }
 
-    let initial_numeric = task.get_initial_numeric_state_values().to_vec();
+    let initial_numeric = task.initial_numeric_values().to_vec();
     // Every linear comparison is already a direct threshold. Promote each
     // shared multi-variable linear part once.
     let mut root_var_ids = BTreeSet::new();
@@ -263,10 +263,10 @@ pub fn build_icaps26_restricted_task(
         return Ok(None);
     }
 
-    let initial_numeric = task.get_initial_numeric_state_values().to_vec();
+    let initial_numeric = task.initial_numeric_values().to_vec();
     let num_original_numeric = task.numeric_variables().len();
     let mut used_comparison_vars = BTreeSet::new();
-    for operator in task.get_operators() {
+    for operator in task.operators() {
         used_comparison_vars.extend(operator.preconditions().iter().map(ExplicitFact::var_index));
     }
     used_comparison_vars.extend(task.goals().iter().map(ExplicitFact::var_index));
@@ -395,8 +395,8 @@ pub fn build_icaps26_restricted_task(
     }
 
     let root_exprs = BTreeMap::new();
-    let mut operators = Vec::with_capacity(task.get_operators().len());
-    for operator in task.get_operators() {
+    let mut operators = Vec::with_capacity(task.operators().len());
+    for operator in task.operators() {
         operators.push(transform_operator(
             task,
             operator,
@@ -443,10 +443,10 @@ pub fn build_icaps26_restricted_task(
         numeric_variables,
         goals: task.goals().to_vec(),
         mutexes: vec![],
-        state: task.get_initial_propositional_state_values().to_vec(),
+        state: task.initial_propositional_values().to_vec(),
         numeric_state: numeric_initial,
         operators,
-        axioms: task.axioms().clone(),
+        axioms: task.axioms().to_vec(),
         comparison_axioms,
         assignment_axioms: Vec::new(),
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -522,8 +522,8 @@ fn build_task(
     }
 
     let mut constants = ConstantPool::default();
-    let mut operators = Vec::with_capacity(task.get_operators().len());
-    for operator in task.get_operators() {
+    let mut operators = Vec::with_capacity(task.operators().len());
+    for operator in task.operators() {
         operators.push(transform_operator(
             task,
             operator,
@@ -571,10 +571,10 @@ fn build_task(
         numeric_variables,
         goals: task.goals().to_vec(),
         mutexes: vec![],
-        state: task.get_initial_propositional_state_values().to_vec(),
+        state: task.initial_propositional_values().to_vec(),
         numeric_state: numeric_initial,
         operators,
-        axioms: task.axioms().clone(),
+        axioms: task.axioms().to_vec(),
         comparison_axioms,
         assignment_axioms: Vec::<AssignmentAxiom>::new(),
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -616,13 +616,13 @@ fn ensure_operator_costs_unchanged(
     transformed_task: &dyn AbstractNumericTask,
 ) -> Result<()> {
     ensure!(
-        source_task.get_operators().len() == transformed_task.get_operators().len(),
+        source_task.operators().len() == transformed_task.operators().len(),
         "restricted task changed the operator count"
     );
-    for (operator_id, source) in source_task.get_operators().iter().enumerate() {
+    for (operator_id, source) in source_task.operators().iter().enumerate() {
         let operator_index = OperatorIndex::from_usize(operator_id);
-        let source_cost = source_task.abstract_operator_cost(operator_index);
-        let transformed_cost = transformed_task.abstract_operator_cost(operator_index);
+        let source_cost = source_task.operator_cost(operator_index);
+        let transformed_cost = transformed_task.operator_cost(operator_index);
         ensure!(
             (source_cost - transformed_cost).abs()
                 <= planforge_sas::utils::float_tolerance::AGREEMENT_EPSILON
@@ -639,7 +639,7 @@ fn renumber_propositional_axiom_layers(
     comparison_axioms: &[ComparisonAxiom],
 ) -> Vec<ExplicitVariable> {
     if comparison_axioms.is_empty() {
-        return task.variables().clone();
+        return task.variables().to_vec();
     }
 
     let comparison_vars = comparison_axioms

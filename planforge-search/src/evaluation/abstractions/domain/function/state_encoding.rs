@@ -333,8 +333,8 @@ impl DomainAbstractionFunction {
     /// The abstract state of the task's initial state.
     pub(crate) fn initial_state(&self, task: &dyn AbstractNumericTask) -> usize {
         self.abstract_state(
-            task.get_initial_propositional_state_values(),
-            task.get_initial_numeric_state_values(),
+            task.initial_propositional_values(),
+            task.initial_numeric_values(),
         )
     }
 

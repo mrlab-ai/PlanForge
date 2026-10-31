@@ -134,7 +134,7 @@ impl WorkingAbstraction {
                 .push(OperatorBitSet::empty(0));
             None
         } else {
-            let operator_count = semantics.task.get_operators().len();
+            let operator_count = semantics.task.operators().len();
             let old_self_loops = std::mem::replace(
                 &mut working.self_loop_operator_ids[old_state_id],
                 OperatorBitSet::empty(operator_count),

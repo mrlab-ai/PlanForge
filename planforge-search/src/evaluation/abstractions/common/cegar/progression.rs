@@ -126,7 +126,7 @@ pub(crate) fn replay_plan(
         let mut deviation_splits = Vec::new();
         let mut executed = None;
         for &op_id in view.step_operators(&transition) {
-            let op = &semantics.task().get_operators()[op_id.index()];
+            let op = &semantics.task().operators()[op_id.index()];
             let failed_preconditions = state.unsatisfied(op.preconditions()).collect::<Vec<_>>();
             if !failed_preconditions.is_empty() {
                 for failed in failed_preconditions {
@@ -296,7 +296,7 @@ fn replay_whole_plan(
         let mut step_splits = Vec::new();
         let mut applicable = None;
         for &op_id in step_operators {
-            let op = &semantics.task().get_operators()[op_id.index()];
+            let op = &semantics.task().operators()[op_id.index()];
             let failed_preconditions = state.unsatisfied(op.preconditions()).collect::<Vec<_>>();
             if failed_preconditions.is_empty() {
                 applicable = Some(op_id);
@@ -320,7 +320,7 @@ fn replay_whole_plan(
             push_unique_split(&mut candidates, &mut candidate_identities, split);
         }
         let op_id = applicable.unwrap_or(step_operators[0]);
-        let op = &semantics.task().get_operators()[op_id.index()];
+        let op = &semantics.task().operators()[op_id.index()];
 
         // Past a failed precondition the replay continues counterfactually.
         semantics
@@ -369,7 +369,7 @@ pub(crate) fn validate_concrete_plan(
     for (step, &op_id) in plan.operator_ids.iter().enumerate() {
         let op = semantics
             .task()
-            .get_operators()
+            .operators()
             .get(op_id.index())
             .with_context(|| format!("concrete plan step {step} has invalid operator {op_id}"))?;
         for precondition in op.preconditions() {

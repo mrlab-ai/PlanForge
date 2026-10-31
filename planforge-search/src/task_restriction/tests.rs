@@ -86,18 +86,18 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
         "limit"
     );
     assert_eq!(
-        transformed.get_initial_numeric_state_values()[root.index()],
+        transformed.initial_numeric_values()[root.index()],
         NumericValue::new(5.0)
     );
     assert_eq!(
-        transformed.get_initial_numeric_state_values()[limit.index()],
+        transformed.initial_numeric_values()[limit.index()],
         NumericValue::new(10.0)
     );
-    let assignment_effects = transformed.get_operators()[0].assignment_effects();
+    let assignment_effects = transformed.operators()[0].assignment_effects();
     assert_eq!(assignment_effects.len(), 1);
     assert_eq!(assignment_effects[0].affected_var_id(), root);
     assert_eq!(
-        transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id().index()],
+        transformed.initial_numeric_values()[assignment_effects[0].var_id().index()],
         NumericValue::new(1.0)
     );
     assert!(
@@ -115,21 +115,21 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
         .position(|variable| variable.name() == "icaps26-condition-0")
         .expect("ICAPS condition auxiliary is missing");
     assert_eq!(
-        icaps.get_initial_numeric_state_values()[auxiliary_id],
+        icaps.initial_numeric_values()[auxiliary_id],
         NumericValue::new(-5.0)
     );
     assert_eq!(
         icaps.comparison_axioms()[0].get_left_var_id(),
         VariableIndex::from_usize(auxiliary_id)
     );
-    let auxiliary_effect = icaps.get_operators()[0]
+    let auxiliary_effect = icaps.operators()[0]
         .assignment_effects()
         .iter()
         .find(|effect| effect.affected_var_id() == VariableIndex::from_usize(auxiliary_id))
         .expect("operator must update the ICAPS condition auxiliary");
     assert_eq!(auxiliary_effect.operation(), &AssignmentOperation::Plus);
     assert_eq!(
-        icaps.get_initial_numeric_state_values()[auxiliary_effect.var_id().index()],
+        icaps.initial_numeric_values()[auxiliary_effect.var_id().index()],
         NumericValue::new(1.0)
     );
 }
@@ -193,7 +193,7 @@ fn a_unary_comparison_becomes_a_threshold_on_its_variable() {
 
     assert!(build_restricted_task(&task).unwrap().is_none());
     let transformed = &task;
-    let assignment_effects = transformed.get_operators()[0].assignment_effects();
+    let assignment_effects = transformed.operators()[0].assignment_effects();
 
     // `capacity - fuel > capacity` is `fuel < 0`: no promoted variable, and the
     // refuel assignment stays on `fuel`.
@@ -206,13 +206,13 @@ fn a_unary_comparison_becomes_a_threshold_on_its_variable() {
         &AssignmentOperation::Assign
     );
     assert_eq!(
-        transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id().index()],
+        transformed.initial_numeric_values()[assignment_effects[0].var_id().index()],
         NumericValue::new(6000.0)
     );
     let comparison = &transformed.comparison_axioms()[0];
     assert_eq!(comparison.get_left_var_id(), fuel);
     assert_eq!(
-        transformed.get_initial_numeric_state_values()[comparison.get_right_var_id().index()],
+        transformed.initial_numeric_values()[comparison.get_right_var_id().index()],
         NumericValue::new(0.0)
     );
     assert_eq!(comparison.get_operator(), &ComparisonOperator::LessThan);
@@ -290,14 +290,11 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
 
     assert!(build_restricted_task(&task).unwrap().is_none());
     let transformed = &task;
-    assert_eq!(task.abstract_operator_cost(OperatorIndex::new(0)), 1.0);
-    assert_eq!(
-        transformed.abstract_operator_cost(OperatorIndex::new(0)),
-        1.0
-    );
+    assert_eq!(task.operator_cost(OperatorIndex::new(0)), 1.0);
+    assert_eq!(transformed.operator_cost(OperatorIndex::new(0)), 1.0);
     let metric_var_id = transformed.metric().var_id().unwrap();
     assert!(
-        transformed.get_operators()[0]
+        transformed.operators()[0]
             .assignment_effects()
             .iter()
             .any(|effect| effect.affected_var_id() == metric_var_id)
@@ -394,16 +391,13 @@ fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
         transformed.numeric_variables()[metric_var_id.index()].get_type(),
         &NumericType::Cost
     );
-    assert_eq!(
-        transformed.abstract_operator_cost(OperatorIndex::new(0)),
-        2.0
-    );
+    assert_eq!(transformed.operator_cost(OperatorIndex::new(0)), 2.0);
 }
 
 #[test]
 fn restricted_task_preserves_derived_metric_cost() {
     let task = task_with_derived_metric();
-    assert_eq!(task.abstract_operator_cost(OperatorIndex::new(0)), 2.0);
+    assert_eq!(task.operator_cost(OperatorIndex::new(0)), 2.0);
     let restricted = build_restricted_task(&task)
         .unwrap()
         .expect("task should be restricted");
