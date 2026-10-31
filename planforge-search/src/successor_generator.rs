@@ -151,26 +151,33 @@ impl SuccessorTree {
         self.walk(self.root, state, out);
     }
 
-    fn walk(&self, id: NodeId, state: &[ExplicitValueIndex], out: &mut Vec<OperatorIndex>) {
-        // Shared empty leaf is a fast no-op; many branches point to it.
-        if id == self.empty_leaf {
-            return;
-        }
-        if id.is_leaf() {
-            let leaf = &self.leaves[id.index()];
-            out.extend_from_slice(&leaf.applicable_operators);
-            return;
-        }
-        let branch = &self.branches[id.index()];
-        out.extend_from_slice(&branch.immediate_operators);
-        let value = state[branch.var_id.index()];
-        if let Some(&child) = branch.value_children.get(value.index())
-            && child.is_valid()
-        {
-            self.walk(child, state, out);
-        }
-        if branch.default_child.is_valid() {
-            self.walk(branch.default_child, state, out);
+    /// Follows default children in a loop and recurses only into value
+    /// children, so the depth is bounded by the operators' precondition
+    /// counts, not by the number of variables (a default chain can pass
+    /// through every variable).
+    fn walk(&self, mut id: NodeId, state: &[ExplicitValueIndex], out: &mut Vec<OperatorIndex>) {
+        loop {
+            // Shared empty leaf is a fast no-op; many branches point to it.
+            if id == self.empty_leaf {
+                return;
+            }
+            if id.is_leaf() {
+                let leaf = &self.leaves[id.index()];
+                out.extend_from_slice(&leaf.applicable_operators);
+                return;
+            }
+            let branch = &self.branches[id.index()];
+            out.extend_from_slice(&branch.immediate_operators);
+            let value = state[branch.var_id.index()];
+            if let Some(&child) = branch.value_children.get(value.index())
+                && child.is_valid()
+            {
+                self.walk(child, state, out);
+            }
+            if !branch.default_child.is_valid() {
+                return;
+            }
+            id = branch.default_child;
         }
     }
 }
@@ -324,22 +331,63 @@ impl<'a> TreeBuilder<'a> {
         id
     }
 
+    /// The subtree of the operators in `queue` (which it empties), branching
+    /// on variables from `branch_var_id` on.
+    ///
+    /// A branch's default child (the operators without a condition on its
+    /// variable) continues with the next variable, so default chains can pass
+    /// through every variable of the task. They are built in a loop, each
+    /// branch linked to its successor in the chain once that exists, and only
+    /// value children recurse: the depth is bounded by the operators'
+    /// precondition counts. The operators are moved from level to level, so
+    /// no level keeps a drained buffer alive (with one buffer of nearly all
+    /// operators per variable that was operators x variables memory, 8 GB on
+    /// a grounded Sokoban task of 114k operators and 37k variables).
     fn construct(
         &mut self,
         mut branch_var_id: usize,
+        queue: &mut VecDeque<OperatorIndex>,
+    ) -> Result<NodeId, ConstructError> {
+        let mut queue = std::mem::take(queue);
+        // The first node of the chain and the branch whose default child is next.
+        let mut root = None;
+        let mut chain_end: Option<usize> = None;
+        loop {
+            let node = self.chain_node(&mut branch_var_id, &mut queue)?;
+            match chain_end {
+                Some(b) => self.branches[b].default_child = node,
+                None => root = Some(node),
+            }
+            if !node.is_leaf() && !queue.is_empty() {
+                chain_end = Some(node.index());
+                branch_var_id += 1;
+            } else {
+                return Ok(root.expect("the chain has a node"));
+            }
+        }
+    }
+
+    /// The next node of a default chain: a leaf, or a branch on the first
+    /// variable from `branch_var_id` some operator in `queue` has a condition
+    /// on (`branch_var_id` is left at it). For a branch, `queue` is left
+    /// holding its default operators and its default child is `empty_leaf`
+    /// until the caller links the chain's next node.
+    fn chain_node(
+        &mut self,
+        branch_var_id: &mut usize,
         queue: &mut VecDeque<OperatorIndex>,
     ) -> Result<NodeId, ConstructError> {
         if queue.is_empty() {
             return Ok(self.empty_leaf);
         }
         loop {
-            if branch_var_id >= self.task.variables().len() {
-                let ops: Vec<OperatorIndex> = queue.drain(..).collect();
+            let var = *branch_var_id;
+            if var >= self.task.variables().len() {
+                let ops: Vec<OperatorIndex> = std::mem::take(queue).into();
                 return Ok(self.push_leaf(ops));
             }
 
-            let branch_var = &self.task.variables()[branch_var_id];
-            let num_children = branch_var.domain_size();
+            let num_children = self.task.variables()[var].domain_size();
 
             let mut operators_for_value: Vec<VecDeque<OperatorIndex>> =
                 vec![VecDeque::new(); num_children];
@@ -359,11 +407,11 @@ impl<'a> TreeBuilder<'a> {
                 } else {
                     all_ops_immediate = false;
                     let fact = &self.conditions[op_idx.index()][condition_index];
-                    if fact.var() == branch_var_id {
+                    if fact.var() == var {
                         var_interesting = true;
                         let mut new_index = condition_index;
                         while new_index < self.conditions[op_idx.index()].len()
-                            && self.conditions[op_idx.index()][new_index].var() == branch_var_id
+                            && self.conditions[op_idx.index()][new_index].var() == var
                         {
                             new_index += 1;
                         }
@@ -374,29 +422,29 @@ impl<'a> TreeBuilder<'a> {
                     }
                 }
             }
+            // The drained buffer goes; the default operators continue.
+            *queue = default_operators;
 
             if all_ops_immediate {
                 return Ok(self.push_leaf(applicable_operators));
             } else if var_interesting {
                 let mut value_children: Vec<NodeId> = Vec::with_capacity(operators_for_value.len());
                 for mut ops in operators_for_value.into_iter() {
-                    let child = self.construct(branch_var_id + 1, &mut ops)?;
+                    let child = self.construct(var + 1, &mut ops)?;
                     value_children.push(child);
                 }
-                let default_child = self.construct(branch_var_id + 1, &mut default_operators)?;
                 let immediate = applicable_operators.into_boxed_slice();
-                let var_id_u32: u32 = branch_var_id
+                let var_id_u32: u32 = var
                     .try_into()
                     .expect("variable id overflows u32 — sas task has too many variables");
                 return Ok(self.push_branch(BranchEntry {
                     var_id: VariableIndex::new(var_id_u32),
                     immediate_operators: immediate,
                     value_children: value_children.into_boxed_slice(),
-                    default_child,
+                    default_child: self.empty_leaf,
                 }));
             } else {
-                branch_var_id += 1;
-                std::mem::swap(&mut default_operators, queue);
+                *branch_var_id += 1;
             }
         }
     }
