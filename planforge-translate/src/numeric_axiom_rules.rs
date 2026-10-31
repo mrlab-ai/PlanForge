@@ -1,4 +1,5 @@
 //! Handles numeric axiom constant folding, layer computation, and equivalence detection.
+use crate::pddl::f_expression::FluentKind;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use planforge_sas::numeric_task::NumericValue;
@@ -38,7 +39,7 @@ pub fn handle_axioms(axioms: &[InstantiatedNumericAxiom]) -> NumericAxioms {
             .symbol
             .cmp(&right.effect.symbol)
             .then_with(|| left.effect.args.cmp(&right.effect.args))
-            .then_with(|| left.effect.ntype.cmp(&right.effect.ntype))
+            .then_with(|| left.effect.kind.cmp(&right.effect.kind))
             .then_with(|| left.name.cmp(&right.name))
             .then_with(|| left.op.cmp(&right.op))
     });
@@ -149,7 +150,7 @@ fn fold_axiom_if_constant(
         axioms[idx].parts = vec![FunctionalExpression::NumericConstant(NumericConstant {
             value,
         })];
-        axioms[idx].effect.ntype = 'C';
+        axioms[idx].effect.kind = FluentKind::Constant;
     }
 
     visiting.remove(&effect);
@@ -336,11 +337,19 @@ mod tests {
             op: "+".to_string(),
             parts: vec![
                 FunctionalExpression::PrimitiveNumericExpression(
-                    PrimitiveNumericExpression::with_type(operand.to_string(), Vec::new(), 'R'),
+                    PrimitiveNumericExpression::with_kind(
+                        operand.to_string(),
+                        Vec::new(),
+                        FluentKind::Regular,
+                    ),
                 ),
                 FunctionalExpression::NumericConstant(NumericConstant::new(1.0)),
             ],
-            effect: PrimitiveNumericExpression::with_type(symbol.to_string(), Vec::new(), 'D'),
+            effect: PrimitiveNumericExpression::with_kind(
+                symbol.to_string(),
+                Vec::new(),
+                FluentKind::Derived,
+            ),
         }
     }
 

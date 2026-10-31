@@ -367,8 +367,8 @@ fn parse_function_comparison(form: Form<'_>) -> ParseResult<Condition> {
 
 pub fn parse_expression(expr: &SExpr) -> ParseResult<FunctionalExpression> {
     fn classify_pne(symbol: String, args: Vec<String>) -> PrimitiveNumericExpression {
-        if symbol == "total-cost" && args.is_empty() {
-            PrimitiveNumericExpression::with_type(symbol, args, 'I')
+        if symbol == TOTAL_COST && args.is_empty() {
+            PrimitiveNumericExpression::total_cost()
         } else {
             PrimitiveNumericExpression::new(symbol, args)
         }

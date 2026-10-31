@@ -134,11 +134,11 @@ impl<'a> Role<'a> {
 
 /// Numeric fluents are typed by their symbol: the metric is integral, a
 /// function introduced by normalization is derived, everything else is real.
-fn function_type(symbol: &str) -> char {
+fn function_kind(symbol: &str) -> FluentKind {
     match symbol {
-        "total-cost" => 'I',
-        _ if symbol.starts_with("derived!") => 'D',
-        _ => 'R',
+        TOTAL_COST => FluentKind::Instrumentation,
+        _ if symbol.starts_with("derived!") => FluentKind::Derived,
+        _ => FluentKind::Regular,
     }
 }
 
@@ -221,10 +221,10 @@ pub fn explore(task: &Task, limits: GroundingLimits) -> Result<ExploreResult, Gr
         match role.bookkeeping {
             Bookkeeping::None => {}
             Bookkeeping::Function(symbol) => {
-                fluent_functions.insert(PrimitiveNumericExpression::with_type(
+                fluent_functions.insert(PrimitiveNumericExpression::with_kind(
                     symbol.to_owned(),
                     args(),
-                    function_type(symbol),
+                    function_kind(symbol),
                 ));
             }
             Bookkeeping::ActionParameters(name) => {

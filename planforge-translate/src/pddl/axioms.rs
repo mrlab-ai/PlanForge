@@ -1,3 +1,4 @@
+use crate::pddl::f_expression::FluentKind;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -133,13 +134,17 @@ impl NumericAxiom {
         }
     }
 
-    pub fn ntype(&self) -> char {
-        if self.op.is_empty() { 'C' } else { 'D' }
+    pub fn kind(&self) -> FluentKind {
+        if self.op.is_empty() {
+            FluentKind::Constant
+        } else {
+            FluentKind::Derived
+        }
     }
 
     pub fn get_head(&self) -> PrimitiveNumericExpression {
         let args: Vec<String> = self.parameters.iter().map(|p| p.name.clone()).collect();
-        PrimitiveNumericExpression::with_type(self.name.clone(), args, self.ntype())
+        PrimitiveNumericExpression::with_kind(self.name.clone(), args, self.kind())
     }
 
     pub fn instantiate(
@@ -150,10 +155,10 @@ impl NumericAxiom {
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut OrderedSet<InstantiatedNumericAxiom>,
     ) -> InstantiatedNumericAxiom {
-        let effect = PrimitiveNumericExpression::with_type(
+        let effect = PrimitiveNumericExpression::with_kind(
             self.name.clone(),
             var_mapping.resolve_parameters(&self.parameters),
-            self.ntype(),
+            self.kind(),
         );
 
         let new_parts: Vec<FunctionalExpression> = self

@@ -39,37 +39,79 @@ impl fmt::Display for NumericConstant {
     }
 }
 
-/// ntype is one of 'C' (constant), 'D' (derived), 'I' (instrumental/total-cost), 'R' (regular)
+/// What a numeric fluent is. The variants are in the order of the SAS
+/// letters, which is the order fluents of equal name sort in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FluentKind {
+    /// `C`: a value no operator changes.
+    Constant,
+    /// `D`: a value numeric axioms derive from others.
+    Derived,
+    /// `I`: the instrumentation fluent `total-cost`, which only accumulates
+    /// action costs.
+    Instrumentation,
+    /// `R`: a fluent operators change.
+    Regular,
+}
+
+impl FluentKind {
+    /// The letter the SAS format writes for the kind.
+    pub fn sas_letter(self) -> char {
+        match self {
+            Self::Constant => 'C',
+            Self::Derived => 'D',
+            Self::Instrumentation => 'I',
+            Self::Regular => 'R',
+        }
+    }
+
+    /// Which of two kinds the same fluent was seen with it is: one that
+    /// operators change outranks a derived one, which outranks a constant,
+    /// and the instrumentation fluent outranks them all.
+    pub fn merge_rank(self) -> u8 {
+        match self {
+            Self::Constant => 1,
+            Self::Derived => 2,
+            Self::Regular => 3,
+            Self::Instrumentation => 4,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PrimitiveNumericExpression {
     pub symbol: String,
     pub args: Vec<String>,
-    pub ntype: char,
+    pub kind: FluentKind,
 }
 
+/// The name of the fluent PDDL accumulates action costs in.
+pub const TOTAL_COST: &str = "total-cost";
+
 impl PrimitiveNumericExpression {
+    /// The action-cost fluent `(total-cost)`.
+    pub fn total_cost() -> Self {
+        Self::with_kind(TOTAL_COST.to_string(), vec![], FluentKind::Instrumentation)
+    }
+
     pub fn new(symbol: String, args: Vec<String>) -> Self {
         PrimitiveNumericExpression {
             symbol,
             args,
-            ntype: 'R',
+            kind: FluentKind::Regular,
         }
     }
 
-    pub fn with_type(symbol: String, args: Vec<String>, ntype: char) -> Self {
-        PrimitiveNumericExpression {
-            symbol,
-            args,
-            ntype,
-        }
+    pub fn with_kind(symbol: String, args: Vec<String>, kind: FluentKind) -> Self {
+        PrimitiveNumericExpression { symbol, args, kind }
     }
 
     /// The same fluent with its arguments put through `substitution`.
     pub fn substituted(&self, substitution: &impl super::Substitution) -> Self {
-        PrimitiveNumericExpression::with_type(
+        PrimitiveNumericExpression::with_kind(
             self.symbol.clone(),
             super::substitute(&self.args, substitution),
-            self.ntype,
+            self.kind,
         )
     }
 }
@@ -189,7 +231,7 @@ impl FunctionAssignment {
     /// Whether this is an action cost: an increase of `total-cost`. Any other
     /// effect on `total-cost` is an ordinary numeric effect.
     pub fn is_cost_assignment(&self) -> bool {
-        self.symbol == "+" && self.fluent.symbol == "total-cost"
+        self.symbol == "+" && self.fluent.symbol == TOTAL_COST
     }
 }
 
@@ -277,10 +319,10 @@ impl FunctionalExpression {
         match self {
             FunctionalExpression::PrimitiveNumericExpression(pne) => {
                 FunctionalExpression::PrimitiveNumericExpression(
-                    PrimitiveNumericExpression::with_type(
+                    PrimitiveNumericExpression::with_kind(
                         pne.symbol.clone(),
                         crate::pddl::substitute(&pne.args, renamings),
-                        pne.ntype,
+                        pne.kind,
                     ),
                 )
             }
