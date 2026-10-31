@@ -13,7 +13,6 @@ use planforge_sas::numeric_task::{
     OperatorIndex, TaskRef,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
-use planforge_sas::utils::float_tolerance;
 
 use crate::config::option_enum;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
@@ -21,6 +20,9 @@ use crate::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutL
 use crate::successor_generator::RegistryExpander;
 
 use super::projected_task::ProjectedTask;
+use crate::evaluation::abstractions::common::transition_system::{
+    BackwardGraph, backward_goal_distances, no_limit,
+};
 
 /// The heuristic a pattern database estimates abstract goal distances with
 /// where its exploration gives none.
@@ -529,29 +531,38 @@ impl AbstractTransitions {
         seeds: &[(usize, f64)],
         operator_cost: impl Fn(OperatorIndex) -> f64,
     ) -> Vec<f64> {
-        let mut distances = vec![f64::INFINITY; self.num_states()];
-        let mut heap: BinaryHeap<Reverse<(NotNan<f64>, usize)>> = BinaryHeap::new();
-        for &(state_id, distance) in seeds {
-            if distance + float_tolerance::DIJKSTRA_EPSILON < distances[state_id] {
-                distances[state_id] = distance;
-                heap.push(Reverse((not_nan(distance), state_id)));
-            }
-        }
-        while let Some(Reverse((distance, state_id))) = heap.pop() {
-            let distance = distance.into_inner();
-            if distance > distances[state_id] + float_tolerance::DIJKSTRA_EPSILON {
-                continue;
-            }
-            for &(parent_id, operator_id) in self.predecessors_of(state_id) {
-                let parent_id = parent_id as usize;
-                let alternative = distance + operator_cost(operator_id);
-                if alternative + float_tolerance::DIJKSTRA_EPSILON < distances[parent_id] {
-                    distances[parent_id] = alternative;
-                    heap.push(Reverse((not_nan(alternative), parent_id)));
-                }
-            }
-        }
+        let Ok(distances) = backward_goal_distances(
+            &mut ProjectionGraph {
+                transitions: self,
+                operator_cost,
+            },
+            seeds.iter().copied(),
+            no_limit,
+            None,
+        );
         distances
+    }
+}
+
+/// The explored abstract state space under per-operator costs, as backward
+/// Dijkstra reads it.
+struct ProjectionGraph<'a, C> {
+    transitions: &'a AbstractTransitions,
+    operator_cost: C,
+}
+
+impl<C: Fn(OperatorIndex) -> f64> BackwardGraph for ProjectionGraph<'_, C> {
+    type Label = OperatorIndex;
+
+    fn num_states(&self) -> usize {
+        self.transitions.num_states()
+    }
+
+    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, OperatorIndex, f64)>) {
+        incoming.clear();
+        incoming.extend(self.transitions.predecessors_of(target).iter().map(
+            |&(parent, operator)| (parent as usize, operator, (self.operator_cost)(operator)),
+        ));
     }
 }
 

@@ -191,11 +191,7 @@ impl BackwardGraph for ConcreteBackwardGraph<'_> {
         self.num_states
     }
 
-    fn incoming(
-        &mut self,
-        target: usize,
-        incoming: &mut Vec<(usize, OperatorIndex, f64)>,
-    ) -> AnyResult<()> {
+    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, OperatorIndex, f64)>) {
         incoming.clear();
         let transition_ids = &self.backward_transition_ids
             [self.backward_offsets[target]..self.backward_offsets[target + 1]];
@@ -206,7 +202,6 @@ impl BackwardGraph for ConcreteBackwardGraph<'_> {
                 self.transition_costs[transition_id],
             )
         }));
-        Ok(())
     }
 }
 
@@ -411,7 +406,7 @@ pub fn enumerate_state_space(
     let timed_out = Cell::new(false);
     let h_star = backward_goal_distances(
         &mut backward_graph,
-        &goal_state_ids,
+        goal_state_ids.iter().map(|&state| (state, 0.0)),
         || -> AnyResult<()> {
             if deadline.passed() {
                 timed_out.set(true);

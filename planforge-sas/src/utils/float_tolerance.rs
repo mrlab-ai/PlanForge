@@ -3,7 +3,6 @@ pub const ABS_EPSILON: f64 = 1e-12;
 pub const GRID_SCALE: f64 = 1e12;
 /// Above this magnitude, adjacent grid units cannot all be represented in f64.
 pub const GRID_BOUND: f64 = (1u64 << 53) as f64 / GRID_SCALE;
-pub const DIJKSTRA_EPSILON: f64 = 1e-12;
 pub const SEARCH_EPSILON: f64 = 1e-9;
 /// How closely two computations of the same cost or value agree, as in a
 /// concrete plan's cost and the abstract goal distance it realises.

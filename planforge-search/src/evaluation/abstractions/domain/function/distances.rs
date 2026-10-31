@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 use super::state_encoding::MatchTree;
@@ -68,7 +68,7 @@ impl DomainTransitions {
         let mut generating_op_ids = vec![None; self.num_states];
         let distances = backward_goal_distances(
             &mut self.graph(),
-            &self.goal_states,
+            self.goal_states.iter().map(|&state| (state, 0.0)),
             || deadline.ensure(DISTANCE_TABLE),
             Some(&mut generating_op_ids),
         )?;
@@ -86,7 +86,7 @@ impl DomainTransitions {
             if target_state.is_multiple_of(64) {
                 deadline.ensure(TRANSITION_SYSTEM)?;
             }
-            graph.incoming(target_state, &mut incoming)?;
+            graph.incoming(target_state, &mut incoming);
             for &(source_state, abstract_op_id, _) in &incoming {
                 if source_state == target_state {
                     continue;
@@ -166,7 +166,7 @@ impl BackwardGraph for MatchTreeGraph<'_> {
         self.num_states
     }
 
-    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, usize, f64)>) -> Result<()> {
+    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, usize, f64)>) {
         incoming.clear();
         self.match_tree
             .get_applicable_operator_ids(target, &mut self.applicable);
@@ -175,15 +175,14 @@ impl BackwardGraph for MatchTreeGraph<'_> {
             let source = target
                 .checked_add_signed(op.regression_offset)
                 .filter(|&source| source < self.num_states)
-                .with_context(|| {
-                    format!(
+                .unwrap_or_else(|| {
+                    panic!(
                         "abstract operator {op_id} regresses state {target} by {} out of the {} states",
                         op.regression_offset, self.num_states
                     )
-                })?;
+                });
             incoming.push((source, op_id, self.costs[op_id]));
         }
-        Ok(())
     }
 }
 
