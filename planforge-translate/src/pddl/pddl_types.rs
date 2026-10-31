@@ -74,3 +74,60 @@ impl fmt::Display for TypedObject {
 pub fn get_type_predicate_name(type_name: &str) -> String {
     format!("=={}", type_name)
 }
+
+/// The declared types and, for each, its chain of supertypes up to `object`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeHierarchy {
+    ancestors: std::collections::HashMap<String, Vec<String>>,
+}
+
+impl TypeHierarchy {
+    /// The hierarchy `types` declare. Fails on a type declared below an
+    /// undeclared one and on a cycle, which no object could inhabit.
+    pub fn new(types: &[Type]) -> Result<Self, String> {
+        let parents: std::collections::HashMap<&str, &str> = types
+            .iter()
+            .map(|t| {
+                let parent = t.basetype_name.as_deref().unwrap_or("object");
+                (t.name.as_str(), parent)
+            })
+            .filter(|(name, _)| *name != "object")
+            .collect();
+        let mut ancestors = std::collections::HashMap::new();
+        ancestors.insert("object".to_string(), vec!["object".to_string()]);
+        for &name in parents.keys() {
+            let mut chain = vec![name.to_string()];
+            let mut current = name;
+            while current != "object" {
+                current = parents.get(current).copied().ok_or_else(|| {
+                    format!(
+                        "type {} is declared below the undeclared type {current}",
+                        chain[chain.len() - 1]
+                    )
+                })?;
+                if chain.iter().any(|seen| seen == current) {
+                    return Err(format!("type {name} is its own supertype"));
+                }
+                chain.push(current.to_string());
+            }
+            ancestors.insert(name.to_string(), chain);
+        }
+        Ok(Self { ancestors })
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.ancestors.contains_key(name)
+    }
+
+    /// `name` and every supertype of it, nearest first, ending in `object`.
+    pub fn ancestors(&self, name: &str) -> &[String] {
+        self.ancestors
+            .get(name)
+            .unwrap_or_else(|| panic!("type {name} is declared"))
+    }
+
+    /// Every declared type, `object` included.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.ancestors.keys().map(String::as_str)
+    }
+}

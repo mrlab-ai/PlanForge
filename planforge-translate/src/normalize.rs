@@ -81,35 +81,16 @@ fn uniquify_variables(task: &mut Task) {
     }
 }
 
-/// Convert type declarations to predicates (adds type atoms to init)
+/// Adds to the initial state a type atom for every type of every object, its
+/// own and each supertype.
 fn convert_types_to_predicates(task: &mut Task) {
-    // Add type predicates for each object
-    for obj in &task.objects {
-        let atom = obj.get_atom();
-        task.init.push(atom);
-    }
-    // Add supertypes transitively
-    // Build a type hierarchy
-    let mut type_map: HashMap<String, Option<String>> = HashMap::new();
-    for t in &task.types {
-        type_map.insert(t.name.clone(), t.basetype_name.clone());
-    }
-
-    // For each object, add atoms for all supertypes
-    let mut extra_init = vec![];
-    for obj in &task.objects {
-        let mut current = Some(obj.type_name.clone());
-        while let Some(ref type_name) = current {
-            if type_name == &obj.type_name {
-                current = type_map.get(type_name).cloned().flatten();
-                continue;
-            }
-            let supertype_obj = TypedObject::new(&obj.name, type_name);
-            extra_init.push(supertype_obj.get_atom());
-            current = type_map.get(type_name).cloned().flatten();
+    let mut type_atoms = Vec::new();
+    for object in &task.objects {
+        for type_name in task.types.ancestors(&object.type_name) {
+            type_atoms.push(TypedObject::new(&object.name, type_name).get_atom());
         }
     }
-    task.init.extend(extra_init);
+    task.init.extend(type_atoms);
 }
 
 /// Every place a task keeps a condition.

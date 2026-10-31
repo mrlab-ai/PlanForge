@@ -9,7 +9,7 @@ use super::f_expression::{
     FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
 };
 use super::functions::Function;
-use super::pddl_types::{Type, TypedObject};
+use super::pddl_types::{TypeHierarchy, TypedObject};
 use super::predicates::Predicate;
 
 fn prettyprint(symbol: &str) -> String {
@@ -29,7 +29,7 @@ fn prettyprint(symbol: &str) -> String {
 /// nothing downstream of here consults them.
 #[derive(Debug, Clone)]
 pub struct Task {
-    pub types: Vec<Type>,
+    pub types: TypeHierarchy,
     pub objects: Vec<TypedObject>,
     pub predicates: Vec<Predicate>,
     pub init: Vec<Atom>,
@@ -131,8 +131,9 @@ pub struct GroundingTables<'a> {
 }
 
 /// What the `(define (domain ...))` form declares.
+#[derive(Debug)]
 pub struct DomainDefinition {
-    pub types: Vec<Type>,
+    pub types: TypeHierarchy,
     pub constants: Vec<TypedObject>,
     pub predicates: Vec<Predicate>,
     pub functions: Vec<Function>,
@@ -141,6 +142,7 @@ pub struct DomainDefinition {
 }
 
 /// What the `(define (problem ...))` form declares.
+#[derive(Debug)]
 pub struct ProblemDefinition {
     pub objects: Vec<TypedObject>,
     pub init: Vec<Atom>,

@@ -1,11 +1,11 @@
 /// Translates a PDDL task into a logic program for grounding.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use tracing::info;
 
 use super::normalize;
 use super::pddl::conditions::*;
-use super::pddl::pddl_types::{TypedObject, get_type_predicate_name};
+use super::pddl::pddl_types::{TypeHierarchy, TypedObject, get_type_predicate_name};
 use super::pddl::tasks::Task;
 
 /// Rule type for build_model dispatch
@@ -191,18 +191,10 @@ impl PrologProgram {
     }
 }
 
-fn translate_typed_object(
-    obj: &TypedObject,
-    type_dict: &HashMap<String, &super::pddl::pddl_types::Type>,
-    program: &mut PrologProgram,
-) {
+fn translate_typed_object(obj: &TypedObject, types: &TypeHierarchy, program: &mut PrologProgram) {
     program.objects.insert(obj.name.clone());
-    // Add type atom for the object's own type and all supertypes
-    let mut type_name = Some(obj.type_name.clone());
-    while let Some(ref tn) = type_name {
-        let type_pred = get_type_predicate_name(tn);
-        program.add_fact(vec![type_pred, obj.name.clone()]);
-        type_name = type_dict.get(tn).and_then(|t| t.basetype_name.clone());
+    for type_name in types.ancestors(&obj.type_name) {
+        program.add_fact(vec![get_type_predicate_name(type_name), obj.name.clone()]);
     }
 }
 
@@ -223,13 +215,8 @@ fn translate_facts(task: &Task, program: &mut PrologProgram) {
 pub fn translate(task: &Task) -> PrologProgram {
     let mut program = PrologProgram::new();
 
-    // Build type dictionary
-    let type_dict: HashMap<String, &super::pddl::pddl_types::Type> =
-        task.types.iter().map(|t| (t.name.clone(), t)).collect();
-
-    // Add objects with type facts
     for obj in &task.objects {
-        translate_typed_object(obj, &type_dict, &mut program);
+        translate_typed_object(obj, &task.types, &mut program);
     }
 
     // Add init facts

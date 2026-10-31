@@ -10,7 +10,7 @@ use super::pddl::actions::PropositionalAction;
 use super::pddl::axioms::{InstantiatedNumericAxiom, PropositionalAxiom};
 use super::pddl::conditions::*;
 use super::pddl::f_expression::*;
-use super::pddl::pddl_types::TypedObject;
+use super::pddl::pddl_types::{TypeHierarchy, TypedObject};
 use super::pddl::tasks::{Task, VarMapping};
 use super::pddl_to_prolog;
 use super::symbols::ObjectId;
@@ -146,29 +146,18 @@ fn function_type(symbol: &str) -> char {
 /// its supertypes.
 fn get_objects_by_type(
     objects: &[TypedObject],
-    types: &[super::pddl::pddl_types::Type],
+    types: &TypeHierarchy,
 ) -> HashMap<String, Vec<String>> {
-    let supertype: HashMap<&str, &str> = types
-        .iter()
-        .filter_map(|t| Some((t.name.as_str(), t.basetype_name.as_deref()?)))
-        .collect();
-
     let mut result: HashMap<String, Vec<String>> = types
-        .iter()
-        .map(|type_| (type_.name.clone(), Vec::new()))
-        .chain(std::iter::once(("object".to_string(), Vec::new())))
+        .names()
+        .map(|type_name| (type_name.to_owned(), Vec::new()))
         .collect();
     for object in objects {
-        let mut type_name = object.type_name.as_str();
-        loop {
+        for type_name in types.ancestors(&object.type_name) {
             result
-                .entry(type_name.to_owned())
-                .or_default()
+                .get_mut(type_name)
+                .expect("every ancestor is a declared type")
                 .push(object.name.clone());
-            match supertype.get(type_name) {
-                Some(base) => type_name = base,
-                None => break,
-            }
         }
     }
     result
