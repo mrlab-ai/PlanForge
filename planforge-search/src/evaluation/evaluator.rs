@@ -4,28 +4,19 @@ use planforge_sas::state_registry::ConcreteState;
 use planforge_sas::state_registry::StateRegistry;
 use std::fmt;
 
-/// Errors that can occur during evaluation.
+/// Why a heuristic could not evaluate a state. A dead end is not an error:
+/// the heuristic estimates it as infinite.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvaluationError {
-    /// State is a dead end (no solution possible).
-    DeadEnd { reliable: bool },
     /// Heuristic computation failed.
     ComputationFailed(String),
-    /// Invalid state for evaluation.
-    InvalidState(String),
 }
 
 impl fmt::Display for EvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EvaluationError::DeadEnd { reliable } => {
-                write!(f, "Dead end detected (reliable: {})", reliable)
-            }
             EvaluationError::ComputationFailed(msg) => {
                 write!(f, "Evaluation failed: {}", msg)
-            }
-            EvaluationError::InvalidState(msg) => {
-                write!(f, "Invalid state: {}", msg)
             }
         }
     }

@@ -12,7 +12,7 @@ use super::semantics::CartesianSemantics;
 use super::working::WorkingAbstraction;
 use crate::evaluation::abstractions::common::cegar::view::TransitionKey;
 use crate::evaluation::abstractions::common::transition_system::{
-    BackwardGraph, backward_goal_distances,
+    BackwardGraph, backward_goal_distances, no_limit,
 };
 
 #[derive(Debug)]
@@ -116,12 +116,12 @@ pub(super) fn compute_shortest_paths_with_goals(
         .filter_map(|(state_id, &state_is_goal)| state_is_goal.then_some(state_id))
         .collect::<Vec<_>>();
     let mut generating_transition = vec![None; working.states().len()];
-    let distances = backward_goal_distances(
+    let Ok(distances) = backward_goal_distances(
         &mut WorkingGraph { working, semantics },
-        &goal_states,
-        || Ok(()),
+        goal_states.iter().map(|&state| (state, 0.0)),
+        no_limit,
         Some(&mut generating_transition),
-    )?;
+    );
     let mut dependents = vec![Vec::new(); working.states().len()];
     let mut dependent_positions = vec![None; working.states().len()];
     for (source, transition) in generating_transition.iter().enumerate() {
@@ -154,11 +154,7 @@ impl BackwardGraph for WorkingGraph<'_> {
         self.working.states().len()
     }
 
-    fn incoming(
-        &mut self,
-        target: usize,
-        incoming: &mut Vec<(usize, TransitionKey, f64)>,
-    ) -> Result<()> {
+    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, TransitionKey, f64)>) {
         incoming.clear();
         let operator_costs = self.semantics.cegar().operator_costs();
         for &transition_id in &self.working.incoming()[target] {
@@ -173,7 +169,6 @@ impl BackwardGraph for WorkingGraph<'_> {
                 operator_costs[transition.concrete_op_id.index()],
             ));
         }
-        Ok(())
     }
 }
 

@@ -2,7 +2,7 @@
 # Tiered verification gate.
 #
 # Everything used to run at every commit: full test suite, a full-LTO release
-# build, and the 21-domain benchmark. That is 6-10 minutes per commit, and most
+# build, and the 22-domain benchmark. That is 6-10 minutes per commit, and most
 # of it is wasted on changes that provably cannot alter behaviour.
 #
 # The tiers below exist because the checks answer different questions:
@@ -13,11 +13,11 @@
 #
 # Measured cost of the full suite: one crate dominates it completely. The
 # `tests` crate group is 116.7s of a ~122s run; the next largest group is 5.1s.
-# So `scripts/gate.sh fast <crate>` on the crate you touched is seconds, and
+# So `tools/gate.sh fast <crate>` on the crate you touched is seconds, and
 # running the whole suite is almost entirely the cost of that one group.
 #
 # Measured, so that nobody repeats the mistake this script was first written
-# on: the `experiment` profile (lto = false, codegen-units = 16) is NOT faster
+# on: a profile without LTO (lto = false, codegen-units = 16) is NOT faster
 # to build than full release here -- 52s vs 53s. LTO is not the bottleneck;
 # compiling ~100k lines at opt-level 3 is. So there is no cheap optimized
 # build, and the savings have to come from not building an optimized binary at
@@ -27,7 +27,7 @@
 #   fast     -- no optimized build. This is the one to run constantly.
 #   semantic -- one optimized build, then the 18 instances that take
 #               milliseconds; skips the three that dominate a full run.
-#   full     -- all 21, for a change that could plausibly affect only a big one.
+#   full     -- all 22, for a change that could plausibly affect only a big one.
 #   timing   -- the only tier that needs release + repeated interleaved runs.
 #
 # WARNING about `timing`, found the hard way: it runs the DEFAULT search spec,
@@ -35,8 +35,8 @@
 # change is in a heuristic, an abstraction, lm-cut or the numeric bounds, this
 # tier exercises NONE of it and its wobble is pure machine noise. Pass a spec
 # that reaches your change:
-#   scripts/gate.sh timing "astar(lmcutnumeric())"
-#   scripts/gate.sh timing "astar(domain())"
+#   tools/gate.sh timing "astar(lmcutnumeric())"
+#   tools/gate.sh timing "astar(domain())"
 # A heuristic change measured under `blind()` is not evidence of anything.
 #
 # Plan costs and expansion counts are semantics and cannot be changed by an
@@ -44,10 +44,10 @@
 # columns; only `timing` looks at the clock.
 #
 # Usage:
-#   scripts/gate.sh fast [crate...]   before every commit
-#   scripts/gate.sh semantic          before any commit that could change behaviour
-#   scripts/gate.sh timing            when you claim something is faster or slower
-#   scripts/gate.sh all               before pushing
+#   tools/gate.sh fast [crate...]   before every commit
+#   tools/gate.sh semantic          before any commit that could change behaviour
+#   tools/gate.sh timing            when you claim something is faster or slower
+#   tools/gate.sh all               before pushing
 set -euo pipefail
 
 JOBS=${CARGO_BUILD_JOBS:-6}
@@ -55,23 +55,26 @@ export CARGO_BUILD_JOBS=$JOBS
 ASSETS=tests/assets/numeric-pddl-files
 BASELINE=${BASELINE:-/tmp/planforge-baseline}
 
-# The 21 benchmark domains split by cost. `quick` is every instance that solves
+# The 22 benchmark domains split by cost. `quick` is every instance that solves
 # in well under a tenth of a second, which is most of them; `slow` is the three
 # that dominate a full run.
 SLOW='minecraft-pogo-advanced rover-unit satellite'
 
 die() { echo "GATE FAILED: $*" >&2; exit 1; }
 
+# The crates every gate covers. `cargo --workspace` would also pull in
+# planforge-cplex, which needs CPLEX headers, so the list is explicit.
+CRATES=(planforge-sas planforge-translate planforge-search planforge planforge-config-derive tests)
+
 fast() {
   local crates=("$@")
-  if [ ${#crates[@]} -eq 0 ]; then
-    cargo test --workspace --exclude planforge-cplex
-  else
-    local args=()
-    for c in "${crates[@]}"; do args+=(-p "$c"); done
-    cargo test "${args[@]}"
-  fi
-  cargo clippy --workspace --exclude planforge-cplex --all-targets -- -D warnings
+  [ ${#crates[@]} -eq 0 ] && crates=("${CRATES[@]}")
+  local args=()
+  for c in "${crates[@]}"; do args+=(-p "$c"); done
+  cargo test "${args[@]}"
+  local all=()
+  for c in "${CRATES[@]}"; do all+=(-p "$c"); done
+  cargo clippy "${all[@]}" --all-targets -- -D warnings
   cargo fmt --all --check
 }
 

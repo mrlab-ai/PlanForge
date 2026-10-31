@@ -1,6 +1,8 @@
-use crate::config::TimeLimit;
-
-use crate::config::option_enum;
+use crate::config::{ConfigError, TimeLimit, option_enum};
+use crate::evaluation::Heuristic;
+use crate::heuristic_factory::{
+    BuildContext, HeuristicBuildError, HeuristicFeature, RequiredBackend, TaskRequirements,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizeFor {
@@ -200,39 +202,33 @@ impl NumericPotentialConfig {
     }
 }
 
-/// Registry feature, available as metadata in builds without CPLEX.
+/// `numeric_potential(...)`, registered in every build.
 pub struct NumericPotentialFeature;
-impl crate::heuristic_factory::HeuristicFeature for NumericPotentialFeature {
+impl HeuristicFeature for NumericPotentialFeature {
     const NAME: &'static str = "numeric_potential";
-    const BACKEND: crate::heuristic_factory::RequiredBackend =
-        crate::heuristic_factory::RequiredBackend::Cplex;
+    const BACKEND: RequiredBackend = RequiredBackend::Cplex;
     type Config = NumericPotentialConfig;
-    fn requirements(_: &Self::Config) -> crate::heuristic_factory::TaskRequirements {
-        crate::heuristic_factory::TaskRequirements::ABSTRACTABLE_GOAL
+    fn requirements(_: &Self::Config) -> TaskRequirements {
+        TaskRequirements::ABSTRACTABLE_GOAL
     }
-    fn validate(config: &Self::Config) -> Result<(), crate::config::ConfigError> {
+    fn validate(config: &Self::Config) -> Result<(), ConfigError> {
         config.validate().map_err(Into::into)
     }
+    #[cfg(feature = "cplex")]
     fn build<'a>(
         config: &Self::Config,
-        context: &crate::heuristic_factory::BuildContext<'a>,
-    ) -> Result<
-        Box<dyn crate::evaluation::Heuristic + 'a>,
-        crate::heuristic_factory::HeuristicBuildError,
-    > {
-        #[cfg(feature = "cplex")]
-        {
-            Ok(Box::new(
-                super::numeric_potentials::NumericPotentialHeuristic::from_config(
-                    context.task.clone(),
-                    config.clone(),
-                )?,
-            ))
-        }
-        #[cfg(not(feature = "cplex"))]
-        {
-            let _ = (config, context);
-            unreachable!("the registry checks backend availability before construction")
-        }
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        Ok(Box::new(super::NumericPotentialHeuristic::from_config(
+            context.task.clone(),
+            config.clone(),
+        )?))
+    }
+    #[cfg(not(feature = "cplex"))]
+    fn build<'a>(
+        _: &Self::Config,
+        _: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        unreachable!("the registry rejects a CPLEX heuristic in a build without CPLEX")
     }
 }

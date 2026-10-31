@@ -1,10 +1,8 @@
 use anyhow::Result;
 use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
-use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
-use planforge_search::search::{
-    BestFirstSearch, G, SearchEngine, SearchParams, SearchStatus, TieBreakingOpenList,
-};
+use planforge_search::search::best_first::{TieBreakingOpenList, UniformCost};
+use planforge_search::search::{BestFirstSearch, SearchOutcome, SearchParams};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,27 +10,20 @@ fn main() -> Result<()> {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(
         "tests/assets/numeric_sas/example2.sas",
     ));
-    let registry = StateRegistry::for_task(task.clone());
-    let mut driver = BestFirstSearch::<G, TieBreakingOpenList>::new(
-        &*task,
-        registry,
-        SearchParams {
-            heuristic: Box::new(BlindHeuristic::for_task(&*task)),
-            lazy: None,
-            time_limit: Some(Duration::from_millis(50)),
-            max_memory_bytes: None,
-            reevaluate_dynamic: false,
-        },
-    );
-    let result = driver.search()?;
+    // Uniform-cost search: best-first search ordered by `g` alone.
+    let params = SearchParams {
+        time_limit: Some(Duration::from_millis(50)),
+        ..SearchParams::new(Box::new(BlindHeuristic::for_task(&*task)))
+    };
+    let result = BestFirstSearch::<UniformCost, TieBreakingOpenList>::new(task, params).run()?;
     assert!(matches!(
-        result.status,
-        SearchStatus::Solved(_) | SearchStatus::Timeout
+        result.outcome,
+        SearchOutcome::Solved { .. } | SearchOutcome::Timeout
     ));
-    assert!(result.nodes_expanded > 0);
+    assert!(result.statistics.nodes.expanded > 0);
     println!(
-        "uniform_cost ended with {:?}, cost {:?}, after {} expansions",
-        result.status, result.solution_cost, result.nodes_expanded
+        "uniform_cost ended with {:?} after {} expansions",
+        result.outcome, result.statistics.nodes.expanded
     );
     Ok(())
 }

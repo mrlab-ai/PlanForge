@@ -31,7 +31,17 @@ pub const SAS_FILE_VERSION: u32 = 4;
 /// spell it `-1` — means no axiom derives the variable, which is a different
 /// thing from layer zero.
 pub fn axiom_layer_from_sas(layer: i32) -> Option<usize> {
-    usize::try_from(layer).ok()
+    optional_value_from_sas(layer)
+}
+
+/// A field that may be absent, which the format spells `-1`; any other value
+/// is non-negative.
+pub fn optional_value_from_sas(value: i32) -> Option<usize> {
+    assert!(
+        value >= -1,
+        "an optional SAS field is -1 or non-negative, got {value}"
+    );
+    usize::try_from(value).ok()
 }
 
 /// The value an effect requires of the variable it writes, or `None` when it
@@ -134,29 +144,21 @@ sas_token_table!(AssignmentOperation {
 
 impl Metric {
     /// The metric as the format spells it: a direction, and the numeric
-    /// variable that accumulates the plan's cost.
-    ///
-    /// Index `0` reads as "no metric variable". That is the format's own
-    /// convention and not an encoding of variable zero, so a task whose metric
-    /// variable ends up first is a task without a metric — for both ways in,
-    /// which is what matters here.
-    pub fn from_sas(direction: char, index: usize) -> Option<Self> {
+    /// variable that accumulates the plan's cost, absent for a task without
+    /// metric.
+    pub fn from_sas(direction: char, index: Option<usize>) -> Option<Self> {
         let is_min = match direction {
             '<' => true,
             '>' => false,
             _ => return None,
         };
-        Some(Metric::new(
-            is_min,
-            (index > 0).then(|| VariableIndex::from_usize(index)),
-        ))
+        Some(Metric::new(is_min, index.map(VariableIndex::from_usize)))
     }
 
-    /// Inverse of [`Self::from_sas`]: a task without a metric variable is
-    /// written with index `0`.
-    pub fn as_sas(&self) -> (char, usize) {
+    /// Inverse of [`Self::from_sas`].
+    pub fn as_sas(&self) -> (char, Option<usize>) {
         let direction = if self.is_min() { '<' } else { '>' };
-        (direction, self.var_id().map_or(0, |var_id| var_id.index()))
+        (direction, self.var_id().map(|var_id| var_id.index()))
     }
 }
 

@@ -1,8 +1,6 @@
 //! What every abstraction CEGAR builds offers and records about its
 //! construction and use, for domain and Cartesian abstractions alike.
 
-use std::cell::RefCell;
-
 use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex};
@@ -149,7 +147,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
         &self,
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize>;
+    ) -> usize;
 
     /// Drops the transitions, which only cost partitioning reads. Lookups
     /// stay intact; saturation fails afterwards.
@@ -172,7 +170,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
     fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]>;
 
     /// The goal distances under `operator_costs` and the saturated cost of
-    /// every operator; see [`saturate_labels`](crate::evaluation::abstractions::cost_partitioning::costs::saturate_labels).
+    /// every operator; see `cost_partitioning::costs::saturate_labels`.
     fn saturate_labels(
         &self,
         operator_costs: &[f64],
@@ -181,7 +179,8 @@ pub trait CegarAbstraction: std::fmt::Debug {
     ) -> Result<(Vec<f64>, Vec<f64>)>;
 
     /// The goal distances under `remaining` and what every transition
-    /// needs of its labels' source sets; see [`saturate_regions`](crate::evaluation::abstractions::cost_partitioning::costs::saturate_regions).
+    /// needs of its labels' source sets; see
+    /// `cost_partitioning::costs::saturate_regions`.
     fn saturate_regions(
         &self,
         remaining: &RemainingCosts,
@@ -221,12 +220,8 @@ pub trait CegarAbstraction: std::fmt::Debug {
 
     /// The goal distance of the abstract state of the concrete state with
     /// these values.
-    fn goal_distance(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<f64> {
-        Ok(self.core().distances[self.abstract_state(propositional, numeric)?])
+    fn goal_distance(&self, propositional: &[ExplicitValueIndex], numeric: &[NumericValue]) -> f64 {
+        self.core().distances[self.abstract_state(propositional, numeric)]
     }
 }
 
@@ -263,7 +258,7 @@ pub(crate) fn finish_abstraction(
 pub struct AbstractionHeuristic<A> {
     name: String,
     abstraction: A,
-    values: RefCell<ExplicitState>,
+    values: ExplicitState,
 }
 
 impl<A: CegarAbstraction> AbstractionHeuristic<A> {
@@ -271,7 +266,7 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
         Self {
             name: name.into(),
             abstraction,
-            values: RefCell::default(),
+            values: ExplicitState::default(),
         }
     }
 
@@ -281,22 +276,18 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
 }
 
 impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let mut values = self.values.borrow_mut();
-        eval_state.fill_values(&mut values)?;
-        self.abstraction
-            .goal_distance(&values.propositional, &values.numeric)
-            .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        eval_state.fill_values(&mut self.values)?;
+        Ok(self
+            .abstraction
+            .goal_distance(&self.values.propositional, &self.values.numeric))
     }
 
     fn proves_initial_state_optimal(&self) -> bool {
         self.abstraction.metadata().proves_initial_state_optimal()
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }

@@ -2,9 +2,9 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::convert::Infallible;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, ensure};
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::float_tolerance;
@@ -50,13 +50,9 @@ pub(crate) trait BackwardGraph {
     fn num_states(&self) -> usize;
 
     /// Replaces `incoming` with the transitions into `target`, as
-    /// `(source, label, cost)`. A transition of infinite cost is never on a
-    /// path of finite cost.
-    fn incoming(
-        &mut self,
-        target: usize,
-        incoming: &mut Vec<(usize, Self::Label, f64)>,
-    ) -> Result<()>;
+    /// `(source, label, cost)`. Costs are non-negative; a transition of
+    /// infinite cost is never on a path of finite cost.
+    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, Self::Label, f64)>);
 }
 
 /// An explicit transition system under per-transition costs; labels are
@@ -73,7 +69,7 @@ impl BackwardGraph for CostedTransitionSystem<'_> {
         self.system.backward.len()
     }
 
-    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, usize, f64)>) -> Result<()> {
+    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, usize, f64)>) {
         incoming.clear();
         for &transition_id in &self.system.backward[target] {
             let transition = &self.system.transitions[transition_id];
@@ -84,21 +80,21 @@ impl BackwardGraph for CostedTransitionSystem<'_> {
                 self.transition_costs[transition_id],
             ));
         }
-        Ok(())
     }
 }
 
 /// The goal distance of every state of `graph` by backward Dijkstra from
-/// `goal_states`, infinite for states that reach no goal. Records in
-/// `generating` the label each state's cheapest goal path starts with.
-/// `check_limit` runs every 1024 expansions and stops the search with its
-/// error.
-pub(crate) fn backward_goal_distances<G: BackwardGraph>(
+/// `seeds`, `(state, distance)` pairs -- the goal states at distance zero,
+/// and states whose distance an estimate bounds -- infinite for states that
+/// reach no seed. Records in `generating` the label each state's cheapest
+/// path starts with. `check_limit` runs every 1024 expansions and stops the
+/// search with its error; an unlimited search passes one that cannot fail.
+pub(crate) fn backward_goal_distances<G: BackwardGraph, E>(
     graph: &mut G,
-    goal_states: &[usize],
-    mut check_limit: impl FnMut() -> Result<()>,
+    seeds: impl IntoIterator<Item = (usize, f64)>,
+    mut check_limit: impl FnMut() -> Result<(), E>,
     mut generating: Option<&mut [Option<G::Label>]>,
-) -> Result<Vec<f64>> {
+) -> Result<Vec<f64>, E> {
     let num_states = graph.num_states();
     if let Some(generating) = &generating {
         assert_eq!(
@@ -109,12 +105,15 @@ pub(crate) fn backward_goal_distances<G: BackwardGraph>(
     }
     let mut distances = vec![f64::INFINITY; num_states];
     let mut heap = BinaryHeap::new();
-    for &goal_state in goal_states {
-        distances[goal_state] = 0.0;
-        heap.push((
-            Reverse(NotNan::new(0.0).expect("zero is not NaN")),
-            goal_state,
-        ));
+    for (state, distance) in seeds {
+        assert!(
+            distance >= 0.0,
+            "state {state} is seeded at the distance {distance}"
+        );
+        if distance + float_tolerance::SEARCH_EPSILON < distances[state] {
+            distances[state] = distance;
+            heap.push((Reverse(not_nan(distance)), state));
+        }
     }
     let mut incoming = Vec::new();
     let mut expansions = 0usize;
@@ -127,27 +126,33 @@ pub(crate) fn backward_goal_distances<G: BackwardGraph>(
         if distance > distances[target] + float_tolerance::SEARCH_EPSILON {
             continue;
         }
-        graph.incoming(target, &mut incoming)?;
+        graph.incoming(target, &mut incoming);
         for &(source, label, cost) in &incoming {
-            ensure!(
-                cost >= -float_tolerance::SEARCH_EPSILON,
-                "a transition into state {target} has invalid cost {cost}"
+            assert!(
+                cost >= 0.0,
+                "a transition into state {target} has the negative cost {cost}"
             );
             if cost == f64::INFINITY {
                 continue;
             }
-            let alternative = distance + cost.max(0.0);
+            let alternative = distance + cost;
             if alternative + float_tolerance::SEARCH_EPSILON < distances[source] {
                 distances[source] = alternative;
                 if let Some(generating) = &mut generating {
                     generating[source] = Some(label);
                 }
-                heap.push((
-                    Reverse(NotNan::new(alternative).context("goal distance is NaN")?),
-                    source,
-                ));
+                heap.push((Reverse(not_nan(alternative)), source));
             }
         }
     }
     Ok(distances)
+}
+
+/// The limit of a search that runs to completion.
+pub(crate) fn no_limit() -> Result<(), Infallible> {
+    Ok(())
+}
+
+fn not_nan(distance: f64) -> NotNan<f64> {
+    NotNan::new(distance).expect("goal distances are sums of non-negative costs")
 }

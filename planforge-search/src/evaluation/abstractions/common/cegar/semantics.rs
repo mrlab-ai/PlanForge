@@ -6,12 +6,11 @@ use planforge_sas::utils::value_lattice::ValueLattice;
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitStateSpace;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, NumericTaskExt, NumericType, NumericValue, OperatorIndex,
 };
-use planforge_sas::utils::float_tolerance;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -81,17 +80,14 @@ impl<'task> CegarSemantics<'task> {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
         let regions = RegionSemantics::new(task)?;
-        // Costs within the search tolerance below zero are zero.
+        // Tasks reject negative operator costs when they are constructed.
         let operator_costs = (0..task.get_operators().len())
             .map(|op_id| {
                 let cost = task.abstract_operator_cost(OperatorIndex::from_usize(op_id));
-                ensure!(
-                    cost >= -float_tolerance::SEARCH_EPSILON,
-                    "operator {op_id} has the negative cost {cost}"
-                );
-                Ok(cost.max(0.0))
+                assert!(cost >= 0.0, "operator {op_id} has the negative cost {cost}");
+                cost
             })
-            .collect::<Result<_>>()?;
+            .collect();
         let mut wanted_split_boundaries = task
             .numeric_variables()
             .iter()

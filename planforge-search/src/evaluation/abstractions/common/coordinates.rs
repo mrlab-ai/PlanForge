@@ -41,8 +41,9 @@ impl AdditiveNumericView {
 }
 
 /// The value of coordinate `var_id` in a state with `numeric` values: its
-/// additive view's for a derived coordinate, else its own, canonicalized as
-/// split boundaries are.
+/// additive view's for a derived coordinate, else its own. Every concrete
+/// state is mapped through this one function, so the initial state and later
+/// lookups agree on which side of a split boundary a value lies.
 pub(crate) fn coordinate_value(
     views: &[Option<AdditiveNumericView>],
     numeric: &[NumericValue],

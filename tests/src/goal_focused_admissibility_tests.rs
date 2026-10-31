@@ -31,8 +31,9 @@ use planforge_search::evaluation::abstractions::domain::config::{
     DomainAbstractionCollectionConfig, DomainAbstractionConfig,
 };
 use planforge_search::evaluation::evaluator::EvaluationState;
+use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 use planforge_search::task_restriction::build_restricted_task;
 
 use crate::corpus::{self, Scratch, translate_to_disk};
@@ -54,27 +55,19 @@ fn restricted_task(folder: &str, stem: &str) -> NumericRootTask {
 
 /// The states of an optimal plan and `h*` of each of them.
 fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(ConcreteState, f64)>) {
-    let mut search = AStarSearch::new(
-        task,
-        StateRegistry::for_task(Arc::new(task)),
-        planforge_search::search::SearchParams {
-            heuristic: Box::new(
-                planforge_search::evaluation::heuristic::BlindHeuristic::for_task(task),
-            ),
-            lazy: None,
-            reevaluate_dynamic: false,
-            time_limit: None,
-            max_memory_bytes: None,
-        },
-    );
-    let result = search.search().expect("blind A* search failed");
-    assert!(
-        matches!(result.status, SearchStatus::Solved(_)),
-        "blind A* must solve the instance: {:?}",
-        result.status
-    );
-    let plan = result.plan.expect("a solved search returns its plan");
-    let optimum = result.solution_cost.expect("a solved search has a cost");
+    let result = AStarSearch::new(
+        Arc::new(task),
+        SearchParams::new(Box::new(BlindHeuristic::for_task(task))),
+    )
+    .run()
+    .expect("blind A* search failed");
+    let SearchOutcome::Solved {
+        plan,
+        cost: optimum,
+    } = result.outcome
+    else {
+        panic!("blind A* must solve the instance: {:?}", result.outcome);
+    };
 
     let mut registry = StateRegistry::for_task(Arc::new(task));
     let mut state = registry.get_initial_state();
@@ -174,13 +167,13 @@ fn assert_admissible_along_plan(
     task: &NumericRootTask,
     registry: &StateRegistry<'_>,
     states: &[(ConcreteState, f64)],
-    heuristic: &dyn Heuristic,
+    heuristic: &mut dyn Heuristic,
 ) {
     for (step, (state, optimal_cost)) in states.iter().enumerate() {
         let mut eval = EvaluationState::new(state, task as &dyn AbstractNumericTask, registry);
         eval.set_is_goal(step + 1 == states.len());
         let h = heuristic
-            .compute_heuristic(&eval)
+            .evaluate(&eval)
             .unwrap_or_else(|error| panic!("{what}: evaluation failed at step {step}: {error:?}"));
         assert!(
             h.is_finite(),
@@ -207,7 +200,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                 &task,
                 &registry,
                 &states,
-                &AbstractionHeuristic::new("abstraction", abstraction.clone()),
+                &mut AbstractionHeuristic::new("abstraction", abstraction.clone()),
             );
         }
         for (index, abstraction) in cartesian.iter().enumerate() {
@@ -216,7 +209,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                 &task,
                 &registry,
                 &states,
-                &AbstractionHeuristic::new("abstraction", abstraction.clone()),
+                &mut AbstractionHeuristic::new("abstraction", abstraction.clone()),
             );
         }
         for partitioning in [
@@ -256,7 +249,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                 ),
             ];
             for (collection, heuristic) in heuristics {
-                let heuristic = heuristic.unwrap_or_else(|error| {
+                let mut heuristic = heuristic.unwrap_or_else(|error| {
                     panic!("{instance} {collection} SCP must construct: {error:?}")
                 });
                 assert_admissible_along_plan(
@@ -264,7 +257,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                     &task,
                     &registry,
                     &states,
-                    &heuristic,
+                    &mut heuristic,
                 );
             }
         }

@@ -1,38 +1,140 @@
-use planforge_sas::{
-    numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex},
-    state_registry::ExpansionContext,
-};
-use std::time::Duration;
+//! The `--search` grammar: the search algorithms and their options.
 
-/// Per-search costs and resource limits, fixed when the engine is built.
-pub(crate) struct EngineSettings<'a> {
-    pub(crate) operator_costs: std::borrow::Cow<'a, [f64]>,
-    /// The cheapest operator cost, every non-goal state's lower bound.
-    pub(crate) min_action_cost: f64,
-    pub(crate) use_metric: bool,
-    pub(crate) time_limit: Option<Duration>,
-    pub(crate) max_memory_bytes: Option<u64>,
+use std::fmt;
+
+use crate::config::{ApplyOptions, ConfigCall, configure, parse_call};
+use crate::heuristic_factory::{HeuristicConfig, TaskRequirements};
+
+/// A search algorithm and the heuristics it runs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SearchConfig {
+    /// A* with a primary heuristic, an optional lazy heuristic evaluated when
+    /// a state is first popped, and multi-path dependence (`mpd`): popped
+    /// states are re-evaluated when the heuristic has learned since their last
+    /// evaluation.
+    AStar {
+        heuristic: HeuristicConfig,
+        lazy: Option<HeuristicConfig>,
+        mpd: bool,
+    },
+    /// Greedy best-first search with preferred operators.
+    Gbfs { heuristic: HeuristicConfig },
 }
 
-#[derive(Default)]
-pub(crate) struct ExpansionScratch {
-    pub(crate) state_values: Vec<ExplicitValueIndex>,
-    pub(crate) applicable_operators: Vec<OperatorIndex>,
-    pub(crate) successor_numeric: Vec<NumericValue>,
-    pub(crate) successor_cost: Vec<NumericValue>,
-    pub(crate) preferred_ids: Vec<OperatorIndex>,
-    pub(crate) expansion_context: ExpansionContext,
+impl SearchConfig {
+    /// Every heuristic the engine will build, in configuration order.
+    pub fn heuristics(&self) -> impl Iterator<Item = &HeuristicConfig> {
+        let (first, second) = match self {
+            Self::AStar {
+                heuristic, lazy, ..
+            } => (heuristic, lazy.as_ref()),
+            Self::Gbfs { heuristic } => (heuristic, None),
+        };
+        std::iter::once(first).chain(second)
+    }
+
+    pub fn requirements(&self) -> TaskRequirements {
+        self.heuristics()
+            .fold(TaskRequirements::ANY, |requirements, heuristic| {
+                requirements.union(heuristic.requirements())
+            })
+    }
+
+    /// Fail before translation if a heuristic needs a solver backend this
+    /// build does not have.
+    pub fn preflight(&self) -> std::io::Result<()> {
+        self.heuristics().try_for_each(HeuristicConfig::preflight)
+    }
 }
 
-impl ExpansionScratch {
-    pub(crate) fn with_capacity(num_variables: usize, num_numeric_variables: usize) -> Self {
-        Self {
-            state_values: Vec::with_capacity(num_variables),
-            applicable_operators: Vec::new(),
-            successor_numeric: Vec::with_capacity(num_numeric_variables),
-            successor_cost: Vec::new(),
-            preferred_ids: Vec::new(),
-            expansion_context: ExpansionContext::default(),
+// =============================================================================
+// Display — used to round-trip the spec back into `--search SPEC` form
+// =============================================================================
+
+impl fmt::Display for SearchConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AStar {
+                heuristic,
+                lazy,
+                mpd,
+            } => {
+                write!(f, "astar({heuristic}")?;
+                if let Some(lazy) = lazy {
+                    write!(f, ", lazy={lazy}")?;
+                }
+                if *mpd {
+                    write!(f, ", mpd=true")?;
+                }
+                write!(f, ")")
+            }
+            Self::Gbfs { heuristic } => write!(f, "gbfs({heuristic})"),
         }
     }
 }
+
+// =============================================================================
+// Parser entry
+// =============================================================================
+
+/// The `--search` help text: the engines and every registered heuristic.
+pub fn search_algorithm_help() -> String {
+    format!(
+        "Search specification. Available algorithms: astar([heuristic], mpd=false, lazy=none), gbfs([heuristic])\n\n{}",
+        crate::heuristic_factory::heuristic_help()
+    )
+}
+
+pub fn parse_search_spec(raw: &str) -> Result<SearchConfig, String> {
+    let spec = build_search_spec(&parse_call(raw)?)?;
+    Ok(spec)
+}
+
+// =============================================================================
+// Search-engine dispatch
+// =============================================================================
+
+/// `astar(heuristic, lazy=none, mpd=false)`; the heuristic defaults to blind.
+#[derive(Default, ApplyOptions)]
+struct AStarOptions {
+    #[option(positional)]
+    heuristic: HeuristicConfig,
+    lazy: Option<HeuristicConfig>,
+    mpd: bool,
+}
+
+/// `gbfs(heuristic)`; the heuristic defaults to blind.
+#[derive(Default, ApplyOptions)]
+struct GbfsOptions {
+    #[option(positional)]
+    heuristic: HeuristicConfig,
+}
+
+fn build_search_spec(call: &ConfigCall) -> Result<SearchConfig, String> {
+    Ok(match call.name.as_str() {
+        "astar" => {
+            let AStarOptions {
+                heuristic,
+                lazy,
+                mpd,
+            } = configure("astar", AStarOptions::default(), &call.args)?;
+            SearchConfig::AStar {
+                heuristic,
+                lazy,
+                mpd,
+            }
+        }
+        "gbfs" => {
+            let GbfsOptions { heuristic } = configure("gbfs", GbfsOptions::default(), &call.args)?;
+            SearchConfig::Gbfs { heuristic }
+        }
+        other => {
+            return Err(format!(
+                "unknown search engine `{other}`; expected one of: astar, gbfs"
+            ));
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests;

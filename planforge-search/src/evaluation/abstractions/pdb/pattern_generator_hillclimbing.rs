@@ -7,27 +7,26 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt, OperatorIndex};
-use planforge_sas::state_registry::StateRegistry;
+use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
-use rand::seq::SliceRandom;
 use tracing::{debug, info};
 
+use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use super::numeric_size_estimator::NumericSizeEstimator;
 use super::pattern_database::{PatternDatabase, PdbBuildConfig, PdbHeuristicConfig};
 use super::pattern_generator_systematic::goal_variables;
 use super::projected_task::{Pattern, ProjectedTask};
-use crate::causal_graph::{CausalGraphVariable, RestrictedCausalGraph};
 use crate::config::TimeLimit;
 use crate::evaluation::abstractions::cost_partitioning::canonical::{
     are_operator_sets_additive, compute_max_additive_subsets_from_relevant_operators,
 };
-use crate::evaluation::abstractions::random_walk::random_walk_length;
+use crate::evaluation::evaluator::EvaluationError;
+use crate::evaluation::sampling::RandomWalkSampler;
 use crate::evaluation::seed::DEFAULT_RANDOM_SEED;
 use crate::resource_limits::{Deadline, min_time_limit};
-use crate::successor_generator::RegistryExpander;
 
 /// The options of iPDB, with the defaults of numeric Fast Downward.
 #[derive(Debug, Clone, Copy, PartialEq, planforge_search::config::ApplyOptions)]
@@ -146,11 +145,10 @@ struct HillClimbing<'task> {
     task: &'task dyn AbstractNumericTask,
     config: HillClimbingConfig,
     pdb_config: PdbBuildConfig,
-    causal_graph: RestrictedCausalGraph,
+    causal_graph: CausalGraph,
     numeric_sizes: NumericSizeEstimator,
     rng: SmallRng,
     initial_state: ExplicitState,
-    average_operator_cost: f64,
     /// Extensions rejected for exceeding `max_pdb_size`.
     rejected: usize,
 }
@@ -183,26 +181,14 @@ impl<'task> HillClimbing<'task> {
             .view(&initial)
             .fill_explicit(&mut initial_state)
             .map_err(|error| format!("failed to evaluate the initial state: {error:?}"))?;
-        let num_operators = task.get_operators().len();
-        let average_operator_cost = if num_operators == 0 {
-            0.0
-        } else {
-            (0..num_operators)
-                .map(|operator_id| {
-                    task.abstract_operator_cost(OperatorIndex::from_usize(operator_id))
-                })
-                .sum::<f64>()
-                / num_operators as f64
-        };
         Ok(Self {
             task,
             config,
             pdb_config,
-            causal_graph: RestrictedCausalGraph::new(task)?,
+            causal_graph: CausalGraph::new(task)?,
             numeric_sizes: NumericSizeEstimator::new(task),
             rng: SmallRng::seed_from_u64(config.random_seed),
             initial_state,
-            average_operator_cost,
             rejected: 0,
         })
     }
@@ -330,45 +316,22 @@ impl<'task> HillClimbing<'task> {
         initial_h: f64,
         deadline: Deadline,
     ) -> Result<Option<Vec<ExplicitState>>, String> {
-        let mut registry = StateRegistry::for_task(Arc::new(self.task));
-        let mut expander = RegistryExpander::new(self.task);
-        let operators = self.task.get_operators();
-        let initial = registry.get_initial_state();
+        let mut sampler = RandomWalkSampler::new(Arc::new(self.task));
         let mut values = ExplicitState::default();
         let mut samples = Vec::with_capacity(self.config.num_samples);
         while samples.len() < self.config.num_samples {
-            if deadline.passed() {
-                return Ok(None);
-            }
-            let length = random_walk_length(initial_h, self.average_operator_cost, &mut self.rng)
+            let walk_end = sampler
+                .sample(initial_h, &mut self.rng, deadline, |registry, state| {
+                    fill_values(registry, state, &mut values)?;
+                    Ok(collection.is_dead_end(&values))
+                })
                 .map_err(|error| error.to_string())?;
-            let mut current = initial.clone();
-            for _ in 0..length {
-                let mut expansion = expander
-                    .expand(&registry, &current)
-                    .map_err(|error| error.message)?;
-                let Some(&operator_id) = expansion.applicable_operators().choose(&mut self.rng)
-                else {
-                    break;
-                };
-                let (successor, _) = expansion
-                    .successor(&mut registry, &operators[operator_id.index()])
-                    .map_err(|error| error.message)?;
-                registry
-                    .view(&successor)
-                    .fill_explicit(&mut values)
-                    .map_err(|error| format!("failed to evaluate a sampled state: {error:?}"))?;
-                current = if collection.is_dead_end(&values) {
-                    initial.clone()
-                } else {
-                    successor
-                };
-            }
+            let Some(walk_end) = walk_end else {
+                return Ok(None);
+            };
             let mut sample = ExplicitState::default();
-            registry
-                .view(&current)
-                .fill_explicit(&mut sample)
-                .map_err(|error| format!("failed to evaluate a sampled state: {error:?}"))?;
+            fill_values(sampler.registry(), &walk_end, &mut sample)
+                .map_err(|error| error.to_string())?;
             samples.push(sample);
         }
         Ok(Some(samples))
@@ -578,4 +541,14 @@ fn add_variable(pattern: &mut Pattern, variable: CausalGraphVariable) -> bool {
         CausalGraphVariable::Propositional(var_id) => pattern.add_regular_var(var_id),
         CausalGraphVariable::Numeric(var_id) => pattern.add_numeric_var(var_id),
     }
+}
+
+fn fill_values(
+    registry: &StateRegistry<'_>,
+    state: &ConcreteState,
+    values: &mut ExplicitState,
+) -> Result<(), EvaluationError> {
+    registry.view(state).fill_explicit(values).map_err(|error| {
+        EvaluationError::ComputationFailed(format!("failed to evaluate a sampled state: {error:?}"))
+    })
 }

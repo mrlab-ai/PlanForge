@@ -71,7 +71,7 @@ fn unconditional_assignment_effect_parses() {
 ///
 /// Numerically: `x = 5`, `three = 3`, so `cond_ge` (`x >= three`) holds and
 /// `cond_lt` (`x < three`) does not. Both condition variables are written in
-/// the legacy three-valued form, `<none of those>` and all, so that building
+/// numeric Fast Downward's three-valued form, `<none of those>` and all, so that building
 /// a task out of this file exercises the narrowing to
 /// [`ConditionValue::DOMAIN_SIZE`].
 const INTERLEAVED_CONDITIONS_SAS: &str = "\
@@ -349,12 +349,20 @@ fn a_state_value_beyond_u32_is_rejected() {
 }
 
 #[test]
-fn a_metric_index_beyond_u32_is_rejected() {
-    let metric = parse_metric("begin_metric\n< 4294967295\nend_metric\n")
-        .expect("u32::MAX is a valid index")
+fn a_metric_index_is_minus_one_or_an_i32() {
+    let metric = parse_metric("begin_metric\n< 2147483647\nend_metric\n")
+        .expect("i32::MAX is a valid index")
         .1;
-    assert_eq!(metric.var_id(), Some(VariableIndex::new(u32::MAX)));
-    assert!(parse_metric("begin_metric\n< 4294967296\nend_metric\n").is_err());
+    assert_eq!(metric.var_id(), Some(VariableIndex::new(i32::MAX as u32)));
+    let metric = parse_metric("begin_metric\n< 0\nend_metric\n")
+        .expect("variable zero is a valid metric")
+        .1;
+    assert_eq!(metric.var_id(), Some(VariableIndex::new(0)));
+    let metric = parse_metric("begin_metric\n> -1\nend_metric\n")
+        .expect("-1 is a task without metric")
+        .1;
+    assert_eq!(metric.var_id(), None);
+    assert!(parse_metric("begin_metric\n< 2147483648\nend_metric\n").is_err());
 }
 
 #[test]

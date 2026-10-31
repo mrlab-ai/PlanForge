@@ -9,7 +9,6 @@ use tracing::info;
 
 use super::axiom_rules;
 use super::fact_groups;
-use super::normalize::NormalizableTask;
 use super::numeric_axiom_rules;
 use super::options;
 use super::pddl::actions::PropositionalAction;
@@ -127,7 +126,6 @@ struct Translation {
     translation_key: Vec<Vec<String>>,
     /// One entry per mutex group, in SAS facts.
     mutex_key: Vec<Vec<SasFact>>,
-    implied_facts: HashMap<SasFact, Vec<SasFact>>,
     /// The value of each numeric variable that a constant numeric axiom
     /// defines, so that a comparison of two constants is decided here, as
     /// instantiation decides a static atom, instead of becoming a variable.
@@ -136,7 +134,6 @@ struct Translation {
     num_vals: Vec<NumericValue>,
     relevant_numeric: Vec<usize>,
     simplified_effect_conditions: usize,
-    added_implied_preconditions: usize,
 }
 
 // ============================================================
@@ -798,26 +795,10 @@ fn build_sas_operator(
 ) -> Option<SASOperator> {
     let Translation {
         ranges,
-        implied_facts,
         relevant_numeric: relevant_numeric_variables,
         simplified_effect_conditions: simplified_effect_condition_counter,
-        added_implied_preconditions: added_implied_precondition_counter,
         ..
     } = translation;
-    let implied_precondition: HashSet<(usize, usize)> = if options::ADD_IMPLIED_PRECONDITIONS {
-        let mut ip = HashSet::new();
-        for fact in condition.iter() {
-            if let Some(implied) = implied_facts.get(&fact) {
-                for &f in implied {
-                    ip.insert(f);
-                }
-            }
-        }
-        ip
-    } else {
-        HashSet::new()
-    };
-
     let mut prevail_and_pre = condition.clone();
     let mut pre_post: Vec<PrePost> = vec![];
     let mut num_pre_post: Vec<AssignEffect> = vec![];
@@ -827,7 +808,7 @@ fn build_sas_operator(
         let mut added_effect = false;
 
         for (&post, eff_conditions) in effects {
-            let mut pre = orig_pre;
+            let pre = orig_pre;
             // If the effect does not change the variable value, ignore it
             if pre == post as i32 {
                 continue;
@@ -842,13 +823,6 @@ fn build_sas_operator(
                 // Apply simplifications for binary variables
                 if prune_stupid_effect_conditions(var, post, &mut eff_condition_lists) {
                     *simplified_effect_condition_counter += 1;
-                }
-                if options::ADD_IMPLIED_PRECONDITIONS
-                    && pre == -1
-                    && implied_precondition.contains(&(var, 1 - post))
-                {
-                    *added_implied_precondition_counter += 1;
-                    pre = (1 - post) as i32;
                 }
             }
 
@@ -1446,52 +1420,6 @@ fn build_mutex_key(
 }
 
 // ============================================================
-// build_implied_facts
-// ============================================================
-
-fn build_implied_facts(
-    strips_to_sas: &HashMap<Atom, Vec<(usize, usize)>>,
-    groups: &[Vec<Atom>],
-    mutex_groups: &[Vec<Atom>],
-) -> HashMap<(usize, usize), Vec<(usize, usize)>> {
-    // Find lonely propositions (groups of size 1)
-    let mut lonely_propositions: HashMap<Atom, usize> = HashMap::new();
-    for (var_no, group) in groups.iter().enumerate() {
-        if group.len() == 1 {
-            let lonely_prop = &group[0];
-            if let Some(pairs) = strips_to_sas.get(lonely_prop) {
-                assert_eq!(pairs, &[(var_no, 0)]);
-                lonely_propositions.insert(lonely_prop.clone(), var_no);
-            }
-        }
-    }
-
-    let mut implied_facts: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
-
-    for mutex_group in mutex_groups {
-        for prop in mutex_group {
-            if let Some(&prop_var) = lonely_propositions.get(prop) {
-                let prop_is_false = (prop_var, 1);
-                for other_prop in mutex_group {
-                    if other_prop != prop
-                        && let Some(other_facts) = strips_to_sas.get(other_prop)
-                    {
-                        for &other_fact in other_facts {
-                            implied_facts
-                                .entry(other_fact)
-                                .or_default()
-                                .push(prop_is_false);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    implied_facts
-}
-
-// ============================================================
 // Main entry point: pddl_to_sas / translate_task_from_grounded_internal
 // ============================================================
 
@@ -1500,13 +1428,12 @@ fn build_implied_facts(
 ///
 /// `singleton_groups` skips invariant synthesis and gives every fact its own
 /// variable: a larger encoding of the same task.
-pub fn translate_task_from_grounded_internal(
+pub fn translate_grounded_task(
     explored: &crate::instantiate::ExploreResult,
-    norm_task: &NormalizableTask,
+    task: &crate::pddl::tasks::Task,
     singleton_groups: bool,
     layer_strategy: options::LayerStrategy,
 ) -> Result<SASTask, String> {
-    let task = &norm_task.task;
     let crate::instantiate::ExploreResult {
         atoms,
         num_fluents,
@@ -1516,7 +1443,7 @@ pub fn translate_task_from_grounded_internal(
         reachable_action_params,
         ..
     } = explored;
-    let goal = &norm_task.goal;
+    let goal = &task.goal;
 
     fn type_rank(ntype: char) -> u8 {
         match ntype {
@@ -1598,7 +1525,7 @@ pub fn translate_task_from_grounded_internal(
 
     let numeric_axioms = numeric_axiom_rules::handle_axioms(num_axioms);
 
-    let facts = encode_facts(&groups, options::USE_PARTIAL_ENCODING);
+    let facts = encode_facts(&groups, true);
     let numeric = encode_numeric_fluents(
         &numeric_axioms.axioms,
         &numeric_axioms.equivalent,
@@ -1608,11 +1535,6 @@ pub fn translate_task_from_grounded_internal(
     // test whether a condition violates a mutex.
     let mutex_facts = encode_facts(&mutex_groups, false);
 
-    let implied_facts = if options::ADD_IMPLIED_PRECONDITIONS {
-        build_implied_facts(&facts.dictionary, &groups, &mutex_groups)
-    } else {
-        HashMap::new()
-    };
     let mutex_key = build_mutex_key(&facts.dictionary, &mutex_groups);
 
     let mut translation = Translation {
@@ -1626,12 +1548,10 @@ pub fn translate_task_from_grounded_internal(
         translation_key,
         comparison_axioms: HashMap::new(),
         sas_comparison_axioms: Vec::new(),
-        implied_facts,
         constants: Vec::new(),
         num_vals: Vec::new(),
         relevant_numeric: Vec::new(),
         simplified_effect_conditions: 0,
-        added_implied_preconditions: 0,
     };
 
     let gc = &task.global_constraint;
@@ -1659,27 +1579,18 @@ pub fn translate_task_from_grounded_internal(
         "{} effect conditions simplified",
         translation.simplified_effect_conditions
     );
-    info!(
-        "{} implied preconditions added",
-        translation.added_implied_preconditions
-    );
 
-    // Filter unreachable facts
-    if options::FILTER_UNREACHABLE_FACTS {
-        let mut sas_task = sas_task;
-        return match simplify::filter_unreachable_propositions(&mut sas_task) {
-            Ok(()) => Ok(sas_task),
-            // Naming every variant rather than using a wildcard makes a future
-            // variant a compile error instead of a silent fallthrough:
-            // `filter_unreachable_propositions` renames the task in place, so
-            // returning `sas_task` for an unhandled error would hand back a
-            // half-rewritten task.
-            Err(simplify::SimplifyError::Impossible) => Ok(simplify::trivial_task(false)),
-            Err(simplify::SimplifyError::TriviallySolvable) => Ok(simplify::trivial_task(true)),
-        };
+    let mut sas_task = sas_task;
+    match simplify::filter_unreachable_propositions(&mut sas_task) {
+        Ok(()) => Ok(sas_task),
+        // Naming every variant rather than using a wildcard makes a future
+        // variant a compile error instead of a silent fallthrough:
+        // `filter_unreachable_propositions` renames the task in place, so
+        // returning `sas_task` for an unhandled error would hand back a
+        // half-rewritten task.
+        Err(simplify::SimplifyError::Impossible) => Ok(simplify::trivial_task(false)),
+        Err(simplify::SimplifyError::TriviallySolvable) => Ok(simplify::trivial_task(true)),
     }
-
-    Ok(sas_task)
 }
 
 // ============================================================
@@ -1773,12 +1684,10 @@ mod tests {
             numeric_names: vec![],
             translation_key: vec![],
             mutex_key: vec![],
-            implied_facts: HashMap::new(),
             constants: vec![None; numeric_count],
             num_vals: vec![ZERO_VALUE; numeric_count],
             relevant_numeric: (0..numeric_count).collect(),
             simplified_effect_conditions: 0,
-            added_implied_preconditions: 0,
         }
     }
 

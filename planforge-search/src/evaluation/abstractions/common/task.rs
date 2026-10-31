@@ -7,8 +7,8 @@ use std::sync::Arc;
 use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost, OperatorIndex,
-    VariableIndex, ZERO_VALUE,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorIndex, VariableIndex,
+    ZERO_VALUE,
 };
 
 /// A task view that changes only the goal condition.
@@ -95,78 +95,6 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         std::slice::from_ref(&self.goal)
     }
 
-    fn get_operator_cost(&self, index: OperatorIndex, is_axiom: bool) -> OperatorCost {
-        self.base.get_operator_cost(index, is_axiom)
-    }
-
-    fn get_operator_name(&self, index: OperatorIndex, is_axiom: bool) -> &str {
-        self.base.get_operator_name(index, is_axiom)
-    }
-
-    fn get_num_operators(&self) -> usize {
-        self.base.get_num_operators()
-    }
-
-    fn get_num_operator_preconditions(&self, index: OperatorIndex, is_axiom: bool) -> usize {
-        self.base.get_num_operator_preconditions(index, is_axiom)
-    }
-
-    fn get_operator_precondition(
-        &self,
-        index: OperatorIndex,
-        precond_index: usize,
-        is_axiom: bool,
-    ) -> &ExplicitFact {
-        self.base
-            .get_operator_precondition(index, precond_index, is_axiom)
-    }
-
-    fn get_num_operator_effects(&self, index: OperatorIndex, is_axiom: bool) -> usize {
-        self.base.get_num_operator_effects(index, is_axiom)
-    }
-
-    fn get_num_operator_effect_conditions(
-        &self,
-        index: OperatorIndex,
-        eff_index: usize,
-        is_axiom: bool,
-    ) -> usize {
-        self.base
-            .get_num_operator_effect_conditions(index, eff_index, is_axiom)
-    }
-
-    fn get_operator_effect_condition(
-        &self,
-        index: OperatorIndex,
-        eff_index: usize,
-        cond_index: usize,
-        is_axiom: bool,
-    ) -> &ExplicitFact {
-        self.base
-            .get_operator_effect_condition(index, eff_index, cond_index, is_axiom)
-    }
-
-    fn get_operator_effect(
-        &self,
-        index: OperatorIndex,
-        eff_index: usize,
-        is_axiom: bool,
-    ) -> &ExplicitFact {
-        self.base.get_operator_effect(index, eff_index, is_axiom)
-    }
-
-    fn convert_operator_index(
-        &self,
-        index: OperatorIndex,
-        ancestor_task: &dyn AbstractNumericTask,
-    ) {
-        self.base.convert_operator_index(index, ancestor_task)
-    }
-
-    fn get_num_axioms(&self) -> usize {
-        self.base.get_num_axioms()
-    }
-
     fn get_num_goals(&self) -> usize {
         1
     }
@@ -182,28 +110,6 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
 
     fn get_initial_numeric_state_values(&self) -> &[NumericValue] {
         self.base.get_initial_numeric_state_values()
-    }
-
-    fn convert_ancestor_state_values(
-        &self,
-        ancestor_state_values: &[usize],
-        ancestor_task: &dyn AbstractNumericTask,
-    ) -> Vec<usize> {
-        self.base
-            .convert_ancestor_state_values(ancestor_state_values, ancestor_task)
-    }
-
-    fn get_num_cmp_axioms(&self) -> usize {
-        self.base.get_num_cmp_axioms()
-    }
-
-    fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        self.base
-            .project_state_values(propositional_values, numeric_values)
     }
 
     fn evaluate_initial_state_values(

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use planforge_sas::numeric_task::{NumericValue, ONE_VALUE, ZERO_VALUE};
+use planforge_sas::numeric_task::{NumericValue, ZERO_VALUE};
 
 use super::conditions::{Atom, Condition};
 use super::effects::Effect;
@@ -13,6 +13,10 @@ use crate::tools::OrderedSet;
 #[derive(Debug, Clone)]
 pub struct Action {
     pub name: String,
+    /// The disjunct of a split disjunctive precondition this copy keeps.
+    /// Copies share the PDDL name, which plans use, and differ in this index,
+    /// which keeps their exploration rules apart.
+    pub split: Option<usize>,
     pub parameters: Vec<TypedObject>,
     pub num_external_parameters: usize,
     pub precondition: Condition,
@@ -33,12 +37,22 @@ impl Action {
     ) -> Self {
         Action {
             name,
+            split: None,
             parameters,
             num_external_parameters,
             precondition,
             effects,
             cost,
             assign_effects: vec![],
+        }
+    }
+
+    /// The name the grounding rules identify this action by: the PDDL name,
+    /// extended by the disjunct of a split precondition.
+    pub fn exploration_name(&self) -> String {
+        match self.split {
+            Some(index) => format!("{}@split{index}", self.name),
+            None => self.name.clone(),
         }
     }
 
@@ -107,12 +121,16 @@ impl Action {
             init_function_vals,
             ..
         } = *tables;
-        // Build the action name
-        let arg_list: Vec<&str> = self.parameters[..self.num_external_parameters]
-            .iter()
-            .map(|parameter| crate::pddl::Substitution::resolve(var_mapping, &parameter.name))
+        let words: Vec<&str> = std::iter::once(self.name.as_str())
+            .chain(
+                self.parameters[..self.num_external_parameters]
+                    .iter()
+                    .map(|parameter| {
+                        crate::pddl::Substitution::resolve(var_mapping, &parameter.name)
+                    }),
+            )
             .collect();
-        let name = format!("({} {})", self.name, arg_list.join(" "));
+        let name = format!("({})", words.join(" "));
 
         // Instantiate precondition
         let precondition = self.precondition.instantiate_action(
@@ -220,30 +238,17 @@ impl Action {
             new_constant_axioms,
         );
 
-        // Instantiate cost
-        let cost = if let Some(ref c) = self.cost {
-            Some(c.instantiate(
+        // An action without a cost effect costs nothing under a metric, as in
+        // PDDL; without a metric, search charges every operator one.
+        let cost = self.cost.as_ref().map(|cost| {
+            cost.instantiate(
                 var_mapping,
                 fluent_functions,
                 init_function_vals,
                 task_function_admin,
                 new_constant_axioms,
-            ))
-        } else {
-            // Default cost: increase(total-cost, 1)
-            let derived = constant_function(
-                ONE_VALUE,
-                fluent_functions,
-                init_function_vals,
-                task_function_admin,
-                new_constant_axioms,
-            );
-            Some(FunctionAssignment::new(
-                "+".to_string(),
-                PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
-                FunctionalExpression::PrimitiveNumericExpression(derived),
-            ))
-        };
+            )
+        });
 
         Some(PropositionalAction {
             name,

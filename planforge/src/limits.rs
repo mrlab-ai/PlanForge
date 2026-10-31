@@ -123,44 +123,27 @@ fn wrapper_exit_code(status: std::process::ExitStatus) -> i32 {
         .unwrap_or_else(|| status.signal().map(|signal| 128 + signal).unwrap_or(1))
 }
 
+/// The exit code the wrapper reports for its child: a timeout when the child
+/// ran out of CPU time, out of memory when the watchdog killed it for its
+/// resident memory, and otherwise the child's own code, or `128 + signal` for
+/// a child a signal ended. A crash is a crash: a segmentation fault or an abort
+/// is not reported as running out of memory, which the child's allocator
+/// reports itself with its own exit code.
 #[cfg(unix)]
 pub(crate) fn normalize_wrapped_exit(
     status: std::process::ExitStatus,
+    killed_for_memory: bool,
     time_limit: Option<Duration>,
-    memory_limit: Option<u64>,
 ) -> i32 {
-    if let Some(signal) = status.signal() {
-        if signal == libc::SIGXCPU && time_limit.is_some() {
-            info!("Time limit reached. Abort search.");
-            return EXIT_TIMEOUT;
-        }
-
-        if memory_limit.is_some()
-            && (signal == libc::SIGABRT || signal == libc::SIGSEGV || signal == libc::SIGKILL)
-        {
-            info!("Failed to allocate memory.");
-            info!("Memory limit has been reached.");
-            return EXIT_OUT_OF_MEMORY;
-        }
+    if killed_for_memory {
+        info!("Memory limit has been reached.");
+        return EXIT_OUT_OF_MEMORY;
     }
-
     let exit_code = wrapper_exit_code(status);
-
     if time_limit.is_some() && exit_code == 128 + libc::SIGXCPU {
         info!("Time limit reached. Abort search.");
         return EXIT_TIMEOUT;
     }
-
-    if memory_limit.is_some()
-        && (exit_code == 128 + libc::SIGABRT
-            || exit_code == 128 + libc::SIGSEGV
-            || exit_code == 128 + libc::SIGKILL)
-    {
-        info!("Failed to allocate memory.");
-        info!("Memory limit has been reached.");
-        return EXIT_OUT_OF_MEMORY;
-    }
-
     exit_code
 }
 
@@ -274,31 +257,34 @@ fn parse_process_statm(pid: u32, statm: &str) -> std::io::Result<ProcessMemory> 
 }
 
 #[cfg(target_os = "linux")]
+/// Waits for `child`, killing it once its resident memory reaches
+/// `memory_limit`. Returns its exit status, and whether it was killed for its
+/// memory.
 pub(crate) fn wait_with_memory_limit(
     child: &mut std::process::Child,
     memory_limit: u64,
-) -> std::io::Result<std::process::ExitStatus> {
+) -> std::io::Result<(std::process::ExitStatus, bool)> {
     const POLL_INTERVAL: Duration = Duration::from_millis(50);
     const MAX_STATUS_READ_FAILURES: usize = 20;
     let mut consecutive_status_read_failures = 0;
 
     loop {
         if let Some(status) = child.try_wait()? {
-            return Ok(status);
+            return Ok((status, false));
         }
         match process_memory(child.id()) {
             Ok(ProcessMemory::Resident(rss)) if rss >= memory_limit => {
                 child.kill()?;
-                return child.wait();
+                return Ok((child.wait()?, true));
             }
             Ok(ProcessMemory::Resident(_)) => consecutive_status_read_failures = 0,
-            Ok(ProcessMemory::Exited) => return child.wait(),
+            Ok(ProcessMemory::Exited) => return Ok((child.wait()?, false)),
             Ok(ProcessMemory::ResidentUnavailable) => {
                 unreachable!("process_memory resolves unavailable VmRSS through statm")
             }
             Err(error) => {
                 if let Some(status) = child.try_wait()? {
-                    return Ok(status);
+                    return Ok((status, false));
                 }
                 consecutive_status_read_failures += 1;
                 if consecutive_status_read_failures >= MAX_STATUS_READ_FAILURES {
@@ -361,8 +347,9 @@ mod tests {
     #[test]
     fn terminates_child_over_resident_memory_limit() {
         let mut child = Command::new("sleep").arg("10").spawn().unwrap();
-        let status = wait_with_memory_limit(&mut child, 1).unwrap();
+        let (status, killed_for_memory) = wait_with_memory_limit(&mut child, 1).unwrap();
         assert_eq!(status.signal(), Some(libc::SIGKILL));
+        assert!(killed_for_memory);
     }
 
     #[test]
@@ -372,6 +359,7 @@ mod tests {
             assert!(
                 wait_with_memory_limit(&mut child, u64::MAX)
                     .unwrap()
+                    .0
                     .success()
             );
         }

@@ -4,8 +4,8 @@ use super::numeric_helper::{LinearNumericCondition as NumericCondition, NumericT
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, Effect, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue,
-    Operator, OperatorIndex, TaskRef, VariableIndex, ZERO_VALUE,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue, Operator,
+    OperatorIndex, TaskRef, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
 use planforge_sas::utils::linear_effects::LinearNumericEffect;
@@ -330,21 +330,13 @@ pub struct LandmarkCutLandmarks<'task> {
     initialized: bool,
 }
 
-#[allow(unused)]
 impl<'task> LandmarkCutLandmarks<'task> {
     pub fn new(task: TaskRef<'task>, config: LmCutNumericConfig) -> Self {
-        // PARITY(numeric-fd): `random_pcf` is still blocked until the randomized supporter
-        // selection path is ported. The other current feature flags are wired through the same
-        // control-flow sites as the C++ implementation.
         assert!(
             config.precision >= 0.0,
             "LM-cut precision must be non-negative"
         );
         assert!(config.epsilon >= 0.0, "LM-cut epsilon must be non-negative");
-        assert!(
-            !config.random_pcf,
-            "LM-cut random_pcf=true is not implemented yet"
-        );
         let use_bounds = config.bound_iterations > 0;
         let default_value_axioms =
             default_value_axioms(&*task, DefaultValueAxiomMode::ApproximateNegativeCycles);
@@ -639,12 +631,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     #[inline(always)]
-    fn set_operator_unsatisfied_preconditions(&mut self, operator_id: OperatorIndex, count: usize) {
-        self.mark_operator_runtime_touched(operator_id);
-        self.operator_runtime[operator_id.index()].unsatisfied_preconditions = count;
-    }
-
-    #[inline(always)]
     fn decrement_operator_unsatisfied_preconditions(
         &mut self,
         operator_id: OperatorIndex,
@@ -785,7 +771,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let operators = task.get_operators();
         for (operator_id, operator) in operators.iter().enumerate() {
             let operator_id = OperatorIndex::from_usize(operator_id);
-            let base_cost = self.calculate_base_operator_cost(operator_id, operator);
+            let base_cost = self.calculate_base_operator_cost(operator_id);
             self.build_relaxed_operator_for_operator(operator_id, operator, base_cost)
                 .expect("LM-cut numeric operator construction must succeed");
         }
@@ -1802,7 +1788,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         false
     }
 
-    fn calculate_base_operator_cost(&self, operator_id: OperatorIndex, operator: &Operator) -> f64 {
+    fn calculate_base_operator_cost(&self, operator_id: OperatorIndex) -> f64 {
         assert!(
             operator_id.index() < self.task.get_operators().len(),
             "base operator cost is only defined for concrete operators"
@@ -2036,36 +2022,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
 
         Ok(())
-    }
-
-    fn simple_effect_constant_for_operator(
-        &self,
-        relaxed_operator_id: OperatorIndex,
-        condition_id: usize,
-    ) -> Result<(bool, f64), String> {
-        let relaxed_operator = self
-            .relaxed_operators
-            .get(relaxed_operator_id.index())
-            .ok_or_else(|| {
-                format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
-            })?;
-        let condition = self
-            .conditions
-            .get(condition_id)
-            .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
-        let original_operator_id = relaxed_operator
-            .original_op_id_2
-            .filter(|&operator_id| operator_id.index() < self.task.get_operators().len())
-            .ok_or_else(|| {
-                format!(
-                    "LM-cut relaxed operator {relaxed_operator_id} is missing its concrete operator id"
-                )
-            })?;
-        self.calculate_simple_effect_constant(
-            original_operator_id,
-            &condition.coefficients,
-            self.use_bounds,
-        )
     }
 
     fn calculate_simple_effect_constant(
@@ -2340,83 +2296,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
 
         Ok(())
-    }
-
-    fn extend_numeric_effect_ids(
-        &self,
-        linearized_assignment_effects: &[LinearNumericEffect],
-        assignment_effect_ids: &[usize],
-        effect_ids: &mut Vec<usize>,
-    ) -> Result<(), String> {
-        let mut seen: BTreeSet<usize> = effect_ids.iter().copied().collect();
-        for condition_id in 0..self.conditions.len() {
-            if self.assignment_effects_may_support_condition(
-                linearized_assignment_effects,
-                assignment_effect_ids,
-                condition_id,
-            )? {
-                let proposition_id = self.get_numeric_proposition_id(condition_id)?;
-                if seen.insert(proposition_id) {
-                    effect_ids.push(proposition_id);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn assignment_effects_may_support_condition(
-        &self,
-        linearized_assignment_effects: &[LinearNumericEffect],
-        assignment_effect_ids: &[usize],
-        condition_id: usize,
-    ) -> Result<bool, String> {
-        let condition = self
-            .conditions
-            .get(condition_id)
-            .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
-        let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
-        for &assignment_effect_id in assignment_effect_ids {
-            let linear_effect = linearized_assignment_effects
-                .get(assignment_effect_id)
-                .ok_or_else(|| {
-                    format!("LM-cut assignment effect id {assignment_effect_id} is invalid")
-                })?;
-            let target_coefficient = condition
-                .coefficients
-                .get(linear_effect.affected_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
-            if target_coefficient.abs() < self.config.precision {
-                continue;
-            }
-            expression = expression.add(&linear_effect.delta.scale(target_coefficient));
-        }
-        Ok(!expression.is_constant() || expression.constant.abs() >= self.config.precision)
-    }
-
-    fn operator_weighted_delta_expression(
-        &self,
-        relaxed_operator_id: OperatorIndex,
-        coefficients: &[f64],
-    ) -> Result<LinearExpression, String> {
-        let relaxed_operator = self
-            .relaxed_operators
-            .get(relaxed_operator_id.index())
-            .ok_or_else(|| {
-                format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
-            })?;
-        let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
-        for linear_effect in &relaxed_operator.linear_assignment_effects {
-            let weight = coefficients
-                .get(linear_effect.affected_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
-            if weight.abs() < self.config.precision {
-                continue;
-            }
-            expression = expression.add(&linear_effect.delta.scale(weight));
-        }
-        Ok(expression)
     }
 
     fn build_supported_sose_operators(&mut self) -> Result<(), String> {
@@ -3060,23 +2939,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn operator_condition_delta_expression(
-        &self,
-        relaxed_operator_id: OperatorIndex,
-        condition_id: usize,
-    ) -> Result<LinearExpression, String> {
-        let relaxed_operator = self
-            .relaxed_operators
-            .get(relaxed_operator_id.index())
-            .ok_or_else(|| {
-                format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
-            })?;
-        self.condition_delta_expression(
-            condition_id,
-            relaxed_operator.linear_assignment_effects.iter(),
-        )
-    }
-
     fn original_operator_condition_delta_expression(
         &self,
         original_operator_id: OperatorIndex,
@@ -3130,67 +2992,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
             expression = expression.add(&linear_effect.delta.scale(target_coefficient));
         }
         Ok(expression)
-    }
-
-    fn numeric_net_effect_for_operator(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-        relaxed_operator_id: OperatorIndex,
-        condition_id: usize,
-    ) -> Result<f64, String> {
-        let relaxed_operator = self
-            .relaxed_operators
-            .get(relaxed_operator_id.index())
-            .ok_or_else(|| {
-                format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
-            })?;
-        let condition = self
-            .conditions
-            .get(condition_id)
-            .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
-
-        let expression =
-            self.operator_condition_delta_expression(relaxed_operator_id, condition_id)?;
-        let mut net = 0.0;
-        for linear_effect in &relaxed_operator.linear_assignment_effects {
-            if !self.numeric_effect_conditions_hold(propositional_values, &linear_effect.conditions)
-            {
-                continue;
-            }
-            let affected = linear_effect.affected_var_id;
-            let target_coefficient = condition
-                .coefficients
-                .get(affected.index())
-                .copied()
-                .unwrap_or(0.0);
-            if target_coefficient.abs() < self.config.precision {
-                continue;
-            }
-
-            let delta_value = linear_effect.delta.evaluate(numeric_values);
-            net += target_coefficient * delta_value.value();
-        }
-        let unconditional_net = expression.evaluate(numeric_values);
-        assert!(
-            (net - unconditional_net.value()).abs() < self.config.precision
-                || relaxed_operator
-                    .linear_assignment_effects
-                    .iter()
-                    .any(|effect| !effect.conditions.is_empty()),
-            "LM-cut conditional-free numeric effect mismatch between decomposed and aggregated evaluation"
-        );
-        Ok(net)
-    }
-
-    fn numeric_effect_conditions_hold(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        conditions: &[ExplicitFact],
-    ) -> bool {
-        conditions.iter().all(|condition| {
-            propositional_values.get(condition.var()).copied() == Some(condition.value_index())
-        })
     }
 
     fn build_relaxed_operator_for_axiom(
@@ -3513,23 +3314,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
     }
 
-    fn get_proposition_numeric_conditions(
-        &self,
-        proposition_ids: &[usize],
-    ) -> Option<Vec<NumericCondition>> {
-        let conditions = proposition_ids
-            .iter()
-            .filter_map(|&proposition_id| {
-                self.propositions
-                    .get(proposition_id)
-                    .and_then(|proposition| proposition.id_numeric_condition)
-                    .and_then(|condition_id| self.conditions.get(condition_id))
-                    .cloned()
-            })
-            .collect::<Vec<_>>();
-        Some(conditions)
-    }
-
     fn representative_numeric_conditions_for_group_ids(
         &self,
         group_ids: &[usize],
@@ -3644,23 +3428,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
         vec![self.get_proposition_id(fact)]
     }
 
-    fn get_proposition_id_for_effect(&self, effect: &Effect) -> usize {
-        self.numeric_helper
-            .get_proposition(effect.var_id(), effect.value())
-            .map(|helper_id| helper_id + 2)
-            .expect("helper proposition id must exist")
-    }
-
     fn get_proposition_name(&self, var_id: VariableIndex, value: ExplicitValueIndex) -> String {
         self.numeric_helper
             .get_proposition(var_id, value)
             .and_then(|helper_id| self.numeric_helper.get_proposition_name(helper_id))
             .unwrap_or("")
             .to_string()
-    }
-
-    fn proposition_name_for_effect(&self, effect: &Effect) -> String {
-        self.get_proposition_name(effect.var_id(), effect.value())
     }
 
     fn get_proposition_id(&self, fact: &ExplicitFact) -> usize {

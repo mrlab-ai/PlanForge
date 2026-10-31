@@ -8,8 +8,8 @@
 //! There are three supported Rust extension paths:
 //!
 //! - implement [`evaluation::Heuristic`] for a new state evaluator;
-//! - implement [`search::Priority`] for a new best-first priority
-//!   policy;
+//! - implement [`search::best_first::NodeOrdering`] for a new best-first
+//!   node ordering;
 //! - call [`heuristic_factory::register_external_heuristics`] to make external
 //!   heuristic factories visible to the standard configuration grammar.
 //!
@@ -27,7 +27,6 @@
 // in downstream crates that depend on `planforge_search`.
 extern crate self as planforge_search;
 
-pub mod causal_graph;
 pub mod config;
 pub mod evaluation;
 pub mod heuristic_factory;
@@ -36,4 +35,6 @@ pub mod search;
 pub mod state_space;
 pub mod successor_generator;
 pub mod task_restriction;
+#[cfg(test)]
+mod test_tasks;
 pub mod unsupported;

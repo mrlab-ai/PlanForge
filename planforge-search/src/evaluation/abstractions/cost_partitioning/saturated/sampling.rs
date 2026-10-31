@@ -1,85 +1,75 @@
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
-use rand::seq::SliceRandom;
 use tracing::info;
 
-use super::{OrderSelection, SaturatedCostPartitioningHeuristic};
-use crate::evaluation::abstractions::component::AbstractionComponent;
-use crate::evaluation::abstractions::random_walk::random_walk_length;
-use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use crate::resource_limits::Deadline;
-use crate::successor_generator::RegistryExpander;
+use planforge_sas::explicit_state::ExplicitState;
 
-impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+use super::lookup::{CostPartitioningHeuristic, abstract_state_ids_into};
+use super::{OrderSelection, ScpBuilder};
+use crate::evaluation::abstractions::component::AbstractionComponent;
+use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
+use crate::evaluation::sampling::RandomWalkSampler;
+use crate::resource_limits::Deadline;
+
+impl<'task> ScpBuilder<'task> {
     /// The abstract states in every component of the initial state and of
     /// the ends of random walks from it (Seipp et al. 2020), until there are
-    /// `samples` or `deadline` passes. Takes the sampling task, which only
-    /// diversification needs.
+    /// `samples` or `deadline` passes. A walk restarts at a dead end of
+    /// `dead_end_cp`, as Scorpion's does.
     pub(super) fn sample_states(
         &self,
         components: &[AbstractionComponent<'_>],
-        state: &mut OrderSelection<'task>,
+        state: &mut OrderSelection,
+        dead_end_cp: &CostPartitioningHeuristic,
         initial_h: f64,
         deadline: Deadline,
     ) -> Result<Vec<Vec<Option<usize>>>, EvaluationError> {
-        let sampling_task = state
-            .sampling_task
-            .take()
-            .expect("offline diversification was validated to have an owned sampling task");
-        let mut registry = StateRegistry::for_task(sampling_task.clone());
-        let mut expander = RegistryExpander::new(&*sampling_task);
-        let initial_state = registry.get_initial_state();
-        let average_cost = if self.original_operator_costs.is_empty() {
-            0.0
-        } else {
-            self.original_operator_costs.iter().sum::<f64>()
-                / self.original_operator_costs.len() as f64
-        };
+        let mut sampler = RandomWalkSampler::new(self.task.clone());
+        let mut values = ExplicitState::default();
         let mut ids = Vec::new();
         let mut samples = Vec::new();
 
-        self.abstract_state_ids_of_sample(components, &initial_state, &registry, &mut ids)?;
+        self.abstract_state_ids_of_sample(
+            components,
+            sampler.initial_state(),
+            sampler.registry(),
+            &mut values,
+            &mut ids,
+        )?;
         samples.push(ids.clone());
 
-        while samples.len() < self.config.samples {
-            if deadline.passed() {
-                info!(
-                    "scp: offline sampling deadline reached after {} samples",
-                    samples.len()
-                );
+        while samples.len() < self.config.samples && !deadline.passed() {
+            let walk_end = sampler.sample(
+                initial_h,
+                &mut state.rng,
+                deadline,
+                |registry, walk_state| {
+                    self.abstract_state_ids_of_sample(
+                        components,
+                        walk_state,
+                        registry,
+                        &mut values,
+                        &mut ids,
+                    )?;
+                    Ok(dead_end_cp.compute_heuristic(&ids).is_infinite())
+                },
+            )?;
+            let Some(sample) = walk_end else {
                 break;
-            }
-            let walk_length = random_walk_length(initial_h, average_cost, &mut state.rng)?;
-            let mut current = initial_state.clone();
-            for _ in 0..walk_length {
-                if deadline.passed() {
-                    break;
-                }
-                let mut expansion = expander.expand(&registry, &current).map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to expand a random-walk state: {error:?}"
-                    ))
-                })?;
-                let Some(&operator_id) = expansion.applicable_operators().choose(&mut state.rng)
-                else {
-                    break;
-                };
-                let operator = sampling_task
-                    .get_operators()
-                    .get(operator_id.index())
-                    .expect("successor generator returned an invalid operator id");
-                let (successor, _) =
-                    expansion
-                        .successor(&mut registry, operator)
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to apply random-walk operator {}: {error:?}",
-                                operator.name()
-                            ))
-                        })?;
-                current = successor;
-            }
-            self.abstract_state_ids_of_sample(components, &current, &registry, &mut ids)?;
+            };
+            self.abstract_state_ids_of_sample(
+                components,
+                &sample,
+                sampler.registry(),
+                &mut values,
+                &mut ids,
+            )?;
             samples.push(ids.clone());
+        }
+        if samples.len() < self.config.samples {
+            info!(
+                "scp: offline sampling deadline reached after {} samples",
+                samples.len()
+            );
         }
         info!(
             "scp: generated {} offline random-walk samples",
@@ -93,9 +83,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         components: &[AbstractionComponent<'_>],
         concrete_state: &ConcreteState,
         registry: &StateRegistry<'task>,
+        values: &mut ExplicitState,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
         let eval_state = EvaluationState::new(concrete_state, &*self.task, registry);
-        self.compute_abstract_state_ids_into(components, &eval_state, None, ids)
+        abstract_state_ids_into(components, &eval_state, None, values, ids)
     }
 }

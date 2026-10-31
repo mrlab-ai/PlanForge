@@ -15,6 +15,7 @@ use crate::numeric_task::{
 };
 use crate::sas_format::{
     SasOperator, SasTaskParts, SasVariable, axiom_layer_from_sas, effect_precondition_from_sas,
+    optional_value_from_sas,
 };
 use nom::Parser;
 use nom::bytes::complete::take_while1;
@@ -77,12 +78,12 @@ fn parse_metric(input: &str) -> IResult<&str, Metric> {
     let (input, _) = line_ending(input)?;
     let (input, direction) = alt((char('<'), char('>'))).parse(input)?;
     let (input, _) = space1(input)?;
-    let (input, index) = u32(input)?;
+    let (input, index) = i32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_metric")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let metric = Metric::from_sas(direction, index as usize)
+    let metric = Metric::from_sas(direction, optional_value_from_sas(index))
         .expect("the direction was parsed as one of the two the format spells");
     Ok((input, metric))
 }

@@ -38,7 +38,7 @@ impl StoredOperatorSignature {
 
 /// The 64-bit hash label combining groups candidates by: the prev, pre and
 /// eff fact lists and `cost_bits`, mixed FNV-1a style per fact and finished
-/// with the SplitMix64 finalizer, as the state registry hashes states.
+/// with MurmurHash3's 64-bit finalizer, as the state registry hashes states.
 #[inline]
 pub(super) fn signature_hash(
     prev_pairs: &[ExplicitFact],

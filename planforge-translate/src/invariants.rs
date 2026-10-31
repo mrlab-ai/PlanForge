@@ -391,8 +391,7 @@ impl Invariant {
         &self,
         balance_checker: &BalanceChecker,
         enqueue_func: &mut dyn FnMut(Invariant),
-        deadline: std::time::Duration,
-    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
+    ) -> bool {
         // The actions are collected in a fixed order, and each is checked at
         // most once. Which action's check fails first decides which refined
         // candidates are enqueued, so drawing them from a hash set would make
@@ -411,33 +410,29 @@ impl Invariant {
         }
         for action_idx in actions_to_check.into_vec() {
             let heavy_action = balance_checker.get_heavy_action(action_idx);
-            if self.operator_too_heavy(heavy_action, deadline)? {
-                return Ok(false);
+            if self.operator_too_heavy(heavy_action) {
+                return false;
             }
             let action = &balance_checker.actions[action_idx];
-            if self.operator_unbalanced(action, enqueue_func, deadline)? {
-                return Ok(false);
+            if self.operator_unbalanced(action, enqueue_func) {
+                return false;
             }
         }
-        Ok(true)
+        true
     }
 
-    pub fn operator_too_heavy(
-        &self,
-        h_action: &Action,
-        deadline: std::time::Duration,
-    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
+    pub fn operator_too_heavy(&self, h_action: &Action) -> bool {
         let add_effects: Vec<&Effect> = h_action
             .effects
             .iter()
             .filter(|eff| self.covers(&eff.peffect) == Some(false))
             .collect();
 
-        let inv_vars = find_unique_variables(h_action, self);
-
         if add_effects.len() <= 1 {
-            return Ok(false);
+            return false;
         }
+        let inv_vars = find_unique_variables(h_action, self);
+        let precond_literals = get_literals(&h_action.precondition);
 
         for combo in add_effects.iter().combinations(2) {
             let eff1 = combo[0];
@@ -447,11 +442,10 @@ impl Invariant {
             ensure_cover(&mut system, &eff1.peffect, self, &inv_vars);
             ensure_cover(&mut system, &eff2.peffect, self, &inv_vars);
 
-            let precond_literals = get_literals(&h_action.precondition);
             let eff1_cond_literals = get_literals(&eff1.condition);
             let eff2_cond_literals = get_literals(&eff2.condition);
-            let eff1_neg = negate_literal(&eff1.peffect);
-            let eff2_neg = negate_literal(&eff2.peffect);
+            let eff1_neg = eff1.peffect.negate();
+            let eff2_neg = eff2.peffect.negate();
             let eff1_neg_slice = [&eff1_neg];
             let eff2_neg_slice = [&eff2_neg];
 
@@ -464,19 +458,18 @@ impl Invariant {
             ];
             ensure_conjunction_sat(&mut system, &parts);
 
-            if system.is_solvable(deadline)? {
-                return Ok(true);
+            if system.is_solvable() {
+                return true;
             }
         }
-        Ok(false)
+        false
     }
 
     pub fn operator_unbalanced(
         &self,
         action: &Action,
         enqueue_func: &mut dyn FnMut(Invariant),
-        deadline: std::time::Duration,
-    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
+    ) -> bool {
         let inv_vars = find_unique_variables(action, self);
         let (add_effects, del_effects): (Vec<&Effect>, Vec<&Effect>) = action
             .effects
@@ -485,18 +478,12 @@ impl Invariant {
             .partition(|eff| self.covers(&eff.peffect) == Some(false));
 
         for add_effect in add_effects {
-            if self.add_effect_unbalanced(
-                action,
-                add_effect,
-                &del_effects,
-                &inv_vars,
-                enqueue_func,
-                deadline,
-            )? {
-                return Ok(true);
+            if self.add_effect_unbalanced(action, add_effect, &del_effects, &inv_vars, enqueue_func)
+            {
+                return true;
             }
         }
-        Ok(false)
+        false
     }
 
     /// Whether the effect is negated, or `None` if its predicate does not occur
@@ -519,15 +506,14 @@ impl Invariant {
         del_effects: &[&Effect],
         inv_vars: &[String],
         enqueue_func: &mut dyn FnMut(Invariant),
-        deadline: std::time::Duration,
-    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
+    ) -> bool {
         // What must hold for the action to be applicable and to actually
         // produce the add effect, indexed by predicate. The atom must not
         // already be true, or the effect produces nothing.
         let mut produced_by_pred: HashMap<&str, Vec<&Condition>> = HashMap::new();
         let precond_literals = get_literals(&action.precondition);
         let add_cond_literals = get_literals(&add_effect.condition);
-        let add_neg = negate_literal(&add_effect.peffect);
+        let add_neg = add_effect.peffect.negate();
         for literal in precond_literals
             .iter()
             .chain(add_cond_literals.iter())
@@ -581,14 +567,13 @@ impl Invariant {
                 &add_cover,
                 &param_system,
                 inv_vars,
-                deadline,
-            )? {
-                return Ok(false);
+            ) {
+                return false;
             }
         }
 
         self.refine_candidate(add_effect, action, enqueue_func);
-        Ok(true)
+        true
     }
 
     /// Whether the constraints proving that `del_effect` consumes the atom
@@ -605,14 +590,13 @@ impl Invariant {
         add_cover: &Assignment,
         param_system: &ConstraintSystem,
         inv_vars: &[String],
-        deadline: std::time::Duration,
-    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
+    ) -> bool {
         let mut system = ConstraintSystem::new();
         system.add_assignment(add_cover.clone());
         ensure_cover(&mut system, &del_effect.peffect, self, inv_vars);
         system.extend(&balance_system);
         system.extend(param_system);
-        system.is_solvable(deadline)
+        system.is_solvable()
     }
 
     /// A system that is solvable if the conjunction in `produced_by_pred`
@@ -629,7 +613,7 @@ impl Invariant {
     ) -> Option<ConstraintSystem> {
         let mut system = ConstraintSystem::new();
         let del_cond_literals = get_literals(&del_effect.condition);
-        let del_neg = negate_literal(&del_effect.peffect);
+        let del_neg = del_effect.peffect.negate();
         for literal in del_cond_literals.iter().chain(std::iter::once(&&del_neg)) {
             let (negated, predicate, args) = literal_info(literal);
             // The ways in which one of the literals that hold on production
@@ -715,11 +699,6 @@ impl Ord for Invariant {
     }
 }
 
-/// Helper to negate a literal condition
-fn negate_literal(cond: &Condition) -> Condition {
-    cond.negate()
-}
-
 /// Placed here to be accessible from Invariant methods.
 pub struct BalanceChecker {
     /// The actions that add each predicate, by action index, in increasing
@@ -787,9 +766,7 @@ mod tests {
     }
 
     fn is_unbalanced(action: &Action) -> bool {
-        no_object_is_p_and_q()
-            .operator_unbalanced(action, &mut |_: Invariant| {}, std::time::Duration::MAX)
-            .unwrap()
+        no_object_is_p_and_q().operator_unbalanced(action, &mut |_: Invariant| {})
     }
 
     /// `a(?p)` adds `P(?p)` but deletes `Q(?p)` only where `R(?p)` holds, while
@@ -807,11 +784,7 @@ mod tests {
             ])),
             vec![
                 Effect::new(vec![], Condition::Truth, atom("P", &["?p"])),
-                Effect::new(
-                    vec![],
-                    atom("R", &["?p"]),
-                    negate_literal(&atom("Q", &["?p"])),
-                ),
+                Effect::new(vec![], atom("R", &["?p"]), atom("Q", &["?p"]).negate()),
             ],
         );
         assert!(is_unbalanced(&action));
@@ -835,29 +808,9 @@ mod tests {
                     ])),
                     atom("P", &["?y"]),
                 ),
-                Effect::new(
-                    vec![],
-                    Condition::Truth,
-                    negate_literal(&atom("Q", &["?p"])),
-                ),
+                Effect::new(vec![], Condition::Truth, atom("Q", &["?p"]).negate()),
             ],
         );
         assert!(is_unbalanced(&action));
-    }
-
-    #[test]
-    fn expired_deadline_interrupts_one_candidate_balance_check() {
-        let action = action(
-            &[],
-            Condition::Truth,
-            vec![
-                Effect::new(vec![], Condition::Truth, atom("P", &["a"])),
-                Effect::new(vec![], Condition::Truth, atom("P", &["b"])),
-            ],
-        );
-        assert_eq!(
-            no_object_is_p_and_q().operator_too_heavy(&action, std::time::Duration::ZERO),
-            Err(tools::CpuTimeDeadlineExceeded)
-        );
     }
 }

@@ -40,7 +40,7 @@ use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
     LandmarkCutNumericHeuristic, LmCutNumericConfig,
 };
 use planforge_search::heuristic_factory::{BuildContext, HeuristicConfig};
-use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 
 use crate::corpus::{
     self, Scratch, Solution, assert_fixture_set_is_pinned, blind_astar, subdirectory_names,
@@ -350,33 +350,18 @@ fn astar_solution<'task>(
     heuristic: Box<dyn Heuristic + 'task>,
     what: &str,
 ) -> Solution {
-    let registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(
-        task,
-        registry,
-        planforge_search::search::SearchParams {
-            heuristic,
-            lazy: None,
-            reevaluate_dynamic: false,
-            time_limit: None,
-            max_memory_bytes: None,
-        },
-    );
-    let result = search
-        .search()
+    let result = AStarSearch::new(Arc::new(task), SearchParams::new(heuristic))
+        .run()
         .unwrap_or_else(|error| panic!("{what}: A* failed: {error}"));
 
-    let plan = match (&result.status, &result.plan) {
-        (SearchStatus::Solved(_), Some(plan)) => plan,
-        (status, _) => panic!(
-            "{what}: A* must solve the fixture, got {status:?} after {} dead ends",
-            result.dead_ends
-        ),
+    let SearchOutcome::Solved { plan, cost } = result.outcome else {
+        panic!(
+            "{what}: A* must solve the fixture, got {:?} after {} dead ends",
+            result.outcome, result.statistics.dead_ends
+        );
     };
     Solution {
-        cost: result
-            .solution_cost
-            .unwrap_or_else(|| plan.iter().map(|op| op.cost().value() as f64).sum()),
+        cost,
         length: plan.len() as u64,
     }
 }

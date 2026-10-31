@@ -1,26 +1,22 @@
-//! Typed heuristic features and the explicit, deterministic registry.
-use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigError, ConfigValue, configure};
+//! The heuristic registry: every heuristic the configuration grammar names
+//! is a [`HeuristicFeature`], a typed configuration and how to build the
+//! heuristic from it. The built-in features are listed in one place,
+//! `BUILTIN`; a binary can add its own with
+//! [`register_external_heuristics`].
+
+use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, configure};
 use crate::evaluation::Heuristic;
-use crate::evaluation::abstractions::collections::config::MemberConfig;
-use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
-use crate::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
-use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
-use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
-use crate::evaluation::abstractions::cost_partitioning::saturated::SaturatedCostPartitioningHeuristic;
+use crate::evaluation::abstractions;
+use crate::evaluation::abstractions::cartesian::CartesianAbstractionCollectionConfig;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
+use crate::evaluation::abstractions::icaps26::Icaps26CartesianConfig;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
-use crate::resource_limits::Deadline;
+use crate::evaluation::abstractions::sources::{AbstractionSource, PdbSourceConfig};
 use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use std::fmt::{self, Debug};
 use std::sync::{Arc, OnceLock};
-mod abstraction_config;
-pub(crate) mod features;
-pub use features::{EmptyConfig, MaxConfig};
 #[cfg(test)]
 mod tests;
-pub use abstraction_config::{
-    AbstractionPurpose, AbstractionSource, PdbSourceConfig, ScpHeuristicConfig, SourcesConfig,
-};
-pub(crate) use abstraction_config::{build_components, remaining_construction_time};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequiredBackend {
@@ -60,18 +56,26 @@ impl TaskRequirements {
         }
     }
 
-    fn validate(self, task: &dyn AbstractNumericTask) -> Result<(), String> {
+    /// A task that is not restricted is a usage error, since `--restrict-task`
+    /// would restrict it; a goal no abstraction can express is a task the
+    /// heuristic does not support.
+    pub(crate) fn validate(
+        self,
+        task: &dyn AbstractNumericTask,
+    ) -> Result<(), HeuristicBuildError> {
         if self.restricted {
-            validate_restricted_task(task)?;
+            validate_restricted_task(task).map_err(HeuristicBuildError::Failure)?;
         }
         if self.abstractable_goal {
-            crate::evaluation::validate_abstractable_goal(task)?;
+            crate::evaluation::validate_abstractable_goal(task)
+                .map_err(HeuristicBuildError::Unsupported)?;
         }
         Ok(())
     }
 }
 
-/// Shared task and construction deadline. Each feature receives the task once.
+/// What a feature builds its heuristic for: the task, and the name the
+/// heuristic reports itself under.
 pub struct BuildContext<'a> {
     pub task: &'a TaskRef<'a>,
     pub name: String,
@@ -85,6 +89,12 @@ impl<'a> BuildContext<'a> {
     }
 }
 
+/// The configuration of no options.
+#[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
+pub struct EmptyConfig {}
+
+/// A heuristic the configuration grammar names: its typed configuration, the
+/// task properties and solver backend it needs, and its construction.
 pub trait HeuristicFeature: 'static {
     const NAME: &'static str;
     type Config: ApplyOptions + Default + Clone + Debug + Send + Sync + 'static;
@@ -95,9 +105,13 @@ pub trait HeuristicFeature: 'static {
     fn validate(_: &Self::Config) -> Result<(), ConfigError> {
         Ok(())
     }
+    /// The heuristics the configuration contains, whose requirements and
+    /// backend it inherits.
     fn nested(_: &Self::Config) -> Vec<&HeuristicConfig> {
         Vec::new()
     }
+    /// The abstraction source the heuristic is the maximum over, for a
+    /// combination of abstraction heuristics to build from directly.
     fn source(_: &Self::Config) -> Option<AbstractionSource> {
         None
     }
@@ -168,12 +182,6 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
 #[derive(Debug, Clone)]
 pub struct HeuristicConfig(Arc<dyn ErasedHeuristicConfig>);
 impl HeuristicConfig {
-    pub fn blind() -> Self {
-        Self::default()
-    }
-    pub fn from_value(value: &ConfigValue) -> Result<Self, ConfigError> {
-        <Self as crate::config::FromOptionValue>::from_option_value(value)
-    }
     pub fn preflight(&self) -> std::io::Result<()> {
         check_backend(self.required_backend())
     }
@@ -267,32 +275,23 @@ fn parse_feature<F: HeuristicFeature>(spec: &ConfigCall) -> Result<HeuristicConf
     })))
 }
 
+/// The built-in heuristics.
 static BUILTIN: &[HeuristicEntry] = &[
     entry::<crate::evaluation::heuristic::BlindFeature>(),
     entry::<crate::evaluation::check_admissible::CheckAdmissibleFeature>(),
     entry::<crate::evaluation::ff_heuristic::FfFeature>(),
-    entry::<features::MaxFeature>(),
-    entry::<features::CanonicalFeature>(),
-    entry::<features::ScpFeature>(),
-    entry::<features::DomainFeature>(),
-    entry::<features::CartesianFeature>(),
-    entry::<
-        features::SourceFeature<
-            crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig,
-        >,
-    >(),
-    entry::<
-        features::SourceFeature<
-            crate::evaluation::abstractions::cartesian::CartesianAbstractionCollectionConfig,
-        >,
-    >(),
-    entry::<features::SourceFeature<PdbSourceConfig>>(),
-    entry::<
-        features::SourceFeature<crate::evaluation::abstractions::icaps26::Icaps26CartesianConfig>,
-    >(),
-    entry::<features::PostHocFeature>(),
-    entry::<crate::evaluation::numeric_potential_config::NumericPotentialFeature>(),
     entry::<crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericFeature>(),
+    entry::<crate::evaluation::numeric_potentials::NumericPotentialFeature>(),
+    entry::<abstractions::features::DomainFeature>(),
+    entry::<abstractions::features::CartesianFeature>(),
+    entry::<abstractions::features::SourceFeature<DomainAbstractionCollectionConfig>>(),
+    entry::<abstractions::features::SourceFeature<CartesianAbstractionCollectionConfig>>(),
+    entry::<abstractions::features::SourceFeature<PdbSourceConfig>>(),
+    entry::<abstractions::features::SourceFeature<Icaps26CartesianConfig>>(),
+    entry::<abstractions::cost_partitioning::max::MaxFeature>(),
+    entry::<abstractions::cost_partitioning::canonical::CanonicalFeature>(),
+    entry::<abstractions::cost_partitioning::saturated::ScpFeature>(),
+    entry::<abstractions::cost_partitioning::posthoc_optimization::PostHocFeature>(),
 ];
 
 static EXTERNAL: OnceLock<Vec<HeuristicEntry>> = OnceLock::new();
@@ -413,102 +412,6 @@ impl From<String> for HeuristicBuildError {
     fn from(message: String) -> Self {
         Self::Failure(message)
     }
-}
-
-pub(crate) fn build_max_from_sources<'task>(
-    task: &'task dyn AbstractNumericTask,
-    sources: &[AbstractionSource],
-    name: &str,
-) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
-    let components = build_components(
-        task,
-        sources,
-        AbstractionPurpose::Standalone,
-        Deadline::NONE,
-    )?;
-    let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
-        .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
-    Ok(Box::new(heuristic))
-}
-
-pub(crate) fn build_canonical_from_sources<'task>(
-    task: &'task dyn AbstractNumericTask,
-    sources: &[AbstractionSource],
-    name: &str,
-    construction_deadline: Deadline,
-) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
-    let components = build_components(
-        task,
-        sources,
-        AbstractionPurpose::Standalone,
-        construction_deadline,
-    )?;
-    remaining_construction_time(construction_deadline)?;
-    let heuristic = CanonicalAbstractionHeuristic::new(Some(name.to_string()), task, components)
-        .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
-    remaining_construction_time(construction_deadline)?;
-    Ok(Box::new(heuristic))
-}
-
-/// Build SCP from its already configured sources and cost-partitioning options.
-pub(crate) fn build_scp_from_sources<'a>(
-    context: &BuildContext<'a>,
-    config: &ScpHeuristicConfig,
-) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-    let deadline = config.sources.deadline()?;
-    let purpose = if config.scp.partitioning.uses_regions() {
-        AbstractionPurpose::RegionalCostPartitioning
-    } else {
-        AbstractionPurpose::LabelCostPartitioning
-    };
-    let components = build_components(&**context.task, &config.sources.sources, purpose, deadline)?;
-    remaining_construction_time(deadline)?;
-    let heuristic = SaturatedCostPartitioningHeuristic::new(
-        Some(context.name.clone()),
-        components,
-        config.scp.clone(),
-        context.task.clone(),
-        deadline,
-    )
-    .map_err(|error| format!("failed to construct `{}`: {error}", context.name))?;
-    remaining_construction_time(deadline)?;
-    Ok(Box::new(heuristic))
-}
-
-pub(crate) fn standalone_abstraction_heuristic<'a, G>(
-    mut config: G::Config,
-    context: &BuildContext<'a>,
-) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError>
-where
-    G: AbstractionGenerator,
-    G::Abstraction: 'a,
-{
-    config.cegar_mut().keep_transitions = false;
-    let abstraction = G::new(config)
-        .and_then(|generator| generator.generate(&**context.task))
-        .map_err(|error| format!("failed to build {}: {error:#}", G::KIND))?;
-    Ok(Box::new(AbstractionHeuristic::new(
-        &context.name,
-        abstraction,
-    )))
-}
-pub(crate) fn single_wrapped_heuristic_spec(
-    wrapper: &str,
-    args: &[ConfigArg],
-) -> Result<ConfigCall, String> {
-    let [arg] = args else {
-        return Err(format!(
-            "`{wrapper}` expects exactly one heuristic, e.g. `{wrapper}(domain())`, \
-             but got {} arguments",
-            args.len()
-        ));
-    };
-    if let Some(key) = arg.key() {
-        return Err(format!(
-            "`{wrapper}` takes its heuristic positionally, not as `{key}=...`"
-        ));
-    }
-    ConfigCall::from_value(arg.value())
 }
 
 impl From<ConfigError> for HeuristicBuildError {

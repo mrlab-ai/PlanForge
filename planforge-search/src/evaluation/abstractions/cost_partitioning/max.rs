@@ -1,7 +1,11 @@
-use std::cell::RefCell;
-
+use crate::config::ConfigError;
+use crate::evaluation::abstractions::features::max_over_sources;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::maximum::MaximumHeuristic;
+use crate::heuristic_factory::{
+    BuildContext, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
+};
 
 use planforge_sas::explicit_state::ExplicitState;
 
@@ -11,7 +15,7 @@ use crate::evaluation::abstractions::component::AbstractionComponent;
 pub struct MaxAbstractionHeuristic<'task> {
     name: String,
     components: Vec<AbstractionComponent<'task>>,
-    state_values: RefCell<ExplicitState>,
+    state_values: ExplicitState,
 }
 
 impl<'task> MaxAbstractionHeuristic<'task> {
@@ -27,79 +31,77 @@ impl<'task> MaxAbstractionHeuristic<'task> {
         Ok(Self {
             name: name.unwrap_or_else(|| "max_abstractions".to_string()),
             components,
-            state_values: RefCell::default(),
+            state_values: ExplicitState::default(),
         })
     }
 }
 
 impl Heuristic for MaxAbstractionHeuristic<'_> {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let mut state_values = self.state_values.borrow_mut();
-        eval_state.fill_values(&mut state_values)?;
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        eval_state.fill_values(&mut self.state_values)?;
         let mut best = 0.0_f64;
         for (component_id, component) in self.components.iter().enumerate() {
-            best = best.max(standalone_estimate(component, component_id, &state_values)?);
+            best = best.max(standalone_estimate(
+                component,
+                component_id,
+                &self.state_values,
+            ));
         }
         Ok(best)
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }
 
-pub use registry_feature::MaxFeature;
-mod registry_feature {
-    use crate::config::ConfigError;
-    use crate::evaluation::{Heuristic, maximum::MaximumHeuristic};
-    use crate::heuristic_factory::*;
+/// The heuristics a maximum ranges over: one list, or a single heuristic.
+#[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
+pub struct MaxConfig {
+    #[option(positional)]
+    pub heuristics: Vec<HeuristicConfig>,
+}
 
-    pub struct MaxFeature;
-    impl HeuristicFeature for MaxFeature {
-        const NAME: &'static str = "max";
-        type Config = MaxConfig;
-        fn nested(config: &Self::Config) -> Vec<&HeuristicConfig> {
-            config.heuristics.iter().collect()
+/// `max(h_1, ..., h_n)`. The abstraction heuristics among the children are
+/// one maximum over their abstractions; the others are maximized with it.
+pub struct MaxFeature;
+impl HeuristicFeature for MaxFeature {
+    const NAME: &'static str = "max";
+    type Config = MaxConfig;
+    fn nested(config: &Self::Config) -> Vec<&HeuristicConfig> {
+        config.heuristics.iter().collect()
+    }
+    fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+        if config.heuristics.is_empty() {
+            return Err("max requires at least one heuristic".into());
         }
-        fn validate(config: &Self::Config) -> Result<(), ConfigError> {
-            if config.heuristics.is_empty() {
-                return Err("max requires at least one heuristic".into());
+        Ok(())
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        let mut sources = Vec::new();
+        let mut others = Vec::new();
+        for child in &config.heuristics {
+            match child.as_abstraction_source() {
+                Some(source) => sources.push(source),
+                None => others.push(child),
             }
-            Ok(())
         }
-        fn build<'a>(
-            config: &Self::Config,
-            context: &BuildContext<'a>,
-        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-            let mut sources = Vec::new();
-            let mut others = Vec::new();
-            for child in &config.heuristics {
-                match child.as_abstraction_source() {
-                    Some(source) => sources.push(source),
-                    None => others.push(child),
-                }
-            }
-            if others.is_empty() {
-                return build_max_from_sources(&**context.task, &sources, &context.name);
-            }
-            let mut children = Vec::new();
-            if !sources.is_empty() {
-                children.push(build_max_from_sources(
-                    &**context.task,
-                    &sources,
-                    &context.name,
-                )?);
-            }
-            for child in others {
-                children.push(child.build(context)?);
-            }
-            Ok(Box::new(MaximumHeuristic::new(
-                context.name.clone(),
-                children,
-            )))
+        if others.is_empty() {
+            return max_over_sources(&**context.task, &sources, &context.name);
         }
+        let mut children = Vec::new();
+        if !sources.is_empty() {
+            children.push(max_over_sources(&**context.task, &sources, &context.name)?);
+        }
+        for child in others {
+            children.push(child.build(context)?);
+        }
+        Ok(Box::new(MaximumHeuristic::new(
+            context.name.clone(),
+            children,
+        )))
     }
 }

@@ -6,23 +6,18 @@ use planforge_search::heuristic_factory::{
 struct GoalCountHeuristic;
 
 impl Heuristic for GoalCountHeuristic {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let task = eval_state.task();
-        let registry = eval_state.state_registry();
-        let state = eval_state.state();
-        let mut unsatisfied = 0usize;
-        for goal_id in 0..task.get_num_goals() {
-            if !task.get_goal_fact(goal_id).is_held(registry.view(state)) {
-                unsatisfied += 1;
-            }
-        }
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        let state = eval_state.state_registry().view(eval_state.state());
+        let unsatisfied = eval_state
+            .task()
+            .goals()
+            .iter()
+            .filter(|goal| !goal.is_held(state))
+            .count();
         Ok(unsatisfied as f64)
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         "goalcount"
     }
 }

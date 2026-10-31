@@ -75,7 +75,7 @@ impl AbstractionView for CartesianView<'_> {
         &self,
         propositions: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize> {
+    ) -> usize {
         let views = self.semantics.cegar().coordinates().views();
         self.working
             .hierarchy()
@@ -92,8 +92,8 @@ impl AbstractionView for CartesianView<'_> {
         self.shortest_paths.distance(state)
     }
 
-    fn is_goal(&self, state: usize) -> Result<bool> {
-        Ok(self.shortest_paths.is_goal(state))
+    fn is_goal(&self, state: usize) -> bool {
+        self.shortest_paths.is_goal(state)
     }
 
     fn optimal_transition(&self, state: usize) -> Result<TransitionKey> {

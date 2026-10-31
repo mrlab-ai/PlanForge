@@ -9,7 +9,7 @@ use super::f_expression::{
     FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
 };
 use super::functions::Function;
-use super::pddl_types::{Type, TypedObject};
+use super::pddl_types::{TypeHierarchy, TypedObject};
 use super::predicates::Predicate;
 
 fn prettyprint(symbol: &str) -> String {
@@ -29,7 +29,7 @@ fn prettyprint(symbol: &str) -> String {
 /// nothing downstream of here consults them.
 #[derive(Debug, Clone)]
 pub struct Task {
-    pub types: Vec<Type>,
+    pub types: TypeHierarchy,
     pub objects: Vec<TypedObject>,
     pub predicates: Vec<Predicate>,
     pub init: Vec<Atom>,
@@ -131,8 +131,9 @@ pub struct GroundingTables<'a> {
 }
 
 /// What the `(define (domain ...))` form declares.
+#[derive(Debug)]
 pub struct DomainDefinition {
-    pub types: Vec<Type>,
+    pub types: TypeHierarchy,
     pub constants: Vec<TypedObject>,
     pub predicates: Vec<Predicate>,
     pub functions: Vec<Function>,
@@ -141,6 +142,7 @@ pub struct DomainDefinition {
 }
 
 /// What the `(define (problem ...))` form declares.
+#[derive(Debug)]
 pub struct ProblemDefinition {
     pub objects: Vec<TypedObject>,
     pub init: Vec<Atom>,
@@ -154,6 +156,10 @@ impl Task {
     /// domain's constants, every object is made equal to itself so that `=`
     /// preconditions can be grounded, and the metric defaults to minimising
     /// `total-cost`, which is then declared if the domain did not declare it.
+    ///
+    /// Without a metric a plan is as good as it is short, as in PDDL, so every
+    /// action then increases `total-cost` by one, whatever cost it declares.
+    /// Under a metric an action without a cost effect costs nothing.
     pub fn new(domain: DomainDefinition, problem: ProblemDefinition) -> Self {
         let mut objects = domain.constants;
         objects.extend(problem.objects);
@@ -174,6 +180,16 @@ impl Task {
                 "number".to_string(),
             ));
         }
+        let mut actions = domain.actions;
+        if problem.metric.is_none() {
+            for action in &mut actions {
+                action.cost = Some(FunctionAssignment::new(
+                    "+".to_string(),
+                    PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+                    FunctionalExpression::NumericConstant(NumericConstant::new(1.0)),
+                ));
+            }
+        }
         let metric_expression = problem.metric.unwrap_or_else(|| {
             (
                 "<".to_string(),
@@ -184,11 +200,6 @@ impl Task {
         });
 
         let mut function_administrator = DerivedFunctionAdministrator::new();
-        for function in &functions {
-            function_administrator
-                .function_symbols
-                .insert(function.name.clone());
-        }
         let metric = (
             metric_expression.0,
             function_administrator.get_derived_function(&metric_expression.1),
@@ -201,7 +212,7 @@ impl Task {
             init,
             num_init: problem.num_init,
             goal: problem.goal,
-            actions: domain.actions,
+            actions,
             axioms: domain.axioms,
             metric,
             function_administrator,
@@ -280,7 +291,6 @@ impl Task {
 /// Manages derived numeric functions (numeric axioms created during instantiation).
 #[derive(Debug, Clone)]
 pub struct DerivedFunctionAdministrator {
-    pub function_symbols: HashSet<String>,
     derived_functions: HashMap<DerivedFunctionKey, NumericAxiom>,
     derived_functions_by_name: HashMap<String, DerivedFunctionKey>,
 }
@@ -301,7 +311,6 @@ impl Default for DerivedFunctionAdministrator {
 impl DerivedFunctionAdministrator {
     pub fn new() -> Self {
         DerivedFunctionAdministrator {
-            function_symbols: HashSet::new(),
             derived_functions: HashMap::new(),
             derived_functions_by_name: HashMap::new(),
         }
@@ -444,7 +453,6 @@ impl DerivedFunctionAdministrator {
 
         let parameters = self.get_default_variables(args.len());
         let axiom = NumericAxiom::new(name.clone(), parameters, op, parts);
-        self.function_symbols.insert(name.clone());
         assert!(
             self.derived_functions_by_name
                 .insert(name.clone(), key.clone())

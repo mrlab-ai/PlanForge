@@ -152,7 +152,7 @@ fn with_explicit_subsets<'task>(
         name,
         components,
         max_additive_subsets,
-        relevant_operator_ids,
+        &relevant_operator_ids,
     ))
 }
 
@@ -211,7 +211,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     let mut da2 = make_abstraction(&task, vec![4.0, 0.0, 0.0, 0.0]);
     da2.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0), OperatorIndex::new(1)];
 
-    let heuristic = with_explicit_subsets(
+    let mut heuristic = with_explicit_subsets(
         None,
         &task,
         vec![
@@ -224,7 +224,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     .unwrap();
 
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
-    let value = heuristic.compute_heuristic(&eval_state).unwrap();
+    let value = heuristic.evaluate(&eval_state).unwrap();
 
     assert_eq!(value, 5.0);
 }
@@ -265,10 +265,10 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
     let initial_state = registry.get_initial_state();
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
 
-    let max = MaxAbstractionHeuristic::new(None, mixed_components(&task)).unwrap();
-    assert_eq!(max.compute_heuristic(&eval_state).unwrap(), 5.0);
+    let mut max = MaxAbstractionHeuristic::new(None, mixed_components(&task)).unwrap();
+    assert_eq!(max.evaluate(&eval_state).unwrap(), 5.0);
 
-    let canonical =
+    let mut canonical =
         CanonicalAbstractionHeuristic::new(None, &task, mixed_components(&task)).unwrap();
     assert!(
         canonical
@@ -276,7 +276,7 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
             .iter()
             .any(|subset| subset == &[0, 2])
     );
-    assert_eq!(canonical.compute_heuristic(&eval_state).unwrap(), 5.0);
+    assert_eq!(canonical.evaluate(&eval_state).unwrap(), 5.0);
 }
 
 #[test]

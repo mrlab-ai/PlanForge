@@ -131,7 +131,7 @@ impl CartesianRefinementHierarchy {
         &self,
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize> {
+    ) -> usize {
         self.map_state_with(propositional, |var_id| numeric[var_id.index()])
     }
 
@@ -141,24 +141,18 @@ impl CartesianRefinementHierarchy {
         &self,
         propositional: &[ExplicitValueIndex],
         coordinate_value: impl Fn(VariableIndex) -> NumericValue,
-    ) -> Result<usize> {
+    ) -> usize {
         let mut node_id = 0;
         loop {
-            match self
-                .nodes
-                .get(node_id)
-                .with_context(|| format!("missing Cartesian hierarchy node {node_id}"))?
-            {
-                RefinementNode::Leaf { state_id } => return Ok(*state_id),
+            match &self.nodes[node_id] {
+                RefinementNode::Leaf { state_id } => return *state_id,
                 RefinementNode::Propositional {
                     var_id,
                     wanted,
                     wanted_child,
                     other_child,
                 } => {
-                    let value = *propositional.get(var_id.index()).with_context(|| {
-                        format!("propositional state has no value for var {var_id}")
-                    })? as ExplicitValueIndex;
+                    let value = propositional[var_id.index()];
                     node_id = if wanted.binary_search(&value).is_ok() {
                         *wanted_child
                     } else {
@@ -173,7 +167,7 @@ impl CartesianRefinementHierarchy {
                     upper_child,
                 } => {
                     let value = coordinate_value(*var_id);
-                    ensure!(
+                    assert!(
                         value.is_finite(),
                         "numeric state var {var_id} is not finite: {value}"
                     );
@@ -231,7 +225,7 @@ impl CartesianRefinementHierarchy {
     /// Replaces leaf `leaf_node_id` of `old_state_id` by the node `node`
     /// builds over two new leaves, the old state's on `old_state_side`.
     /// Returns the first and second leaf.
-    fn replace_leaf(
+    pub(crate) fn replace_leaf(
         &mut self,
         leaf_node_id: usize,
         old_state_id: usize,
@@ -261,77 +255,4 @@ impl CartesianRefinementHierarchy {
         self.nodes[leaf_node_id] = node(first_child, first_child + 1);
         Ok((first_child, first_child + 1))
     }
-
-    /// The ICAPS26 abstraction's propositional split; see [`Self::split`].
-    pub(crate) fn split_propositional(
-        &mut self,
-        leaf_node_id: usize,
-        old_state_id: usize,
-        new_state_id: usize,
-        var_id: VariableIndex,
-        mut wanted: Vec<ExplicitValueIndex>,
-        old_state_is_wanted: bool,
-    ) -> Result<()> {
-        wanted.sort_unstable();
-        wanted.dedup();
-        self.replace_leaf(
-            leaf_node_id,
-            old_state_id,
-            new_state_id,
-            ChildSide::first_if(old_state_is_wanted),
-            |wanted_child, other_child| RefinementNode::Propositional {
-                var_id,
-                wanted,
-                wanted_child,
-                other_child,
-            },
-        )?;
-        Ok(())
-    }
-
-    /// The ICAPS26 abstraction's numeric split; see [`Self::split`].
-    pub(crate) fn split_numeric(
-        &mut self,
-        leaf_node_id: usize,
-        old_state_id: usize,
-        new_state_id: usize,
-        split: NumericSplit,
-    ) -> Result<()> {
-        let NumericSplit {
-            var_id,
-            boundary,
-            lower_includes_boundary,
-            old_state_is_lower,
-        } = split;
-        ensure!(
-            boundary.is_finite(),
-            "Cartesian split boundary must be finite"
-        );
-        self.replace_leaf(
-            leaf_node_id,
-            old_state_id,
-            new_state_id,
-            ChildSide::first_if(old_state_is_lower),
-            |lower_child, upper_child| RefinementNode::Numeric {
-                var_id,
-                boundary,
-                lower_includes_boundary,
-                lower_child,
-                upper_child,
-            },
-        )?;
-        Ok(())
-    }
-}
-
-/// Where a numeric refinement cuts one variable's range, and on which side of
-/// the cut the state being split ends up.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct NumericSplit {
-    pub(crate) var_id: VariableIndex,
-    pub(crate) boundary: NumericValue,
-    /// Whether `boundary` itself belongs to the lower child.
-    pub(crate) lower_includes_boundary: bool,
-    /// Whether the state that existed before the split becomes the lower child.
-    pub(crate) old_state_is_lower: bool,
 }

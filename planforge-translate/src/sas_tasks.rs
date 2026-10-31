@@ -393,7 +393,7 @@ impl SASOperator {
         self.name
             .strip_prefix('(')
             .and_then(|name| name.strip_suffix(')'))
-            .unwrap_or(&self.name)
+            .unwrap_or_else(|| panic!("grounded operator name {:?} is parenthesized", self.name))
     }
 
     pub fn get_encoding_size(&self) -> usize {

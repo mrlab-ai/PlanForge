@@ -116,15 +116,18 @@ pub(super) fn finalize_abstraction(
                 .fold(f64::INFINITY, f64::min)
         })
         .collect::<Vec<_>>();
-    let distances = backward_goal_distances(
+    let Ok(distances) = backward_goal_distances(
         &mut CostedTransitionSystem {
             system: &transition_system,
             transition_costs: &transition_costs,
         },
-        &transition_system.goal_states,
-        || Ok(()),
+        transition_system
+            .goal_states
+            .iter()
+            .map(|&state| (state, 0.0)),
+        no_limit,
         None,
-    )?;
+    );
     let distance_table = DistanceTable {
         distances,
         initial_state,

@@ -130,7 +130,7 @@ pub(crate) fn refine<R: Refinable>(
                     let root = view.abstract_state(
                         &run.refinement_root.propositional,
                         &run.refinement_root.numeric,
-                    )?;
+                    );
                     let root_distance = view.goal_distance(root);
                     ensure!(
                         (plan.cost() - root_distance).abs() <= float_tolerance::AGREEMENT_EPSILON,

@@ -186,8 +186,10 @@ impl FunctionAssignment {
         )
     }
 
+    /// Whether this is an action cost: an increase of `total-cost`. Any other
+    /// effect on `total-cost` is an ordinary numeric effect.
     pub fn is_cost_assignment(&self) -> bool {
-        self.fluent.symbol == "total-cost"
+        self.symbol == "+" && self.fluent.symbol == "total-cost"
     }
 }
 

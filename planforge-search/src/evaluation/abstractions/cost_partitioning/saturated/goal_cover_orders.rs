@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use super::SaturatedCostPartitioningHeuristic;
+use super::ScpBuilder;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::component::{AbstractionComponent, GoalFocusedMember};
 
@@ -14,7 +14,7 @@ pub(super) struct GoalCoverOrderVariant {
     pub(super) compact: bool,
 }
 
-impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+impl<'task> ScpBuilder<'task> {
     pub(super) fn goal_cover_order(
         &self,
         base_order: &[usize],

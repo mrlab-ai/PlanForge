@@ -7,7 +7,7 @@ use rand::seq::SliceRandom;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 
-use crate::causal_graph::{CausalGraphVariable, RestrictedCausalGraph};
+use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use crate::config::option_enum;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -31,7 +31,7 @@ pub struct VariableOrderFinder {
     is_causal_predecessor: Vec<bool>,
     num_propositional_variables: usize,
     variable_order_type: GreedyVariableOrderType,
-    causal_graph: RestrictedCausalGraph,
+    causal_graph: CausalGraph,
 }
 
 impl VariableOrderFinder {
@@ -41,8 +41,8 @@ impl VariableOrderFinder {
         numeric_variables_first: bool,
         random_seed: u64,
     ) -> Self {
-        let causal_graph = RestrictedCausalGraph::new(task)
-            .expect("PDB variable ordering requires a restricted task");
+        let causal_graph =
+            CausalGraph::new(task).expect("PDB variable ordering requires a restricted task");
         let mut remaining_vars = Vec::new();
 
         if numeric_variables_first {

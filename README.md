@@ -181,10 +181,10 @@ Workspace crates:
   change to `planforge-search` alone: the heuristic's own module, and one entry
   in the `heuristic_factory` registry.
 - `planforge-config-derive` — `#[derive(ApplyOptions)]`, which cannot be merged: a
-  `proc-macro` crate is its own compilation unit. It derives each config's
-  positional-argument order from its field order; a config that flattens shared
-  options, such as the CEGAR options domain and Cartesian abstractions share,
-  takes named options only.
+  `proc-macro` crate is its own compilation unit. Fields marked
+  `#[option(positional)]` also take positional arguments, in field order; a
+  `#[option(flatten)]` field takes the named options the config does not know,
+  such as the CEGAR options domain and Cartesian abstractions share.
 - `planforge-cplex` — small checked native CPLEX ownership and sparse-LP layer.
 - `tests` — integration tests.
 

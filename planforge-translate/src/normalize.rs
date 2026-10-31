@@ -10,23 +10,6 @@ use super::pddl::f_expression::*;
 use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
 
-/// Wraps a Task with additional state for normalization.
-pub struct NormalizableTask {
-    pub task: Task,
-    pub goal: Condition,
-}
-
-impl NormalizableTask {
-    pub fn from_task(task: Task) -> Self {
-        let goal = task.goal.clone();
-        NormalizableTask { task, goal }
-    }
-
-    pub fn add_global_constraints(&mut self) {
-        self.task.add_global_constraints();
-    }
-}
-
 /// One normalization pass: the name the log calls it by, and the rewrite it
 /// applies to the task in place.
 type Pass = (&'static str, fn(&mut Task));
@@ -59,15 +42,13 @@ const PASSES: &[Pass] = &[
     ("verify axiom predicates", verify_axiom_predicates),
 ];
 
-/// Runs every pass in [`PASSES`] over the task, then republishes the goal they
-/// rewrote. Every pass either succeeds or panics on a task PDDL cannot express,
-/// so there is nothing here to report.
-pub fn normalize(task: &mut NormalizableTask) {
+/// Runs every pass in [`PASSES`] over the task. Every pass either succeeds or
+/// panics on a task PDDL cannot express, so there is nothing here to report.
+pub fn normalize(task: &mut Task) {
     for &(name, pass) in PASSES {
         debug!("normalizing: {name}");
-        pass(&mut task.task);
+        pass(task);
     }
-    task.goal = task.task.goal.clone();
 }
 
 /// Renames every action's and axiom's parameters apart from every other's, so
@@ -81,35 +62,16 @@ fn uniquify_variables(task: &mut Task) {
     }
 }
 
-/// Convert type declarations to predicates (adds type atoms to init)
+/// Adds to the initial state a type atom for every type of every object, its
+/// own and each supertype.
 fn convert_types_to_predicates(task: &mut Task) {
-    // Add type predicates for each object
-    for obj in &task.objects {
-        let atom = obj.get_atom();
-        task.init.push(atom);
-    }
-    // Add supertypes transitively
-    // Build a type hierarchy
-    let mut type_map: HashMap<String, Option<String>> = HashMap::new();
-    for t in &task.types {
-        type_map.insert(t.name.clone(), t.basetype_name.clone());
-    }
-
-    // For each object, add atoms for all supertypes
-    let mut extra_init = vec![];
-    for obj in &task.objects {
-        let mut current = Some(obj.type_name.clone());
-        while let Some(ref type_name) = current {
-            if type_name == &obj.type_name {
-                current = type_map.get(type_name).cloned().flatten();
-                continue;
-            }
-            let supertype_obj = TypedObject::new(&obj.name, type_name);
-            extra_init.push(supertype_obj.get_atom());
-            current = type_map.get(type_name).cloned().flatten();
+    let mut type_atoms = Vec::new();
+    for object in &task.objects {
+        for type_name in task.types.ancestors(&object.type_name) {
+            type_atoms.push(TypedObject::new(&object.name, type_name).get_atom());
         }
     }
-    task.init.extend(extra_init);
+    task.init.extend(type_atoms);
 }
 
 /// Every place a task keeps a condition.
@@ -480,11 +442,11 @@ fn split_disjunctions(task: &mut Task) {
 
         match &action.precondition {
             Condition::Disjunction(disjunction) => {
-                // The copies need distinct names: an action's name identifies it
-                // downstream, in the exploration rules and in the plan file.
+                // The copies keep the PDDL name, which the plan file shows,
+                // and are told apart in the exploration rules by their split.
                 for (index, part) in disjunction.parts.iter().enumerate() {
                     let mut copy = action.clone();
-                    copy.name = format!("{}@split{index}", action.name);
+                    copy.split = Some(index);
                     copy.precondition = part.clone();
                     actions.push(copy);
                 }
@@ -760,13 +722,13 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
         rules.push(ExplorationRule {
             conditions,
             effect: Condition::Atom(Atom::new(
-                get_action_predicate(&action.name),
+                get_action_predicate(&action.exploration_name()),
                 action.parameters.iter().map(|p| p.name.clone()).collect(),
             )),
         });
 
         let action_head = Condition::Atom(Atom::new(
-            get_action_predicate(&action.name),
+            get_action_predicate(&action.exploration_name()),
             action.parameters.iter().map(|p| p.name.clone()).collect(),
         ));
 

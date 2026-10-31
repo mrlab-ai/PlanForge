@@ -55,14 +55,14 @@ pub(crate) trait AbstractionView {
         &self,
         propositions: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-    ) -> Result<usize>;
+    ) -> usize;
 
     /// The concrete states abstract state `state` stands for.
     fn region(&self, state: usize) -> Cow<'_, CartesianSet>;
 
     fn goal_distance(&self, state: usize) -> f64;
 
-    fn is_goal(&self, state: usize) -> Result<bool>;
+    fn is_goal(&self, state: usize) -> bool;
 
     /// The first transition of an optimal plan from the non-goal `state`.
     fn optimal_transition(&self, state: usize) -> Result<TransitionKey>;

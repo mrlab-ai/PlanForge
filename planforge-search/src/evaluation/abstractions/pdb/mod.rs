@@ -1,3 +1,4 @@
+pub mod causal_graph;
 pub mod numeric_size_estimator;
 pub use crate::task_restriction::validate_restricted_task;
 pub mod pattern_collection;

@@ -1,41 +1,73 @@
-use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use planforge_sas::numeric_task::TaskRef;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
 use crate::successor_generator::RegistryExpander;
 
-pub(crate) struct RandomWalkSampler {
-    expander: RegistryExpander,
-    rng: CppMt19937,
+/// The C++ planner's seed for its potential-function sampler.
+const SEED: u32 = 2011;
+
+/// The states potential functions are fitted to: the registry they live in,
+/// the initial state, and random walks from it.
+pub(crate) struct SampleSpace<'task> {
+    pub(crate) registry: StateRegistry<'task>,
+    pub(crate) initial_state: ConcreteState,
+    pub(crate) sampler: RandomWalkSampler<'task>,
 }
 
-impl RandomWalkSampler {
-    pub(crate) fn new(task: &dyn AbstractNumericTask, seed: u64) -> Self {
+impl SampleSpace<'_> {
+    /// `count` random-walk end states.
+    pub(crate) fn sample(&mut self, count: usize) -> Result<Vec<ConcreteState>, String> {
+        self.sampler
+            .sample(&mut self.registry, &self.initial_state, count)
+    }
+}
+
+/// Fast Downward's potential sampler: random walks from the initial state
+/// whose length is binomially distributed around four times the number of
+/// average-cost operators the initial estimate stands for, drawn from the
+/// C++ planner's random stream.
+pub(crate) struct RandomWalkSampler<'task> {
+    task: TaskRef<'task>,
+    expander: RegistryExpander,
+    rng: CppMt19937,
+    initial_h: f64,
+    average_operator_cost: f64,
+}
+
+impl<'task> RandomWalkSampler<'task> {
+    /// Walks scaled to the initial estimate `initial_h` of `task`, whose
+    /// operators cost `average_operator_cost` on average.
+    pub(crate) fn new(task: TaskRef<'task>, initial_h: f64, average_operator_cost: f64) -> Self {
         Self {
-            expander: RegistryExpander::new(task),
-            rng: CppMt19937::new(seed as u32),
+            expander: RegistryExpander::new(&*task),
+            task,
+            rng: CppMt19937::new(SEED),
+            initial_h,
+            average_operator_cost,
         }
     }
 
-    pub(crate) fn sample(
+    /// The coin flips a walk length is the number of successes of.
+    fn trials(&self) -> Result<usize, String> {
+        if self.initial_h == 0.0 {
+            return Ok(10);
+        }
+        if !self.initial_h.is_finite() || self.average_operator_cost == 0.0 {
+            return Err(format!(
+                "numeric_potential random walks need a finite h(s0) and a nonzero average operator cost, got h(s0) = {} and {}",
+                self.initial_h, self.average_operator_cost
+            ));
+        }
+        Ok(4 * ((self.initial_h / self.average_operator_cost) + 0.5) as usize)
+    }
+
+    fn sample(
         &mut self,
-        task: &TaskRef<'_>,
         registry: &mut StateRegistry<'_>,
+        initial: &ConcreteState,
         count: usize,
-        initial_h: f64,
-        average_operator_cost: f64,
     ) -> Result<Vec<ConcreteState>, String> {
-        let initial = registry.get_initial_state();
-        let trials = if initial_h == 0.0 {
-            10
-        } else {
-            if average_operator_cost == 0.0 {
-                return Err(
-                    "numeric_potential random walks require nonzero average operator cost when h(s0) is nonzero"
-                        .to_string(),
-                );
-            }
-            4 * ((initial_h / average_operator_cost) + 0.5) as usize
-        };
+        let trials = self.trials()?;
         let mut samples = Vec::with_capacity(count);
         for _ in 0..count {
             let length = (0..trials).filter(|_| self.rng.real() < 0.5).count();
@@ -49,7 +81,7 @@ impl RandomWalkSampler {
                     break;
                 }
                 let operator_id = applicable[self.rng.index(applicable.len())];
-                let operator = &task.get_operators()[operator_id.index()];
+                let operator = &self.task.get_operators()[operator_id.index()];
                 (state, _) = expansion.successor(registry, operator).map_err(|error| {
                     format!(
                         "numeric_potential random walk failed applying operator {} (`{}`): {error:?}",

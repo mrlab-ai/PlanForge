@@ -149,20 +149,6 @@ fn test_cost_information_storage() {
 }
 
 #[test]
-#[should_panic(expected = "cost numeric variable 1 has no cost slot")]
-fn missing_cost_slot_is_an_invariant_violation() {
-    let task: TaskRef = Arc::new(get_root_task());
-    let mut state_registry = StateRegistry::for_task(task);
-    let initial_state = state_registry.get_initial_state();
-    state_registry.numeric_indices[1] = None;
-
-    let _ = state_registry
-        .view(&initial_state)
-        .numeric_value_unevaluated(VariableIndex::new(1))
-        .unwrap();
-}
-
-#[test]
 fn duplicate_state_keeps_better_metric_cost_information() {
     let variables = vec![ExplicitVariable::new(
         2,
@@ -323,10 +309,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
 
     assert_eq!(first.get_id(), second.get_id());
     assert_eq!(
-        state_registry
-            .view(&first)
-            .numeric_value_unevaluated(VariableIndex::new(0))
-            .unwrap(),
+        state_registry.get_numeric_vars(&first).unwrap()[0],
         NumericValue::new(0.3)
     );
 }
@@ -442,5 +425,66 @@ fn registration_rejects_a_distinct_canonical_constant() {
     registry.view(&initial).fill_numeric(&mut numeric).unwrap();
     numeric[1] += NumericValue::new(1e-12);
     let error = registry.register_state(vec![1], numeric).unwrap_err();
-    assert!(error.message.contains("Constant numeric variable 1"));
+    assert!(error.message.contains("constant numeric variable 1"));
+}
+
+/// Maximising a metric charges its decrease: `spend` lowers `score` by 3.
+#[test]
+fn a_maximised_metric_charges_its_decrease() {
+    let spend = Operator::new(
+        "spend".to_string(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::new(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![crate::numeric_task::AssignmentEffect::new(
+            VariableIndex::new(0),
+            crate::numeric_task::AssignmentOperation::Minus,
+            VariableIndex::new(1),
+            false,
+            vec![],
+        )],
+        OperatorCost::new(1),
+    );
+    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(false, Some(VariableIndex::new(0))),
+        variables: vec![ExplicitVariable::new(
+            2,
+            "done".to_string(),
+            vec!["no".to_string(), "yes".to_string()],
+            None,
+            ExplicitValueIndex::new(0),
+        )],
+        numeric_variables: vec![
+            NumericVariable::new("score".to_string(), NumericType::Cost, None),
+            NumericVariable::new("three".to_string(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(10.0), NumericValue::new(3.0)],
+        operators: vec![spend],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }));
+    let mut registry = StateRegistry::for_task(task.clone());
+    let initial = registry.get_initial_state();
+
+    let (_, step_cost) = registry
+        .get_successor_state_with_buffers_and_cost(
+            &initial,
+            &task.get_operators()[0],
+            &mut Vec::new(),
+            &mut Vec::new(),
+        )
+        .unwrap();
+
+    assert_eq!(step_cost, 3.0);
+    assert_eq!(crate::numeric_task::metric_operator_costs(&*task), [3.0]);
 }

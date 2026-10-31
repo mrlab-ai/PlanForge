@@ -3,7 +3,7 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
@@ -198,7 +198,7 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
     };
     let num_numeric_vars = task.numeric_variables().len();
     if num_numeric_vars == 0 {
-        bail!(
+        crate::unsupported!(
             "task violates restricted-task invariants ({restriction_reason}), but has no numeric comparison roots that can be promoted"
         );
     }
@@ -236,7 +236,7 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
         .collect();
     if let Some(metric_var_id) = task.metric().var_id() {
         if let Some(expr) = derived_metric_expression(task, metric_var_id)? {
-            ensure!(
+            crate::ensure_supported!(
                 !root_exprs.contains_key(&metric_var_id),
                 "metric variable {metric_var_id} is also a numeric comparison operand"
             );
@@ -338,7 +338,7 @@ pub fn build_icaps26_restricted_task(
         let dependencies = difference.non_zero_vars();
         let (left, threshold, operator) = if dependencies.len() == 1 {
             let original_var_id = dependencies[0];
-            ensure!(
+            crate::ensure_supported!(
                 matches!(
                     task.numeric_variables()[original_var_id.index()].get_type(),
                     NumericType::Regular
@@ -361,7 +361,7 @@ pub fn build_icaps26_restricted_task(
                 },
             )
         } else {
-            ensure!(
+            crate::ensure_supported!(
                 dependencies.iter().all(|&var_id| matches!(
                     task.numeric_variables()[var_id.index()].get_type(),
                     NumericType::Regular
@@ -710,14 +710,14 @@ fn transform_operator(
 
     let mut deltas = vec![ZERO_VALUE; task.numeric_variables().len()];
     for effect in operator.assignment_effects() {
-        ensure!(
+        crate::ensure_supported!(
             !effect.is_conditional() && effect.conditions().is_empty(),
             "restricted task does not support conditional numeric effects in operator {}",
             operator.name()
         );
         let source_value = match task.numeric_variables()[effect.var_id().index()].get_type() {
             NumericType::Constant => initial_numeric[effect.var_id().index()],
-            _ => bail!(
+            _ => crate::unsupported!(
                 "restricted task requires constant RHS numeric effects in operator {}",
                 operator.name()
             ),
@@ -725,11 +725,11 @@ fn transform_operator(
         match effect.operation() {
             AssignmentOperation::Plus => deltas[effect.affected_var_id().index()] += source_value,
             AssignmentOperation::Minus => deltas[effect.affected_var_id().index()] -= source_value,
-            AssignmentOperation::Assign => bail!(
+            AssignmentOperation::Assign => crate::unsupported!(
                 "restricted task does not support assignment numeric effects in operator {}",
                 operator.name()
             ),
-            AssignmentOperation::Times | AssignmentOperation::Divide => bail!(
+            AssignmentOperation::Times | AssignmentOperation::Divide => crate::unsupported!(
                 "restricted task does not support non-additive numeric effects in operator {}",
                 operator.name()
             ),
@@ -809,21 +809,21 @@ fn transform_operator_with_assignment(
     let mut additive_deltas = vec![ZERO_VALUE; task.numeric_variables().len()];
     let mut assigned_constants = vec![None; task.numeric_variables().len()];
     for effect in operator.assignment_effects() {
-        ensure!(
+        crate::ensure_supported!(
             !effect.is_conditional() && effect.conditions().is_empty(),
             "restricted task does not support conditional numeric effects in operator {}",
             operator.name()
         );
         let source_value = match task.numeric_variables()[effect.var_id().index()].get_type() {
             NumericType::Constant => initial_numeric[effect.var_id().index()],
-            _ => bail!(
+            _ => crate::unsupported!(
                 "restricted task requires constant RHS numeric effects in operator {}",
                 operator.name()
             ),
         };
         match effect.operation() {
             AssignmentOperation::Plus => {
-                ensure!(
+                crate::ensure_supported!(
                     assigned_constants[effect.affected_var_id().index()].is_none(),
                     "restricted task does not support mixed assignment/additive numeric effects on one variable in operator {}",
                     operator.name()
@@ -831,7 +831,7 @@ fn transform_operator_with_assignment(
                 additive_deltas[effect.affected_var_id().index()] += source_value;
             }
             AssignmentOperation::Minus => {
-                ensure!(
+                crate::ensure_supported!(
                     assigned_constants[effect.affected_var_id().index()].is_none(),
                     "restricted task does not support mixed assignment/additive numeric effects on one variable in operator {}",
                     operator.name()
@@ -839,7 +839,7 @@ fn transform_operator_with_assignment(
                 additive_deltas[effect.affected_var_id().index()] -= source_value;
             }
             AssignmentOperation::Assign => {
-                ensure!(
+                crate::ensure_supported!(
                     (additive_deltas[effect.affected_var_id().index()] == ZERO_VALUE)
                         && assigned_constants[effect.affected_var_id().index()].is_none(),
                     "restricted task does not support multiple numeric effects on an assigned variable in operator {}",
@@ -847,7 +847,7 @@ fn transform_operator_with_assignment(
                 );
                 assigned_constants[effect.affected_var_id().index()] = Some(source_value);
             }
-            AssignmentOperation::Times | AssignmentOperation::Divide => bail!(
+            AssignmentOperation::Times | AssignmentOperation::Divide => crate::unsupported!(
                 "restricted task does not support non-additive numeric effects in operator {}",
                 operator.name()
             ),
@@ -889,7 +889,7 @@ fn transform_operator_with_assignment(
             ));
             continue;
         }
-        ensure!(
+        crate::ensure_supported!(
             successor_expr.non_zero_vars().is_empty(),
             "restricted task cannot express assignment effect on transformed numeric variable {transformed_id} in operator {}",
             operator.name()

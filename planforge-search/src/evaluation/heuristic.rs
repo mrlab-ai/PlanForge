@@ -3,65 +3,53 @@
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
-/// Base trait for heuristic functions.
+/// A heuristic: an estimate of the cost of reaching a goal from a state.
 ///
-/// This replaces the C++ Heuristic class with a clean trait-based design.
-/// Heuristics are specialized evaluators that estimate the cost to reach the goal.
+/// Evaluating takes `&mut self` because heuristics keep state between
+/// evaluations -- caches, scratch buffers, online-learned components -- and
+/// the search owns the heuristic it calls.
 pub trait Heuristic {
-    /// Compute the heuristic value for the given state.
-    ///
-    /// This is the core method that sub-classes must implement.
-    /// Return the estimated cost to reach the goal, or infinity for dead ends.
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError>;
+    /// The estimated cost of reaching a goal from `state`; infinite for a
+    /// state the heuristic proves to be a dead end.
+    fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError>;
 
-    /// Return true when construction proved that the initial heuristic value
-    /// equals the optimal solution cost.
+    /// [`Self::evaluate`], additionally appending to `preferred` the
+    /// operators applicable in `state` that the heuristic recommends (helpful
+    /// actions). A heuristic without preferred operators appends none.
+    fn evaluate_with_preferred(
+        &mut self,
+        state: &EvaluationState<'_, '_>,
+        _preferred: &mut Vec<OperatorIndex>,
+    ) -> Result<f64, EvaluationError> {
+        self.evaluate(state)
+    }
+
+    /// The name the heuristic reports itself under.
+    fn name(&self) -> &str;
+
+    /// Whether construction proved that the initial state's estimate is its
+    /// optimal plan cost.
     ///
-    /// A* uses this stronger contract to assert that it never enters a higher
-    /// f-layer. Heuristics must not return true based on an estimate or a
-    /// resource-limited construction.
+    /// A* then asserts that it never enters a higher f-layer, so a heuristic
+    /// must not claim this from an estimate or a resource-limited
+    /// construction.
     fn proves_initial_state_optimal(&self) -> bool {
         false
     }
 
-    /// Monotonic version of the heuristic function used for open-list keys.
-    ///
-    /// Static heuristics keep the default revision zero. A dynamic admissible
-    /// heuristic increments this value only when its pointwise estimate can
-    /// increase (for example, after adding a certified potential to a maximum
-    /// ensemble). A* can then opt into pop-time re-evaluation without adding
-    /// version fields to every open-list entry.
+    /// A counter that grows whenever the heuristic's estimates may have grown,
+    /// such as when an online heuristic adds a component. A static heuristic
+    /// keeps the default zero. A* with multi-path dependence (`mpd`)
+    /// re-evaluates a popped state whose estimate is older than the current
+    /// revision.
     fn revision(&self) -> u64 {
         0
     }
 
-    /// Whether MPD must recompute this heuristic on every pop.
-    ///
-    /// This is the uncached C++ heuristic contract: without cached estimates,
-    /// MPD cannot use a clean-cache marker to skip the pop-time computation.
+    /// Whether A* with multi-path dependence must re-evaluate every popped
+    /// state, because the heuristic keeps no revision its estimates follow.
     fn reevaluate_on_every_pop(&self) -> bool {
         false
-    }
-
-    /// Get the name of this heuristic (it allows custom names).
-    fn heuristic_name(&self) -> &str;
-
-    /// Get the task-operator indices of preferred operators for the most
-    /// recently evaluated state.
-    ///
-    /// The search engine snapshots this immediately after `compute_heuristic`
-    /// returns and stores the IDs on the successor's search-node record.
-    /// Returning indices instead of cloned `Operator`s lets the engine
-    /// check "was operator `O` preferred by my parent?" with a constant-time
-    /// integer comparison and avoids cloning per-state precondition vectors.
-    ///
-    /// The default leaves `out` empty for heuristics that do not implement
-    /// preferred operators.
-    fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
-        out.clear();
     }
 }
 
@@ -85,11 +73,7 @@ impl BlindHeuristic {
 }
 
 impl Heuristic for BlindHeuristic {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        // `Blind heuristic`: `0` for goal states, `min_action_cost` otherwise.
+    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         Ok(if eval_state.is_goal() {
             0.0
         } else {
@@ -97,7 +81,7 @@ impl Heuristic for BlindHeuristic {
         })
     }
 
-    fn heuristic_name(&self) -> &str {
+    fn name(&self) -> &str {
         &self.name
     }
 }

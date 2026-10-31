@@ -1,10 +1,13 @@
+//! The abstraction sources a heuristic is built from -- single abstractions,
+//! collections and pattern databases -- and their construction under a shared
+//! time budget.
+
 use std::time::{Duration, Instant};
 
+use crate::config::{ApplyOptions, ConfigError, TimeLimit};
+use crate::heuristic_factory::{EmptyConfig, HeuristicBuildError, TaskRequirements};
 use crate::resource_limits::{Deadline, min_time_limit};
 
-use crate::config::{
-    ApplyOptions, ConfigArg, ConfigError, FromOptionValue, TimeLimit, for_each_option,
-};
 use crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator;
 use crate::evaluation::abstractions::collections::config::{CollectionConfig, MemberConfig};
 use crate::evaluation::abstractions::collections::generator::{
@@ -12,7 +15,6 @@ use crate::evaluation::abstractions::collections::generator::{
 };
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::component::AbstractionComponent;
-use crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::pattern_collection::PatternCollection;
@@ -32,9 +34,6 @@ use crate::evaluation::abstractions::pdb::pdb_collection::build_pattern_database
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
-use super::HeuristicBuildError;
-
-use super::TaskRequirements;
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionConfig,
 };
@@ -90,16 +89,13 @@ impl AbstractionSource {
                 Icaps26CartesianGenerator::new(config.clone()).map(|_| ())
             }
             Self::Pdb(config) => match &config.patterns {
-                PdbPatternsConfig::Systematic(patterns) if !patterns.only_interesting_patterns => {
-                    return Err(ConfigError::from(
-                        "systematic naive numeric PDB patterns are not implemented",
-                    )
-                    .at_option("only_interesting_patterns"));
+                PdbPatternsConfig::Systematic(patterns) => {
+                    patterns.validate().map_err(anyhow::Error::msg)
                 }
                 PdbPatternsConfig::HillClimbing(patterns) => {
                     patterns.validate().map_err(anyhow::Error::msg)
                 }
-                PdbPatternsConfig::Systematic(_) | PdbPatternsConfig::Greedy(_) => Ok(()),
+                PdbPatternsConfig::Greedy(_) => Ok(()),
             },
         };
         result.map_err(|error| ConfigError::from(error.to_string()).at(self.name()))
@@ -205,9 +201,9 @@ impl Default for PdbPatternsConfig {
 #[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
 pub struct PdbSourceConfig {
     patterns: PdbPatternsConfig,
-    pub(super) exploration_heuristic: PdbInternalHeuristic,
-    pub(super) frontier_heuristic: PdbInternalHeuristic,
-    pub(super) failed_lookup_heuristic: PdbInternalHeuristic,
+    exploration_heuristic: PdbInternalHeuristic,
+    frontier_heuristic: PdbInternalHeuristic,
+    failed_lookup_heuristic: PdbInternalHeuristic,
 }
 
 impl PdbSourceConfig {
@@ -245,70 +241,59 @@ impl PdbSourceConfig {
     }
 }
 
-/// Typed abstraction sources and their shared construction budget.
-#[derive(Debug, Clone, Default)]
-pub struct SourcesConfig {
+/// The configuration of a combination of abstraction heuristics: its
+/// sources, given first, the construction budget they share, and the
+/// combination's own options.
+#[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
+pub struct CombinationConfig<O: ApplyOptions = EmptyConfig> {
+    #[option(positional)]
     pub sources: Vec<AbstractionSource>,
     pub construction_max_time: TimeLimit,
+    #[option(flatten)]
+    pub options: O,
 }
 
-impl SourcesConfig {
-    fn apply_with(
-        &mut self,
-        args: &[ConfigArg],
-        options: &mut impl ApplyOptions,
-    ) -> Result<(), ConfigError> {
-        let Some((sources, named)) = args
-            .split_first()
-            .filter(|(first, _)| first.key().is_none())
-        else {
-            return Err("the abstraction sources must be the first argument".into());
-        };
-        if let Some(extra) = named.iter().find(|arg| arg.key().is_none()) {
-            return Err(format!(
-                "unexpected positional argument `{}`; list several abstraction sources as `[a, b]`",
-                extra.value()
-            )
-            .into());
-        }
-        self.sources =
-            Vec::from_option_value(sources.value()).map_err(|error| error.at_option("sources"))?;
-        let mut other = Vec::new();
-        for_each_option(named, &[], |key, value| {
-            if key == "construction_max_time" {
-                self.construction_max_time = TimeLimit::positive_bounded(value)?;
-            } else {
-                other.push(ConfigArg::new(Some(key.into()), value.clone()));
-            }
-            Ok(())
-        })?;
-        options.apply_options(&other)?;
+impl<O: ApplyOptions> CombinationConfig<O> {
+    /// Rejects an empty source list, an invalid source and a construction
+    /// budget that is zero or beyond the clock.
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if self.sources.is_empty() {
-            return Err("at least one abstraction source is required".into());
+            return Err(
+                ConfigError::from("at least one abstraction source is required")
+                    .at_option("sources"),
+            );
         }
+        for (index, source) in self.sources.iter().enumerate() {
+            source
+                .validate()
+                .map_err(|error| error.at(format!("[{index}]")).at_option("sources"))?;
+        }
+        self.deadline().map_err(|error| {
+            ConfigError::from(error.to_string()).at_option("construction_max_time")
+        })?;
         Ok(())
     }
 
+    pub fn requirements(&self) -> TaskRequirements {
+        self.sources
+            .iter()
+            .fold(TaskRequirements::ANY, |requirements, source| {
+                requirements.union(source.requirements())
+            })
+    }
+
+    /// The deadline of the construction, starting now.
     pub(crate) fn deadline(&self) -> Result<Deadline, HeuristicBuildError> {
-        Deadline::after(Instant::now(), self.construction_max_time.duration()?)
+        let limit = self.construction_max_time.duration()?;
+        if limit == Some(Duration::ZERO) {
+            return Err(format!(
+                "construction_max_time must be at least one nanosecond, got {}",
+                self.construction_max_time.seconds()
+            )
+            .into());
+        }
+        Deadline::after(Instant::now(), limit)
             .map_err(|error| format!("invalid construction_max_time: {error}").into())
-    }
-}
-
-impl ApplyOptions for SourcesConfig {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
-        self.apply_with(args, &mut super::EmptyConfig {})
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ScpHeuristicConfig {
-    pub sources: SourcesConfig,
-    pub scp: ScpConfig,
-}
-impl ApplyOptions for ScpHeuristicConfig {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
-        self.sources.apply_with(args, &mut self.scp)
     }
 }
 
@@ -411,6 +396,9 @@ where
         })?;
     Ok(abstractions.into_iter().map(Into::into).collect())
 }
+#[cfg(test)]
+mod tests;
+
 pub(crate) fn remaining_construction_time(
     deadline: Deadline,
 ) -> Result<Option<Duration>, HeuristicBuildError> {

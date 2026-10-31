@@ -70,7 +70,7 @@ impl BackwardGraph for ExplicitSaturationGraph<'_> {
         self.system.backward.len()
     }
 
-    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, usize, f64)>) -> Result<()> {
+    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, usize, f64)>) {
         incoming.clear();
         for &transition_id in &self.system.backward[target] {
             let transition = &self.system.transitions[transition_id];
@@ -81,7 +81,6 @@ impl BackwardGraph for ExplicitSaturationGraph<'_> {
                 self.transition_costs[transition_id],
             ));
         }
-        Ok(())
     }
 }
 
@@ -260,7 +259,7 @@ fn goal_distances<G: SaturationGraph>(graph: &mut G, deadline: Deadline) -> Resu
     let goal_states = graph.goal_states().to_vec();
     backward_goal_distances(
         graph,
-        &goal_states,
+        goal_states.iter().map(|&state| (state, 0.0)),
         || deadline.ensure(SCP_TABLE_CONSTRUCTION),
         None,
     )
@@ -302,7 +301,7 @@ fn saturated_operator_costs<G: SaturationGraph>(
         if !target_distance.is_finite() {
             continue;
         }
-        graph.incoming(target, &mut incoming)?;
+        graph.incoming(target, &mut incoming);
         for &(source, label, cost) in &incoming {
             let Some(need) = saturation_need(
                 distances[source],

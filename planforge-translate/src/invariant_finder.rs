@@ -4,12 +4,10 @@ use std::rc::Rc;
 use tracing::info;
 
 use super::invariants::{BalanceChecker, Invariant, InvariantPart};
-use super::options;
 use super::pddl::actions::Action;
 use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
 use super::symbols::ObjectId;
-use super::tools;
 
 fn build_balance_checker(
     task: &Task,
@@ -44,13 +42,8 @@ fn build_balance_checker(
 
         if create_heavy_act {
             let heavy_act = Action {
-                name: action.name.clone(),
-                parameters: action.parameters.clone(),
-                num_external_parameters: action.num_external_parameters,
-                precondition: action.precondition.clone(),
                 effects: too_heavy_effects,
-                cost: action.cost.clone(),
-                assign_effects: action.assign_effects.clone(),
+                ..action.clone()
             };
             action_to_heavy_action.insert(idx, heavy_act);
         }
@@ -100,13 +93,8 @@ fn add_inequality_preconds(
         // one conjunction deep, so a nested conjunction would hide them.
         let precond = Condition::Conjunction(Conjunction::new(precond_parts)).simplified();
         Action {
-            name: action.name.clone(),
-            parameters: action.parameters.clone(),
-            num_external_parameters: action.num_external_parameters,
             precondition: precond,
-            effects: action.effects.clone(),
-            cost: action.cost.clone(),
-            assign_effects: action.assign_effects.clone(),
+            ..action.clone()
         }
     } else {
         action.clone()
@@ -168,38 +156,20 @@ fn find_invariants(
     task: &Task,
     reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
 ) -> Vec<Invariant> {
-    let limit = options::INVARIANT_GENERATION_MAX_CANDIDATES;
-    let initial = get_initial_invariants(task);
-    let mut candidates: VecDeque<Invariant> = initial.into_iter().take(limit).collect();
+    let mut candidates: VecDeque<Invariant> = get_initial_invariants(task).into();
     info!("{} initial candidates", candidates.len());
     let mut seen_candidates: HashSet<Invariant> = candidates.iter().cloned().collect();
 
     let balance_checker = build_balance_checker(task, reachable_action_params);
-
-    let deadline = tools::process_cpu_time()
-        + std::time::Duration::from_secs(options::INVARIANT_GENERATION_MAX_TIME);
     let mut result = vec![];
-
     while let Some(candidate) = candidates.pop_front() {
-        if tools::process_cpu_time() >= deadline {
-            info!("Time limit reached, aborting invariant generation");
-            return result;
-        }
-
         let mut enqueue_func = |invariant: Invariant| {
-            if seen_candidates.len() < limit && !seen_candidates.contains(&invariant) {
-                seen_candidates.insert(invariant.clone());
+            if seen_candidates.insert(invariant.clone()) {
                 candidates.push_back(invariant);
             }
         };
-
-        match candidate.check_balance(&balance_checker, &mut enqueue_func, deadline) {
-            Ok(true) => result.push(candidate),
-            Ok(false) => {}
-            Err(tools::CpuTimeDeadlineExceeded) => {
-                info!("Time limit reached, aborting invariant generation");
-                return result;
-            }
+        if candidate.check_balance(&balance_checker, &mut enqueue_func) {
+            result.push(candidate);
         }
     }
 

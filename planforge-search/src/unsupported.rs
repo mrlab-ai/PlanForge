@@ -31,6 +31,14 @@ pub fn is_unsupported_task(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<UnsupportedTask>())
 }
 
+/// `Err(UnsupportedTask)` with the formatted reason.
+#[macro_export]
+macro_rules! unsupported {
+    ($($reason:tt)+) => {
+        return Err($crate::unsupported::UnsupportedTask::new(format!($($reason)+)).into())
+    };
+}
+
 /// `Err(UnsupportedTask)` with the formatted reason unless `condition` holds.
 #[macro_export]
 macro_rules! ensure_supported {

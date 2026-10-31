@@ -13,7 +13,6 @@ use super::lookup::{
 use super::orders::max_heuristic_greedy_order;
 use super::partition::is_zero_at_evaluated_state;
 use super::scoring::{pairwise_region_stolen_cost, region_stolen_costs};
-use crate::evaluation::abstractions::random_walk::random_walk_length;
 use std::collections::{HashMap, HashSet};
 
 use super::*;
@@ -139,12 +138,12 @@ pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpCo
 
 pub(super) fn evaluate_initial(
     task: &NumericRootTask,
-    heuristic: &dyn Heuristic,
+    heuristic: &mut dyn Heuristic,
 ) -> Result<f64, EvaluationError> {
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(task));
     let initial_state = registry.get_initial_state();
     let eval_state = EvaluationState::new(&initial_state, task, &registry);
-    heuristic.compute_heuristic(&eval_state)
+    heuristic.evaluate(&eval_state)
 }
 
 /// Offline diversified SCP over a goal-focused Cartesian collection of `task`,
@@ -212,30 +211,11 @@ pub(super) fn goal_cover_scp<'task>(
     (heuristic, expected_goals)
 }
 
-/// The cost partitionings `heuristic` retained at its first evaluation.
+/// The cost partitionings `heuristic` built for the initial state.
 pub(super) fn retained_cost_partitionings<'a>(
     heuristic: &'a SaturatedCostPartitioningHeuristic<'_>,
-) -> std::cell::Ref<'a, [CostPartitioningHeuristic]> {
-    std::cell::Ref::map(heuristic.state.borrow(), |state| match &state.phase {
-        ScpPhase::Built(retained) => retained.cp_heuristics.as_slice(),
-        ScpPhase::Unbuilt(_) => panic!("the heuristic has not evaluated a state"),
-    })
-}
-
-/// The cost partitionings `heuristic` builds at the first evaluated state,
-/// whose abstract states are `abstract_state_ids`.
-pub(super) fn build_cost_partitionings(
-    heuristic: &SaturatedCostPartitioningHeuristic<'_>,
-    abstract_state_ids: &[Option<usize>],
-) -> Vec<CostPartitioningHeuristic> {
-    let mut state = heuristic.state.borrow_mut();
-    let ScpState { components, phase } = &mut *state;
-    let ScpPhase::Unbuilt(selection) = phase else {
-        panic!("the heuristic built its cost partitionings already");
-    };
-    heuristic
-        .build_cost_partitionings(components, selection, abstract_state_ids)
-        .expect("SCP construction failed")
+) -> &'a [CostPartitioningHeuristic] {
+    &heuristic.cost_partitionings
 }
 
 pub(super) fn retained_goal_cover_orders_per_goal(
@@ -255,5 +235,4 @@ mod diverse_orders;
 mod goal_cover_orders;
 mod heuristic;
 mod sailing;
-mod sampling;
 mod scoring;

@@ -7,7 +7,6 @@ use std::rc::Rc;
 use tracing::info;
 
 use super::invariant_finder;
-use super::options;
 use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
 use super::symbols::ObjectId;
@@ -143,11 +142,9 @@ impl GroupCoverQueue {
 
     fn pop(&mut self) -> Vec<Atom> {
         let selected = std::mem::take(&mut self.groups[self.top.take().expect("queue is active")]);
-        if options::USE_PARTIAL_ENCODING {
-            for fact in &selected {
-                for &index in &self.groups_by_fact[fact] {
-                    self.groups[index].remove(fact);
-                }
+        for fact in &selected {
+            for &index in &self.groups_by_fact[fact] {
+                self.groups[index].remove(fact);
             }
         }
         self.update_top();
@@ -201,15 +198,13 @@ fn choose_groups(
     for fact in &uncovered_facts {
         result.push(vec![fact.clone()]);
     }
-    if options::USE_PARTIAL_ENCODING {
-        let mut seen = HashSet::new();
-        for group in &result {
-            for fact in group {
-                assert!(
-                    seen.insert(fact),
-                    "partial encoding selected overlapping groups for {fact:?}: {result:?}"
-                );
-            }
+    let mut seen = HashSet::new();
+    for group in &result {
+        for fact in group {
+            assert!(
+                seen.insert(fact),
+                "partial encoding selected overlapping groups for {fact:?}: {result:?}"
+            );
         }
     }
     result

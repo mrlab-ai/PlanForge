@@ -138,7 +138,7 @@ pub fn build(reordered: &ReorderedTask) -> SasTaskParts {
 
     let parts = SasTaskParts {
         version: SAS_FILE_VERSION,
-        metric: Metric::from_sas(metric.optimization_criterion, metric.index).unwrap_or_else(
+        metric: Metric::from_sas(metric.optimization_criterion, Some(metric.index)).unwrap_or_else(
             || {
                 panic!(
                     "{:?} is not an optimization criterion",

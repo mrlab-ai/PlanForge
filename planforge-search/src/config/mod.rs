@@ -20,10 +20,7 @@ pub use planforge_config_derive::{ApplyOptions, FromOptionValue};
 mod error;
 mod parser;
 pub use error::ConfigError;
-mod search;
 pub(crate) mod time_limit;
-pub use crate::heuristic_factory::HeuristicConfig;
-pub use search::{SearchConfig, parse_search_spec, search_algorithm_help};
 pub use time_limit::TimeLimit;
 
 /// Implements `Display` and [`FromOptionValue`] for a fieldless option enum

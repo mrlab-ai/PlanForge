@@ -19,7 +19,7 @@ pub struct CegarOptions {
     pub combine_labels: bool,
     /// Seeds split selection. Without a seed, split selection is unseeded:
     /// ties go to the first candidate, and random split selection draws from
-    /// the fixed [`RANDOM_SPLIT_SEED`]. In a collection, the seed of the
+    /// the fixed `RANDOM_SPLIT_SEED`. In a collection, the seed of the
     /// collection.
     pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,

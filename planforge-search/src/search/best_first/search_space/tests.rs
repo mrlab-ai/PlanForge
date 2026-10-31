@@ -4,7 +4,7 @@ use super::{SearchNodeInfo, SearchSpace};
 
 #[test]
 fn compact_node_storage_round_trips_and_updates_status() {
-    let mut space = SearchSpace::new();
+    let mut space = SearchSpace::default();
     space.set_node(
         7,
         SearchNodeInfo {
@@ -36,14 +36,16 @@ fn compact_node_storage_round_trips_and_updates_status() {
 
 #[test]
 fn empty_preferred_snapshots_do_not_allocate_per_state_storage() {
-    let mut space = SearchSpace::new();
+    let mut space = SearchSpace::default();
     space.store_preferred(1_000_000, &[]);
     assert!(space.preferred_ranges.is_empty());
 
     space.store_preferred(3, &[OperatorIndex::new(2), OperatorIndex::new(5)]);
     assert_eq!(space.preferred_ranges.len(), 4);
-    let range = space.take_preferred(3).expect("preferred range must exist");
+    let range = space.take_preferred(3);
     assert!(space.preferred_contains(range, OperatorIndex::new(2)));
     assert!(space.preferred_contains(range, OperatorIndex::new(5)));
     assert!(!space.preferred_contains(range, OperatorIndex::new(7)));
+    let taken = space.take_preferred(3);
+    assert!(!space.preferred_contains(taken, OperatorIndex::new(2)));
 }

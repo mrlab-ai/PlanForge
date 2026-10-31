@@ -176,14 +176,8 @@ fn applicable_operators_leave_the_caller_s_prefix_alone() {
 }
 
 #[test]
-fn test_grounded_successor_generator() {
+fn the_successor_tree_lists_the_applicable_operators() {
     let task = get_root_task();
-
-    let mut generator = GroundedSuccessorGenerator::new(&task);
-
-    let mut queue: VecDeque<OperatorIndex> = (0..task.get_operators().len() as u32)
-        .map(OperatorIndex::new)
-        .collect();
 
     let mut state_registry = StateRegistry::for_task(Arc::new(&task));
 
@@ -194,8 +188,7 @@ fn test_grounded_successor_generator() {
         [ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)]
     );
 
-    let root = generator.construct(&mut 0, &mut queue).unwrap();
-    let tree = generator.into_tree(root);
+    let tree = SuccessorTree::new(&task);
 
     let mut applicable_operators: Vec<OperatorIndex> = Vec::new();
     tree.get_applicable_operators(&state_values[..], &mut applicable_operators);
@@ -211,7 +204,7 @@ fn test_generate_immediate_successor_of_init_state() {
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
-    let suc_gen = GroundedSuccessorGenerator::construct_node_from_task(&task);
+    let suc_gen = SuccessorTree::new(&task);
 
     let mut applicable_operators = Vec::new();
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);
@@ -234,7 +227,7 @@ fn test_duplicate_successor_should_not_generate_new_id() {
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
-    let suc_gen = GroundedSuccessorGenerator::construct_node_from_task(&task);
+    let suc_gen = SuccessorTree::new(&task);
 
     let mut applicable_operators = Vec::new();
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);

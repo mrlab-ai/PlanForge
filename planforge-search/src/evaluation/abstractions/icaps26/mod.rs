@@ -61,8 +61,7 @@ use split_selection::*;
 use working::*;
 
 use super::cartesian::{
-    CartesianAbstraction, CartesianRefinementHierarchy, CartesianTransitions, NumericSplit,
-    RefinementNode,
+    CartesianAbstraction, CartesianRefinementHierarchy, CartesianTransitions, RefinementNode,
 };
 use super::common::abstraction::{AbstractionCore, AbstractionMetadata, AbstractionUse};
 use super::common::cegar::SplitKind;
@@ -96,7 +95,7 @@ use crate::evaluation::abstractions::common::coordinates::AdditiveNumericView;
 use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem,
-    CostedTransitionSystem, LabelSourceSet, backward_goal_distances,
+    CostedTransitionSystem, LabelSourceSet, backward_goal_distances, no_limit,
 };
 use artifact::*;
 use planforge_sas::utils::interval::Interval;

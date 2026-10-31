@@ -77,7 +77,7 @@ use planforge_search::evaluation::abstractions::domain::config::DomainAbstractio
 use planforge_search::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 use planforge_search::task_restriction::build_restricted_task;
 
 use crate::corpus::{
@@ -224,34 +224,22 @@ fn assert_exact_single_abstraction_search<H>(
         heuristic.proves_initial_state_optimal(),
         "unrestricted {backend} CEGAR must finish with a concrete plan"
     );
-    let state_registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(
-        task,
-        state_registry,
-        planforge_search::search::SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
-            reevaluate_dynamic: false,
-            time_limit: None,
-            max_memory_bytes: None,
-        },
-    );
-    let result = search
-        .search()
+    let result = AStarSearch::new(Arc::new(task), SearchParams::new(Box::new(heuristic)))
+        .run()
         .expect("single-abstraction A* search failed");
 
-    assert!(
-        matches!(result.status, SearchStatus::Solved(_)),
-        "A* with the unrestricted {backend} abstraction did not solve: {:?}",
-        result.status
-    );
+    let SearchOutcome::Solved { cost, .. } = result.outcome else {
+        panic!(
+            "A* with the unrestricted {backend} abstraction did not solve: {:?}",
+            result.outcome
+        );
+    };
     assert_eq!(
-        result.solution_cost,
-        Some(expected_cost),
+        cost, expected_cost,
         "A* with the unrestricted {backend} abstraction changed the optimal cost"
     );
     assert_eq!(
-        result.nodes_expanded_until_last_jump, 0,
+        result.statistics.nodes_until_last_jump.expanded, 0,
         "an unrestricted {backend} abstraction that proves h(init) = h* must start A* in its final f-layer"
     );
 }
@@ -363,7 +351,7 @@ fn scp_initial_h_for_collection(
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
-    let heuristic = SaturatedCostPartitioningHeuristic::new(
+    let mut heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components(abstractions, Vec::new()),
         config,
@@ -378,7 +366,7 @@ fn scp_initial_h_for_collection(
         EvaluationState::new(&initial, task as &dyn AbstractNumericTask, &state_registry);
     eval.set_is_goal(false);
     heuristic
-        .compute_heuristic(&eval)
+        .evaluate(&eval)
         .expect("scp initial evaluation should succeed")
 }
 
@@ -413,20 +401,13 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         Default::default(),
     )
     .expect("scp heuristic should construct");
-    let state_registry = StateRegistry::for_task(Arc::new(&task));
-    let mut search = AStarSearch::new(
-        &task,
-        state_registry,
-        planforge_search::search::SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
-            reevaluate_dynamic: false,
-            time_limit: None,
-            max_memory_bytes: None,
-        },
-    );
-    let result = search.search().expect("scp A* search failed");
-    result.solution_cost
+    let result = AStarSearch::new(Arc::new(&task), SearchParams::new(Box::new(heuristic)))
+        .run()
+        .expect("scp A* search failed");
+    match result.outcome {
+        SearchOutcome::Solved { cost, .. } => Some(cost),
+        _ => None,
+    }
 }
 
 fn scp_initial_h(instance: &str) -> f64 {

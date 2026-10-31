@@ -1,6 +1,8 @@
 use planforge_sas::utils::float_tolerance;
 
-use super::{OrderSelection, SaturatedCostPartitioningHeuristic};
+use planforge_sas::explicit_state::ExplicitState;
+
+use super::OrderSelection;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 
@@ -56,36 +58,31 @@ impl CostPartitioningHeuristic {
     }
 }
 
-impl<'task> SaturatedCostPartitioningHeuristic<'task> {
-    /// The abstract state of `eval_state` in every component, or in those
-    /// `lookup_mask` selects.
-    pub(super) fn compute_abstract_state_ids_into(
-        &self,
-        components: &[AbstractionComponent<'_>],
-        eval_state: &EvaluationState<'_, '_>,
-        lookup_mask: Option<&[bool]>,
-        ids: &mut Vec<Option<usize>>,
-    ) -> Result<(), EvaluationError> {
-        if let Some(mask) = lookup_mask {
-            assert_eq!(
-                mask.len(),
-                components.len(),
-                "required component mask must match the abstraction collection"
-            );
-        }
-        ids.clear();
-        ids.resize(components.len(), None);
-
-        let mut values = self.state_values.borrow_mut();
-        eval_state.fill_values(&mut values)?;
-        for (component_id, component) in components.iter().enumerate() {
-            if lookup_mask.is_none_or(|mask| mask[component_id]) {
-                ids[component_id] = component.abstract_state_id(&values)?;
-            }
-        }
-
-        Ok(())
+/// The abstract state of `eval_state` in every component, or in those
+/// `lookup_mask` selects; `values` is scratch for the state's values.
+pub(super) fn abstract_state_ids_into(
+    components: &[AbstractionComponent<'_>],
+    eval_state: &EvaluationState<'_, '_>,
+    lookup_mask: Option<&[bool]>,
+    values: &mut ExplicitState,
+    ids: &mut Vec<Option<usize>>,
+) -> Result<(), EvaluationError> {
+    if let Some(mask) = lookup_mask {
+        assert_eq!(
+            mask.len(),
+            components.len(),
+            "required component mask must match the abstraction collection"
+        );
     }
+    ids.clear();
+    ids.resize(components.len(), None);
+    eval_state.fill_values(values)?;
+    for (component_id, component) in components.iter().enumerate() {
+        if lookup_mask.is_none_or(|mask| mask[component_id]) {
+            ids[component_id] = component.abstract_state_id(values);
+        }
+    }
+    Ok(())
 }
 
 /// The heuristic: the maximum over the retained cost partitionings (Seipp et
@@ -113,8 +110,23 @@ pub(super) fn compute_lookup_mask(
     mask
 }
 
+/// The first abstraction whose goal distance proves the state with the
+/// abstract states `abstract_state_ids` a dead end.
+pub(super) fn dead_end_abstraction(
+    state: &OrderSelection,
+    abstract_state_ids: &[Option<usize>],
+) -> Option<usize> {
+    state
+        .goal_distances_by_abstraction
+        .iter()
+        .enumerate()
+        .position(|(abstraction_id, distances)| {
+            current_h_for_distances(abstraction_id, distances, abstract_state_ids) == f64::INFINITY
+        })
+}
+
 pub(super) fn max_abstraction_heuristic(
-    state: &OrderSelection<'_>,
+    state: &OrderSelection,
     abstract_state_ids: &[Option<usize>],
 ) -> f64 {
     state
@@ -145,7 +157,7 @@ pub(super) fn current_h_for_distances(
 }
 
 pub(super) fn abstraction_heuristic_values(
-    state: &OrderSelection<'_>,
+    state: &OrderSelection,
     abstract_state_ids: &[Option<usize>],
 ) -> Vec<f64> {
     state
