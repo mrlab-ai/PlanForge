@@ -15,11 +15,11 @@ use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use tracing::{debug, info};
 
+use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use super::numeric_size_estimator::NumericSizeEstimator;
 use super::pattern_database::{PatternDatabase, PdbBuildConfig, PdbHeuristicConfig};
 use super::pattern_generator_systematic::goal_variables;
 use super::projected_task::{Pattern, ProjectedTask};
-use crate::causal_graph::{CausalGraphVariable, RestrictedCausalGraph};
 use crate::config::TimeLimit;
 use crate::evaluation::abstractions::cost_partitioning::canonical::{
     are_operator_sets_additive, compute_max_additive_subsets_from_relevant_operators,
@@ -146,7 +146,7 @@ struct HillClimbing<'task> {
     task: &'task dyn AbstractNumericTask,
     config: HillClimbingConfig,
     pdb_config: PdbBuildConfig,
-    causal_graph: RestrictedCausalGraph,
+    causal_graph: CausalGraph,
     numeric_sizes: NumericSizeEstimator,
     rng: SmallRng,
     initial_state: ExplicitState,
@@ -198,7 +198,7 @@ impl<'task> HillClimbing<'task> {
             task,
             config,
             pdb_config,
-            causal_graph: RestrictedCausalGraph::new(task)?,
+            causal_graph: CausalGraph::new(task)?,
             numeric_sizes: NumericSizeEstimator::new(task),
             rng: SmallRng::seed_from_u64(config.random_seed),
             initial_state,

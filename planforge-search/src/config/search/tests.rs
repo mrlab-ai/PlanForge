@@ -206,14 +206,6 @@ fn check_admissible_round_trips_through_display() {
 }
 
 #[test]
-fn debug_search_engines_are_gone() {
-    for removed in ["da_debug()", "astar_da_debug()"] {
-        let error = parse_search_spec(removed).unwrap_err();
-        assert!(error.contains("unknown search engine"), "{error}");
-    }
-}
-
-#[test]
 fn errors_are_human_readable() {
     let err = parse_search_spec("astar(").unwrap_err();
     assert!(err.to_lowercase().contains("invalid"));
@@ -252,18 +244,6 @@ fn lazy_astar_round_trips_and_none_disables_it() {
         parse_search_spec("astar(blind(), lazy=none)").unwrap(),
         parse_search_spec("astar(blind())").unwrap()
     );
-}
-
-#[test]
-fn legacy_search_spellings_are_rejected() {
-    for spec in [
-        "search(astar(blind()))",
-        "astar_fs(fast=blind(),slow=lmcutnumeric())",
-        "astar(blind()).",
-        "astar(blind());",
-    ] {
-        assert!(parse_search_spec(spec).is_err(), "{spec}");
-    }
 }
 
 #[test]

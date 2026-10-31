@@ -187,6 +187,7 @@ impl NumericTaskHelper {
         )
     }
 
+    #[cfg(feature = "cplex")]
     /// Build the task metadata required by numeric potentials.
     ///
     /// Potentials consume materialized comparison conditions and numeric
@@ -346,6 +347,7 @@ impl NumericTaskHelper {
         self.normalized_conditions.len()
     }
 
+    #[cfg(feature = "cplex")]
     pub(crate) fn numeric_variable_bounds(&self, local_var_id: usize) -> Option<(f64, f64)> {
         Some((
             *self.numeric_variable_lower_bounds.get(local_var_id)?,
@@ -550,6 +552,7 @@ impl NumericTaskHelper {
             .unwrap_or_default()
     }
 
+    #[cfg(feature = "cplex")]
     pub(crate) fn materialized_conditions_for_group_id(
         &self,
         group_id: usize,
@@ -561,6 +564,7 @@ impl NumericTaskHelper {
             .collect()
     }
 
+    #[cfg(feature = "cplex")]
     pub(crate) fn materialized_conditions_for_group_ids(
         &self,
         group_ids: &[usize],
@@ -591,6 +595,7 @@ impl NumericTaskHelper {
         self.normalized_condition(condition_id)
     }
 
+    #[cfg(feature = "cplex")]
     pub(crate) fn comparison_fact_materialized_conditions(
         &self,
         variable_id: VariableIndex,

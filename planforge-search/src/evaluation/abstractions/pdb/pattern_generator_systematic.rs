@@ -6,9 +6,9 @@ use std::fmt;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 
+use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use super::pattern_collection::PatternCollection;
 use super::projected_task::Pattern;
-use crate::causal_graph::{CausalGraph, CausalGraphVariable, RestrictedCausalGraph};
 
 pub const DEFAULT_SYSTEMATIC_MAX_PDB_STATES: usize = 50_000;
 pub const DEFAULT_MAX_PATTERN_SIZE: usize = 2;
@@ -19,8 +19,6 @@ pub struct SystematicPatternGeneratorConfig {
     pub max_pdb_states: usize,
     #[option(positional)]
     pub max_pattern_size: usize,
-    #[option(positional)]
-    pub only_interesting_patterns: bool,
 }
 
 impl Default for SystematicPatternGeneratorConfig {
@@ -28,8 +26,16 @@ impl Default for SystematicPatternGeneratorConfig {
         Self {
             max_pdb_states: DEFAULT_SYSTEMATIC_MAX_PDB_STATES,
             max_pattern_size: DEFAULT_MAX_PATTERN_SIZE,
-            only_interesting_patterns: true,
         }
+    }
+}
+
+impl SystematicPatternGeneratorConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_pdb_states == 0 || self.max_pattern_size == 0 {
+            return Err("max_pdb_states and max_pattern_size must be positive".into());
+        }
+        Ok(())
     }
 }
 
@@ -37,8 +43,8 @@ impl fmt::Display for SystematicPatternGeneratorConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "max_pdb_states={}, max_pattern_size={}, only_interesting_patterns={}",
-            self.max_pdb_states, self.max_pattern_size, self.only_interesting_patterns,
+            "max_pdb_states={}, max_pattern_size={}",
+            self.max_pdb_states, self.max_pattern_size,
         )
     }
 }
@@ -47,32 +53,21 @@ pub fn generate_systematic_patterns(
     task: &dyn AbstractNumericTask,
     config: SystematicPatternGeneratorConfig,
 ) -> PatternCollection {
-    if config.max_pattern_size == 0 || config.max_pdb_states == 0 {
-        return PatternCollection::empty();
-    }
-
-    if !config.only_interesting_patterns {
-        panic!("not implemented: numeric systematic naive pattern generation");
-    }
-
-    let causal_graph = RestrictedCausalGraph::new(task)
-        .expect("systematic PDB patterns require a restricted task");
+    config
+        .validate()
+        .expect("the systematic pattern configuration was validated");
+    let causal_graph =
+        CausalGraph::new(task).expect("systematic PDB patterns require a restricted task");
     let seed_variables = goal_variables(task, &causal_graph);
-    build_interesting_patterns(
-        &causal_graph,
-        &seed_variables,
-        config.max_pattern_size,
-        config,
-    )
+    build_interesting_patterns(&causal_graph, &seed_variables, config.max_pattern_size)
 }
 
 fn build_interesting_patterns(
     causal_graph: &CausalGraph,
     seed_variables: &[CausalGraphVariable],
     max_pattern_size: usize,
-    config: SystematicPatternGeneratorConfig,
 ) -> PatternCollection {
-    let sga_patterns = build_sga_patterns(causal_graph, seed_variables, max_pattern_size, config);
+    let sga_patterns = build_sga_patterns(causal_graph, seed_variables, max_pattern_size);
     let mut sga_patterns_by_variable: BTreeMap<CausalGraphVariable, Vec<&Pattern>> =
         BTreeMap::new();
     for pattern in &sga_patterns {
@@ -120,7 +115,6 @@ fn build_sga_patterns(
     causal_graph: &CausalGraph,
     seed_variables: &[CausalGraphVariable],
     max_pattern_size: usize,
-    _config: SystematicPatternGeneratorConfig,
 ) -> Vec<Pattern> {
     let mut patterns = Vec::new();
     let mut seen = BTreeSet::new();

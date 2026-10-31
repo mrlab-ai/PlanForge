@@ -332,18 +332,11 @@ pub struct LandmarkCutLandmarks<'task> {
 
 impl<'task> LandmarkCutLandmarks<'task> {
     pub fn new(task: TaskRef<'task>, config: LmCutNumericConfig) -> Self {
-        // PARITY(numeric-fd): `random_pcf` is still blocked until the randomized supporter
-        // selection path is ported. The other current feature flags are wired through the same
-        // control-flow sites as the C++ implementation.
         assert!(
             config.precision >= 0.0,
             "LM-cut precision must be non-negative"
         );
         assert!(config.epsilon >= 0.0, "LM-cut epsilon must be non-negative");
-        assert!(
-            !config.random_pcf,
-            "LM-cut random_pcf=true is not implemented yet"
-        );
         let use_bounds = config.bound_iterations > 0;
         let default_value_axioms =
             default_value_axioms(&*task, DefaultValueAxiomMode::ApproximateNegativeCycles);

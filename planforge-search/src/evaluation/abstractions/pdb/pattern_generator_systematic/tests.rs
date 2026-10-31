@@ -235,17 +235,3 @@ fn systematic_generator_rejects_unrestricted_tasks() {
         },
     );
 }
-
-#[test]
-#[should_panic(expected = "not implemented: numeric systematic naive pattern generation")]
-fn systematic_generator_rejects_naive_mode_like_cpp() {
-    let task = propositional_predecessor_task();
-    let _ = generate_systematic_patterns(
-        &task,
-        SystematicPatternGeneratorConfig {
-            only_interesting_patterns: false,
-            max_pattern_size: 2,
-            ..SystematicPatternGeneratorConfig::default()
-        },
-    );
-}

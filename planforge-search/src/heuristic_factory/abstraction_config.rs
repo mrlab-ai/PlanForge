@@ -90,16 +90,13 @@ impl AbstractionSource {
                 Icaps26CartesianGenerator::new(config.clone()).map(|_| ())
             }
             Self::Pdb(config) => match &config.patterns {
-                PdbPatternsConfig::Systematic(patterns) if !patterns.only_interesting_patterns => {
-                    return Err(ConfigError::from(
-                        "systematic naive numeric PDB patterns are not implemented",
-                    )
-                    .at_option("only_interesting_patterns"));
+                PdbPatternsConfig::Systematic(patterns) => {
+                    patterns.validate().map_err(anyhow::Error::msg)
                 }
                 PdbPatternsConfig::HillClimbing(patterns) => {
                     patterns.validate().map_err(anyhow::Error::msg)
                 }
-                PdbPatternsConfig::Systematic(_) | PdbPatternsConfig::Greedy(_) => Ok(()),
+                PdbPatternsConfig::Greedy(_) => Ok(()),
             },
         };
         result.map_err(|error| ConfigError::from(error.to_string()).at(self.name()))

@@ -19,7 +19,6 @@ fn lmcutnumeric_config_defaults_match_fd_parser_defaults() {
     let config = LmCutNumericConfig::default();
     assert!(!config.ceiling_less_than_one);
     assert!(!config.ignore_numeric);
-    assert!(!config.random_pcf);
     assert!(!config.irmax);
     assert!(!config.disable_ma);
     assert!(!config.use_second_order_simple);
@@ -82,36 +81,6 @@ fn from_config_accepts_irmax() {
         .expect("irmax flag should construct the heuristic");
 
     assert!(heuristic.config().irmax);
-}
-
-#[test]
-fn from_config_rejects_unimplemented_random_pcf() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 3,
-        metric: Metric::new(true, None),
-        variables: vec![simple_var("v0", &["zero", "one"], None)],
-        numeric_variables: vec![],
-        goals: vec![ExplicitFact::propositional(0, 1)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![],
-        operators: vec![],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    });
-    let config = LmCutNumericConfig {
-        random_pcf: true,
-        ..Default::default()
-    };
-
-    let error = match LandmarkCutNumericHeuristic::from_config(&task, config) {
-        Err(error) => error,
-        Ok(_) => panic!("random_pcf should be rejected until it is implemented"),
-    };
-
-    assert!(error.contains("random_pcf=true"));
 }
 
 #[test]

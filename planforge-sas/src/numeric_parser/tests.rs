@@ -71,7 +71,7 @@ fn unconditional_assignment_effect_parses() {
 ///
 /// Numerically: `x = 5`, `three = 3`, so `cond_ge` (`x >= three`) holds and
 /// `cond_lt` (`x < three`) does not. Both condition variables are written in
-/// the legacy three-valued form, `<none of those>` and all, so that building
+/// numeric Fast Downward's three-valued form, `<none of those>` and all, so that building
 /// a task out of this file exercises the narrowing to
 /// [`ConditionValue::DOMAIN_SIZE`].
 const INTERLEAVED_CONDITIONS_SAS: &str = "\

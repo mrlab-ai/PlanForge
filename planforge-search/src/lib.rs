@@ -27,7 +27,6 @@
 // in downstream crates that depend on `planforge_search`.
 extern crate self as planforge_search;
 
-pub mod causal_graph;
 pub mod config;
 pub mod evaluation;
 pub mod heuristic_factory;

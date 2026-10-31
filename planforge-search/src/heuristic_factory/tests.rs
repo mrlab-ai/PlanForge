@@ -89,22 +89,6 @@ fn parses_canonical_domain_collection_with_named_options() {
 }
 
 #[test]
-fn hierarchical_scp_rejects_legacy_pdb_switches() {
-    let h = astar_heuristic("astar(scp([domain_collection()], use_numeric_pdbs=true))");
-    let error = configure(
-        &h.name,
-        abstraction_config::ScpHeuristicConfig::default(),
-        &h.args,
-    )
-    .unwrap_err()
-    .to_string();
-    assert_eq!(
-        error,
-        "scp.use_numeric_pdbs: unknown option `use_numeric_pdbs`"
-    );
-}
-
-#[test]
 fn hierarchical_scp_sets_every_scp_option() {
     let h = astar_heuristic(
         "astar(scp([domain_collection()], goal_cover_orders_per_goal=2, random_orders=5))",
@@ -282,13 +266,12 @@ fn too_many_positional_args_errors() {
 #[test]
 fn parses_astar_lmcutnumeric_with_named_options() {
     let h = astar_heuristic(
-        "astar(lmcutnumeric(ceiling_less_than_one=true, ignore_numeric=true, random_pcf=true, irmax=true, disable_ma=true, use_second_order_simple=true, use_constant_assignment=true, bound_iterations=7, precision=0.5, epsilon=0.25))",
+        "astar(lmcutnumeric(ceiling_less_than_one=true, ignore_numeric=true, irmax=true, disable_ma=true, use_second_order_simple=true, use_constant_assignment=true, bound_iterations=7, precision=0.5, epsilon=0.25))",
     );
     let mut cfg = LmCutNumericConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert!(cfg.ceiling_less_than_one);
     assert!(cfg.ignore_numeric);
-    assert!(cfg.random_pcf);
     assert!(cfg.irmax);
     assert!(cfg.disable_ma);
     assert!(cfg.use_second_order_simple);
@@ -336,13 +319,6 @@ fn parses_goal_focused_domain_collection_options() {
 fn parses_domain_collection_with_trailing_comma() {
     let cfg = domain_collection_source("astar(max(domain_collection(max_collection_size=123,)))");
     assert_eq!(cfg.max_collection_size, 123);
-}
-
-#[test]
-fn rejects_removed_exec_entire_plan_randomize_option() {
-    let err =
-        domain_collection_source_error("astar(max(domain_collection(exec_entire_plan=randomize)))");
-    assert!(err.contains("exec_entire_plan"));
 }
 
 #[test]

@@ -11,8 +11,6 @@ pub enum EvaluationError {
     DeadEnd { reliable: bool },
     /// Heuristic computation failed.
     ComputationFailed(String),
-    /// Invalid state for evaluation.
-    InvalidState(String),
 }
 
 impl fmt::Display for EvaluationError {
@@ -23,9 +21,6 @@ impl fmt::Display for EvaluationError {
             }
             EvaluationError::ComputationFailed(msg) => {
                 write!(f, "Evaluation failed: {}", msg)
-            }
-            EvaluationError::InvalidState(msg) => {
-                write!(f, "Invalid state: {}", msg)
             }
         }
     }
