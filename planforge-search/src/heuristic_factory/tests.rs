@@ -13,6 +13,7 @@ use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::common::cegar::{FlawScope, SplitKind};
 use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
+use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use crate::evaluation::abstractions::pdb::variable_order_finder::GreedyVariableOrderType;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
@@ -541,6 +542,7 @@ fn pdb_sources_take_patterns_and_heuristics_as_separate_options() {
     for spec in [
         "pdb(patterns=greedy(max_pdb_states=321), exploration_heuristic=lmcut)",
         "pdb(patterns=systematic(max_pdb_states=321, max_pattern_size=2), failed_lookup_heuristic=lmcut)",
+        "pdb(patterns=hillclimbing(max_pdb_states=10000, max_pdb_size=1000000, collection_max_size=1000000, max_time=900), exploration_heuristic=lmcut, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut)",
         "pdb()",
     ] {
         let spec = parse_call(spec).unwrap();
@@ -553,6 +555,19 @@ fn pdb_sources_take_patterns_and_heuristics_as_separate_options() {
         let spec = parse_call(spec).unwrap();
         configure("pdb", super::PdbSourceConfig::default(), &spec.args).unwrap_err();
     }
+    let spec = parse_call(
+        "pdb(patterns=hillclimbing(), exploration_heuristic=lmcut, frontier_heuristic=zero)",
+    )
+    .unwrap();
+    let config = configure("pdb", super::PdbSourceConfig::default(), &spec.args).unwrap();
+    assert_eq!(config.exploration_heuristic, PdbInternalHeuristic::Lmcut);
+    assert_eq!(config.frontier_heuristic, PdbInternalHeuristic::Zero);
+    assert_eq!(config.failed_lookup_heuristic, PdbInternalHeuristic::Blind);
+    let config = source_config(
+        "astar(canonical(pdb(patterns=hillclimbing(num_samples=5,min_improvement=6))))",
+    )
+    .unwrap();
+    config.sources[0].validate().unwrap_err();
     // A positive budget that rounds to no time at all is no budget.
     source_config("astar(canonical(domain(),construction_max_time=1e-100))").unwrap_err();
 }

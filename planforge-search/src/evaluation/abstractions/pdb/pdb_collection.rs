@@ -2,72 +2,26 @@
 mod tests;
 
 use super::pattern_collection::PatternCollection;
-use super::pattern_database::{PatternDatabase, PdbHeuristicConfig};
+use super::pattern_database::{PatternDatabase, PdbBuildConfig};
 use super::projected_task::ProjectedTask;
 use super::utils;
 use crate::task_restriction::validate_restricted_task;
 use planforge_sas::numeric_task::AbstractNumericTask;
 
-pub struct PdbCollection<'task> {
-    patterns: PatternCollection,
-    pdbs: Vec<PatternDatabase<'task>>,
-}
-
-impl<'task> PdbCollection<'task> {
-    pub fn new(
-        task: &'task dyn AbstractNumericTask,
-        patterns: PatternCollection,
-        max_pdb_states: usize,
-    ) -> Result<Self, String> {
-        Self::with_heuristic_config(
-            task,
-            patterns,
-            max_pdb_states,
-            PdbHeuristicConfig::default(),
-        )
-    }
-
-    pub fn with_heuristic_config(
-        task: &'task dyn AbstractNumericTask,
-        patterns: PatternCollection,
-        max_pdb_states: usize,
-        heuristic_config: PdbHeuristicConfig,
-    ) -> Result<Self, String> {
-        validate_restricted_task(task)?;
-        let patterns = PatternCollection::new(patterns.into_vec());
-        let mut pdbs = Vec::with_capacity(patterns.len());
-
-        for pattern in patterns.iter() {
+/// The pattern database of every pattern in `patterns`, in order.
+pub fn build_pattern_databases<'task>(
+    task: &'task dyn AbstractNumericTask,
+    patterns: &PatternCollection,
+    config: PdbBuildConfig,
+) -> Result<Vec<PatternDatabase<'task>>, String> {
+    validate_restricted_task(task)?;
+    patterns
+        .iter()
+        .map(|pattern| {
             let projected_task =
                 ProjectedTask::new(task, pattern).map_err(|err| err.to_string())?;
             utils::print_projection_summary(task, pattern, &projected_task);
-            pdbs.push(PatternDatabase::with_heuristic_config(
-                projected_task,
-                max_pdb_states,
-                heuristic_config,
-            )?);
-        }
-
-        Ok(Self { patterns, pdbs })
-    }
-
-    pub fn len(&self) -> usize {
-        self.pdbs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.pdbs.is_empty()
-    }
-
-    pub fn patterns(&self) -> &PatternCollection {
-        &self.patterns
-    }
-
-    pub fn pdbs(&self) -> &[PatternDatabase<'task>] {
-        &self.pdbs
-    }
-
-    pub fn into_pdbs(self) -> Vec<PatternDatabase<'task>> {
-        self.pdbs
-    }
+            PatternDatabase::build(projected_task, config)
+        })
+        .collect()
 }

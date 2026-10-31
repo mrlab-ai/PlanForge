@@ -101,9 +101,9 @@ impl<'task> AbstractionComponent<'task> {
                 .abstract_state(&values.propositional, &values.numeric)
                 .map(Some)
                 .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}"))),
-            Self::PatternDatabase(pdb) => pdb
-                .abstract_state_id_from_source_state_values(&values.propositional, &values.numeric)
-                .map_err(EvaluationError::ComputationFailed),
+            Self::PatternDatabase(pdb) => {
+                Ok(pdb.abstract_state_id(&values.propositional, &values.numeric))
+            }
         }
     }
 
@@ -113,14 +113,7 @@ impl<'task> AbstractionComponent<'task> {
             Self::Cegar(abstraction) => abstraction
                 .goal_distance(&values.propositional, &values.numeric)
                 .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}"))),
-            // A pattern database projects the state itself, and falls back
-            // for a state it did not enumerate.
-            Self::PatternDatabase(pdb) => pdb
-                .lookup_projected_or_fallback_from_source_state_values(
-                    &values.propositional,
-                    &values.numeric,
-                )
-                .map_err(EvaluationError::ComputationFailed),
+            Self::PatternDatabase(pdb) => Ok(pdb.value(&values.propositional, &values.numeric)),
         }
     }
 
@@ -130,7 +123,7 @@ impl<'task> AbstractionComponent<'task> {
     ) -> Result<BTreeSet<OperatorIndex>, String> {
         let ids: Vec<OperatorIndex> = match self {
             Self::Cegar(abstraction) => abstraction.relevant_operator_ids().to_vec(),
-            Self::PatternDatabase(pdb) => pdb.relevant_operator_ids(),
+            Self::PatternDatabase(pdb) => pdb.relevant_operator_ids().to_vec(),
         };
         let operator_count = task.get_operators().len();
         if let Some(operator_id) = ids.iter().copied().find(|id| id.index() >= operator_count) {

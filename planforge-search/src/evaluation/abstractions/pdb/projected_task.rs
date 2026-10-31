@@ -184,213 +184,8 @@ pub struct ProjectedTask<'task> {
     numeric_state: Vec<NumericValue>,
     projected_var_to_original: Vec<VariableIndex>,
     projected_num_var_to_original: Vec<VariableIndex>,
-    pattern_regular_projected_ids: Vec<usize>,
-    pattern_numeric_projected_ids: Vec<usize>,
     variable_names: Vec<String>,
     fact_names: Vec<Vec<String>>,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct PatternLookupProjection {
-    base_propositional_len: usize,
-    source_numeric_len: usize,
-    pattern_regular_original_ids: Vec<VariableIndex>,
-    pattern_numeric_lookup: Vec<VariableIndex>,
-    projected_regular_original_ids: Vec<VariableIndex>,
-    projected_numeric_lookup: Vec<VariableIndex>,
-}
-
-impl PatternLookupProjection {
-    pub(super) fn from_projected_task(task: &ProjectedTask<'_>) -> Self {
-        let pattern_regular_original_ids = task
-            .pattern_regular_projected_ids
-            .iter()
-            .map(|&projected_var_id| task.projected_var_to_original[projected_var_id])
-            .collect();
-
-        let pattern_numeric_lookup = task
-            .pattern_numeric_projected_ids
-            .iter()
-            .map(|&projected_numeric_id| task.projected_num_var_to_original[projected_numeric_id])
-            .collect();
-
-        let projected_regular_original_ids = task.projected_var_to_original.clone();
-        let projected_numeric_lookup = task.projected_num_var_to_original.clone();
-
-        Self {
-            base_propositional_len: task.base.variables().len(),
-            source_numeric_len: task.base.numeric_variables().len(),
-            pattern_regular_original_ids,
-            pattern_numeric_lookup,
-            projected_regular_original_ids,
-            projected_numeric_lookup,
-        }
-    }
-
-    pub(super) fn compact_prop_hash_from_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        multipliers: &[usize],
-    ) -> Result<usize, String> {
-        assert_eq!(
-            self.pattern_regular_original_ids.len(),
-            multipliers.len(),
-            "one hash multiplier per pattern variable"
-        );
-        if propositional_values.len() < self.base_propositional_len {
-            return Err(format!(
-                "propositional state too short: {} < {}",
-                propositional_values.len(),
-                self.base_propositional_len
-            ));
-        }
-
-        let mut hash = 0usize;
-        for (&original_var_id, &multiplier) in self
-            .pattern_regular_original_ids
-            .iter()
-            .zip(multipliers.iter())
-        {
-            let value = propositional_values[original_var_id.index()];
-            debug_assert!(
-                value
-                    .index()
-                    .checked_mul(multiplier)
-                    .and_then(|contribution| hash.checked_add(contribution))
-                    .is_some(),
-                "PDB propositional hash must fit in usize"
-            );
-            hash += value.index() * multiplier;
-        }
-        Ok(hash)
-    }
-
-    fn numeric_value_from_source(
-        original_numeric_var: VariableIndex,
-        source_numeric_values: &[NumericValue],
-    ) -> Result<NumericValue, String> {
-        source_numeric_values
-            .get(original_numeric_var.index())
-            .copied()
-            .ok_or_else(|| {
-                format!("source numeric state too short for index {original_numeric_var}")
-            })
-    }
-
-    pub(super) fn fill_pattern_numeric_bins_from_source_numeric_into(
-        &self,
-        source_numeric_values: &[NumericValue],
-        bins: &mut Vec<u64>,
-    ) -> Result<(), String> {
-        if source_numeric_values.len() < self.source_numeric_len {
-            return Err(format!(
-                "source numeric state too short: {} < {}",
-                source_numeric_values.len(),
-                self.source_numeric_len
-            ));
-        }
-
-        bins.clear();
-        bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
-        for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
-        {
-            bins[numeric_index + 1] =
-                Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?
-                    .to_bits();
-        }
-        Ok(())
-    }
-
-    pub(super) fn pack_pattern_state_values_from_source_numeric_into(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        source_numeric_values: &[NumericValue],
-        packer: &StatePacker,
-        packed_values: &mut Vec<u64>,
-    ) -> Result<(), String> {
-        if propositional_values.len() < self.base_propositional_len {
-            return Err(format!(
-                "propositional state too short: {} < {}",
-                propositional_values.len(),
-                self.base_propositional_len
-            ));
-        }
-        if source_numeric_values.len() < self.source_numeric_len {
-            return Err(format!(
-                "source numeric state too short: {} < {}",
-                source_numeric_values.len(),
-                self.source_numeric_len
-            ));
-        }
-
-        packed_values.clear();
-        packed_values.resize(packer.num_bins(), 0);
-
-        for (compact_index, &original_var_id) in
-            self.pattern_regular_original_ids.iter().enumerate()
-        {
-            packer.set(
-                packed_values,
-                compact_index,
-                propositional_values[original_var_id.index()].index() as u64,
-            );
-        }
-
-        let prop_len = self.pattern_regular_original_ids.len();
-        for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
-        {
-            packer.set(
-                packed_values,
-                prop_len + numeric_index,
-                packer.pack_double(Self::numeric_value_from_source(
-                    original_numeric_var,
-                    source_numeric_values,
-                )?),
-            );
-        }
-
-        Ok(())
-    }
-
-    pub(super) fn project_state_values_from_source_numeric_into(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        source_numeric_values: &[NumericValue],
-        projected_prop_values: &mut Vec<ExplicitValueIndex>,
-        projected_numeric_values: &mut Vec<NumericValue>,
-    ) -> Result<(), String> {
-        if propositional_values.len() < self.base_propositional_len {
-            return Err(format!(
-                "propositional state too short: {} < {}",
-                propositional_values.len(),
-                self.base_propositional_len
-            ));
-        }
-        if source_numeric_values.len() < self.source_numeric_len {
-            return Err(format!(
-                "source numeric state too short: {} < {}",
-                source_numeric_values.len(),
-                self.source_numeric_len
-            ));
-        }
-
-        projected_prop_values.clear();
-        projected_prop_values.extend(
-            self.projected_regular_original_ids
-                .iter()
-                .map(|&original_var_id| propositional_values[original_var_id.index()]),
-        );
-
-        projected_numeric_values.clear();
-        projected_numeric_values.reserve(self.projected_numeric_lookup.len());
-        for &original_numeric_var in &self.projected_numeric_lookup {
-            projected_numeric_values.push(Self::numeric_value_from_source(
-                original_numeric_var,
-                source_numeric_values,
-            )?);
-        }
-        Ok(())
-    }
 }
 
 impl<'task> ProjectedTask<'task> {
@@ -411,8 +206,6 @@ impl<'task> ProjectedTask<'task> {
         let mut projected_num_var_to_original: Vec<VariableIndex> = Vec::new();
         let mut original_var_to_projected = vec![None; num_vars];
         let mut original_num_var_to_projected = vec![None; num_numeric_vars];
-        let mut pattern_regular_projected_ids: Vec<usize> = Vec::new();
-        let mut pattern_numeric_projected_ids: Vec<usize> = Vec::new();
 
         for &var_id in &pattern.regular {
             if var_id.index() >= num_vars {
@@ -426,9 +219,6 @@ impl<'task> ProjectedTask<'task> {
                 &mut projected_var_to_original,
                 &mut original_var_to_projected,
             );
-            if let Some(projected_id) = original_var_to_projected[var_id.index()] {
-                push_unique_projected_id(projected_id, &mut pattern_regular_projected_ids);
-            }
         }
 
         for &numeric_var_id in &pattern.numeric {
@@ -445,9 +235,6 @@ impl<'task> ProjectedTask<'task> {
                     &mut projected_num_var_to_original,
                     &mut original_num_var_to_projected,
                 );
-                if let Some(projected_id) = original_num_var_to_projected[numeric_var_id.index()] {
-                    push_unique_projected_id(projected_id, &mut pattern_numeric_projected_ids);
-                }
             } else {
                 return Err(ProjectedTaskBuildError::InvalidNumericVarId {
                     provided: numeric_var_id.index(),
@@ -497,6 +284,15 @@ impl<'task> ProjectedTask<'task> {
             }
             closure_index += 1;
         }
+        include_comparisons_over_projected_variables(
+            base,
+            VariableProjection {
+                projected_var_to_original: &mut projected_var_to_original,
+                original_var_to_projected: &mut original_var_to_projected,
+                projected_num_var_to_original: &mut projected_num_var_to_original,
+                original_num_var_to_projected: &mut original_num_var_to_projected,
+            },
+        );
 
         let mut variable_names: Vec<String> = Vec::with_capacity(projected_var_to_original.len());
         let mut fact_names: Vec<Vec<String>> = Vec::with_capacity(projected_var_to_original.len());
@@ -683,8 +479,6 @@ impl<'task> ProjectedTask<'task> {
             numeric_state: projected_numeric_values,
             projected_var_to_original,
             projected_num_var_to_original,
-            pattern_regular_projected_ids,
-            pattern_numeric_projected_ids,
             variable_names,
             fact_names,
         })
@@ -698,36 +492,35 @@ impl<'task> ProjectedTask<'task> {
         let mut projected_prop_values = Vec::with_capacity(self.projected_var_to_original.len());
         let mut projected_numeric_values =
             Vec::with_capacity(self.projected_num_var_to_original.len());
-        self.project_state_values_from_source_numeric_into(
+        self.project_state_values_into(
             propositional_values,
             numeric_values,
             &mut projected_prop_values,
             &mut projected_numeric_values,
-        )?;
+        );
         Ok((projected_prop_values, projected_numeric_values))
     }
 
-    pub fn project_state_values_from_source_numeric_into(
+    /// Fill `projected_prop_values` and `projected_numeric_values` with the
+    /// values the projected variables take in the state of the base task with
+    /// `propositional_values` and `source_numeric_values`.
+    pub fn project_state_values_into(
         &self,
         propositional_values: &[ExplicitValueIndex],
         source_numeric_values: &[NumericValue],
         projected_prop_values: &mut Vec<ExplicitValueIndex>,
         projected_numeric_values: &mut Vec<NumericValue>,
-    ) -> Result<(), String> {
-        if propositional_values.len() < self.base.variables().len() {
-            return Err(format!(
-                "propositional state too short: {} < {}",
-                propositional_values.len(),
-                self.base.variables().len()
-            ));
-        }
-        if source_numeric_values.len() < self.base.numeric_variables().len() {
-            return Err(format!(
-                "source numeric state too short: {} < {}",
-                source_numeric_values.len(),
-                self.base.numeric_variables().len()
-            ));
-        }
+    ) {
+        assert_eq!(
+            propositional_values.len(),
+            self.base.variables().len(),
+            "a projected state needs one value per base propositional variable"
+        );
+        assert_eq!(
+            source_numeric_values.len(),
+            self.base.numeric_variables().len(),
+            "a projected state needs one value per base numeric variable"
+        );
 
         projected_prop_values.clear();
         projected_prop_values.extend(
@@ -741,8 +534,6 @@ impl<'task> ProjectedTask<'task> {
         for &original_numeric_var in &self.projected_num_var_to_original {
             projected_numeric_values.push(source_numeric_values[original_numeric_var.index()]);
         }
-
-        Ok(())
     }
 
     pub fn evaluated_initial_state_values(
@@ -796,12 +587,17 @@ impl<'task> ProjectedTask<'task> {
         &self.base_operator_ids
     }
 
-    pub fn pattern_numeric_projected_ids(&self) -> &[usize] {
-        &self.pattern_numeric_projected_ids
+    /// The base task variable the projected propositional variable stands for.
+    pub fn original_variable(&self, projected_var: usize) -> VariableIndex {
+        self.projected_var_to_original[projected_var]
     }
 
-    pub fn pattern_regular_projected_ids(&self) -> &[usize] {
-        &self.pattern_regular_projected_ids
+    /// Whether a numeric variable that operators change, rather than a
+    /// constant, cost or derived one, is projected.
+    pub fn has_regular_numeric_variables(&self) -> bool {
+        self.numeric_variables
+            .iter()
+            .any(|variable| *variable.get_type() == NumericType::Regular)
     }
 }
 
@@ -1070,12 +866,6 @@ fn push_unique_mapping(
     }
 }
 
-fn push_unique_projected_id(projected_id: usize, ids: &mut Vec<usize>) {
-    if !ids.contains(&projected_id) {
-        ids.push(projected_id);
-    }
-}
-
 fn include_restricted_comparison_operands(
     task: &dyn AbstractNumericTask,
     comparison_axiom_id: usize,
@@ -1096,6 +886,52 @@ fn include_restricted_comparison_operands(
             numeric_var_id,
             projected_num_var_to_original,
             original_num_var_to_projected,
+        );
+    }
+}
+
+/// Adds every comparison over the projected numeric variables: its variable,
+/// and its constant operand.
+///
+/// A precondition on such a comparison constrains the projection, as numeric
+/// Fast Downward checks numeric preconditions on the numeric variables of a
+/// pattern. Without the comparison variable the projection drops the
+/// precondition, and a numeric pattern variable no operator condition reads
+/// adds nothing to the heuristic.
+fn include_comparisons_over_projected_variables(
+    task: &dyn AbstractNumericTask,
+    projection: VariableProjection<'_>,
+) {
+    let is_constant = |numeric_var_id: VariableIndex| {
+        task.numeric_variables()[numeric_var_id.index()].get_type() == &NumericType::Constant
+    };
+    for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
+        let operands = [
+            comparison_axiom.get_left_var_id(),
+            comparison_axiom.get_right_var_id(),
+        ];
+        let projected = |numeric_var_id: VariableIndex| {
+            projection.original_num_var_to_projected[numeric_var_id.index()].is_some()
+        };
+        let covered = operands
+            .iter()
+            .all(|&operand| projected(operand) || is_constant(operand));
+        let reads_projection = operands
+            .iter()
+            .any(|&operand| projected(operand) && !is_constant(operand));
+        if !(covered && reads_projection) {
+            continue;
+        }
+        push_unique_mapping(
+            comparison_axiom.get_affected_var_id(),
+            projection.projected_var_to_original,
+            projection.original_var_to_projected,
+        );
+        include_restricted_comparison_operands(
+            task,
+            comparison_axiom_id,
+            projection.projected_num_var_to_original,
+            projection.original_num_var_to_projected,
         );
     }
 }

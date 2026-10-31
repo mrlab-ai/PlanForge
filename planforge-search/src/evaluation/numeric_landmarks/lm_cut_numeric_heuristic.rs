@@ -3,6 +3,7 @@ mod tests;
 
 use std::cell::RefCell;
 use std::fmt;
+use std::sync::Arc;
 
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
@@ -126,7 +127,7 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
             name: "lmcutnumeric".to_string(),
             task,
             config,
-            landmark_generator: RefCell::new(LandmarkCutLandmarks::new(task, config)),
+            landmark_generator: RefCell::new(LandmarkCutLandmarks::new(Arc::new(task), config)),
             state_scratch: RefCell::new(ExplicitState::default()),
             state_value_cache: RefCell::new(StateValueCache::default()),
         })
@@ -147,8 +148,6 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             return Ok(value);
         }
 
-        let registry = eval_state.state_registry();
-        let state_buffer_len = eval_state.state().buffer(registry).len();
         let mut state = self.state_scratch.borrow_mut();
         eval_state.fill_values(&mut state)?;
 
@@ -160,7 +159,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
         let (dead_end, total_cost) = self
             .landmark_generator
             .borrow_mut()
-            .compute_landmark_cost(&state.propositional, state_buffer_len, &state.numeric)
+            .compute_landmark_cost(&state.propositional, &state.numeric)
             .map_err(EvaluationError::ComputationFailed)?;
 
         if dead_end {

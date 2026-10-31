@@ -284,7 +284,6 @@ fn projection_closes_over_numeric_effect_sources() {
     .unwrap();
 
     assert_eq!(projected.numeric_variables().len(), 2);
-    assert_eq!(projected.pattern_numeric_projected_ids(), &[0]);
     let effect = &projected.get_operators()[0].assignment_effects()[0];
     assert_eq!(effect.affected_var_id(), VariableIndex::from_usize(0));
     assert_eq!(effect.var_id(), VariableIndex::from_usize(1));
@@ -608,14 +607,119 @@ fn source_state_projection_is_a_direct_index_mapping() {
         .unwrap();
     let mut projected_prop = Vec::new();
     let mut projected_numeric = Vec::new();
-    projected
-        .project_state_values_from_source_numeric_into(
-            &propositional,
-            &numeric,
-            &mut projected_prop,
-            &mut projected_numeric,
-        )
-        .unwrap();
+    projected.project_state_values_into(
+        &propositional,
+        &numeric,
+        &mut projected_prop,
+        &mut projected_numeric,
+    );
 
     assert_eq!((projected_prop, projected_numeric), expected);
+}
+
+/// `inc-x` raises `x`, and `use` needs `x >= limit` to reach the goal `p`.
+fn comparison_precondition_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
+            variable("p", None),
+            ExplicitVariable::new(
+                ConditionValue::DOMAIN_SIZE,
+                "x>=limit".to_string(),
+                vec![
+                    "true".to_string(),
+                    "false".to_string(),
+                    "unknown".to_string(),
+                ],
+                Some(0),
+                ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+            ),
+        ],
+        numeric_variables: vec![
+            NumericVariable::new("limit".to_string(), NumericType::Constant, None),
+            NumericVariable::new("x".to_string(), NumericType::Regular, None),
+            NumericVariable::new("one".to_string(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(3.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+        ],
+        operators: vec![
+            Operator::new(
+                "inc-x".to_string(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(
+                    VariableIndex::from_usize(1),
+                    AssignmentOperation::Plus,
+                    VariableIndex::from_usize(2),
+                    false,
+                    vec![],
+                )],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "use".to_string(),
+                vec![ExplicitFact::propositional(1, 0)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+        ],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(1),
+            VariableIndex::new(1),
+            VariableIndex::new(0),
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+#[test]
+fn projection_keeps_preconditions_on_comparisons_over_its_numeric_variables() {
+    let task = comparison_precondition_task();
+    let projected = ProjectedTask::new(
+        &task,
+        &Pattern::new(
+            vec![VariableIndex::from_usize(0)],
+            vec![VariableIndex::from_usize(1)],
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(projected.get_num_variables(), 2);
+    assert_eq!(projected.comparison_axioms().len(), 1);
+    let use_operator = projected
+        .get_operators()
+        .iter()
+        .find(|operator| operator.name() == "use")
+        .unwrap();
+    assert_eq!(use_operator.preconditions().len(), 1);
+}
+
+#[test]
+fn projection_without_the_comparison_operand_drops_the_precondition() {
+    let task = comparison_precondition_task();
+    let projected = ProjectedTask::new(
+        &task,
+        &Pattern::new(vec![VariableIndex::from_usize(0)], vec![]),
+    )
+    .unwrap();
+
+    assert_eq!(projected.get_num_variables(), 1);
+    assert!(projected.comparison_axioms().is_empty());
+    assert!(projected.get_operators()[0].preconditions().is_empty());
 }
