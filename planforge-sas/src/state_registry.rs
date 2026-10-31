@@ -22,8 +22,7 @@ mod tests;
 use crate::axioms::AxiomEvaluator;
 use crate::explicit_state::ExplicitState;
 use crate::numeric_task::{
-    AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, NumericValue, Operator,
-    RepeatedTarget, TaskRef, VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, NumericValue, Operator, TaskRef, VariableIndex,
 };
 use crate::utils::errors::{
     AssignmentAxiomError, AxiomEvalError, InvalidIndex, StateInsertError, StateNotFoundError,
@@ -1527,99 +1526,26 @@ impl<'a> StateLayout<'a> {
             next_buffer,
             previous_buffer,
         } = transition;
-        // All assignment effects of one operator take effect simultaneously:
-        // every right-hand side, left-hand side and effect condition reads the
-        // state *before* the operator was applied. An operator with
-        // `x += y` and `y += 1` must therefore add the parent's `y` to `x`,
-        // whatever order the effects happen to be stored in.
-        //
-        // `parent_values` is never written here, so one pass suffices: reads
-        // come from it (and from `previous_buffer`), writes go to
-        // `current_values`, `cost_part` and `next_buffer`. Reading operands
-        // out of `current_values` instead would make each effect visible to
-        // its successors and reintroduce order dependence.
-        //
-        // One operator may legitimately write the same variable twice, as long
-        // as every such effect is additive: PDDL grounding produces operators
-        // like `drink ?n ?n` with both `v += 1` and `v -= 1`, and the
-        // simultaneous reading of additive effects is to apply every delta to
-        // the parent value, which is order-independent. Accumulating through
-        // `current_values` does exactly that. Any other repeat — an assignment,
-        // a scaling, or a mix — has no order-independent reading, so it is
-        // rejected rather than resolved by whichever effect happens to be
-        // stored last.
-        let effects = operator.assignment_effects();
-        let repeated_targets = operator.repeated_assignment_targets();
-        assert_eq!(
-            effects.len(),
-            repeated_targets.len(),
-            "operator assignment-effect classification must be complete"
+        // The effects' semantics -- simultaneous, operands read in the
+        // parent, additive repeats accumulated -- are the operator's; this
+        // only stores each result where its variable lives. Effect
+        // conditions read the parent's buffer.
+        let packer = &*self.global_state_packer;
+        operator.apply_numeric_effects(
+            |conditions| self.assignment_conditions_met(conditions, previous_buffer),
+            parent_values,
+            current_values,
+            |variable, result| match self.numeric_slots[variable.index()] {
+                NumericSlot::Packed(packed_slot) => {
+                    packer.set(next_buffer, packed_slot, interner.intern(result));
+                }
+                NumericSlot::Cost(cost_index) => cost_part[cost_index] = result,
+                slot @ (NumericSlot::Constant(_) | NumericSlot::Derived) => panic!(
+                    "an effect of {} writes numeric variable {variable}, which lives in {slot:?}",
+                    operator.name()
+                ),
+            },
         );
-        for (effect, repeated_target) in effects.iter().zip(repeated_targets) {
-            let assignment_var_id = effect.var_id();
-            let affected_var_id = effect.affected_var_id();
-
-            if assignment_var_id.index() >= parent_values.len() {
-                return Err(StateInsertError {
-                    message: format!("Assignment variable ID {} out of bounds", assignment_var_id),
-                });
-            }
-            if affected_var_id.index() >= parent_values.len() {
-                return Err(StateInsertError {
-                    message: format!("Affected variable ID {} out of bounds", affected_var_id),
-                });
-            }
-
-            // Effect conditions are evaluated against the parent state, in the
-            // same way `apply_propositional_effects` evaluates them against
-            // `current_state` rather than the partially updated buffer.
-            if !self.assignment_conditions_met(effect.conditions(), previous_buffer) {
-                continue;
-            }
-
-            let assignment_value = parent_values[assignment_var_id.index()];
-
-            // Accumulate additive deltas; every other operand reads the parent.
-            // The target classification is immutable operator data computed
-            // once at construction.
-            let left_value = match repeated_target {
-                RepeatedTarget::First => parent_values[affected_var_id.index()],
-                RepeatedTarget::Additive => current_values[affected_var_id.index()],
-            };
-
-            let result =
-                AssignmentOperation::apply(left_value, effect.operation(), assignment_value);
-
-            match self.numeric_var_types[affected_var_id.index()] {
-                NumericType::Cost => {
-                    let cost_index = self.cost_index(affected_var_id.index());
-                    if cost_index >= cost_part.len() {
-                        return Err(StateInsertError {
-                            message: format!("Cost variable index {} out of bounds", cost_index),
-                        });
-                    }
-                    cost_part[cost_index] = result;
-                    current_values[affected_var_id.index()] = result;
-                }
-                NumericType::Regular => {
-                    let packed_result = interner.intern(result);
-                    self.global_state_packer.set(
-                        next_buffer,
-                        self.packed_slot(affected_var_id.index()),
-                        packed_result,
-                    );
-                    current_values[affected_var_id.index()] = result;
-                }
-                affected_ty => {
-                    return Err(StateInsertError {
-                        message: format!(
-                            "Only regular and cost variables can be affected by assignment operations: {:?}",
-                            affected_ty
-                        ),
-                    });
-                }
-            }
-        }
 
         if run_full_axioms {
             self.axiom_evaluator

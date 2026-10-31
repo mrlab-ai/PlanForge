@@ -632,10 +632,6 @@ impl Operator {
         &self.assignment_effects
     }
 
-    pub(crate) fn repeated_assignment_targets(&self) -> &[RepeatedTarget] {
-        &self.repeated_assignment_targets
-    }
-
     /// Writes the successor of the explicit state (`propositional`,
     /// `numeric`) under this operator into `successor_propositional` and
     /// `successor_numeric`, before axioms.
@@ -666,6 +662,24 @@ impl Operator {
                 successor_propositional[effect.var_id().index()] = effect.value();
             }
         }
+        self.apply_numeric_effects(holds, numeric, successor_numeric, |_, _| {});
+    }
+
+    /// Applies the numeric effects whose conditions `holds`, simultaneously:
+    /// every operand reads the parent values `numeric`, and only additive
+    /// effects on one variable accumulate. `successor` starts as a copy of
+    /// `numeric` and receives each result, which `written` also sees.
+    ///
+    /// This is the one definition of numeric effect semantics; the explicit
+    /// state space and the state registry differ only in where `written`
+    /// stores a result.
+    pub fn apply_numeric_effects(
+        &self,
+        holds: impl Fn(&[ExplicitFact]) -> bool,
+        numeric: &[NumericValue],
+        successor: &mut [NumericValue],
+        mut written: impl FnMut(VariableIndex, NumericValue),
+    ) {
         for (effect, repeated_target) in self
             .assignment_effects
             .iter()
@@ -674,16 +688,18 @@ impl Operator {
             if !holds(effect.conditions()) {
                 continue;
             }
-            let affected = effect.affected_var_id().index();
+            let affected = effect.affected_var_id();
             let left = match repeated_target {
-                RepeatedTarget::First => numeric[affected],
-                RepeatedTarget::Additive => successor_numeric[affected],
+                RepeatedTarget::First => numeric[affected.index()],
+                RepeatedTarget::Additive => successor[affected.index()],
             };
-            successor_numeric[affected] = AssignmentOperation::apply(
+            let result = AssignmentOperation::apply(
                 left,
                 effect.operation(),
                 numeric[effect.var_id().index()],
             );
+            successor[affected.index()] = result;
+            written(affected, result);
         }
     }
 
