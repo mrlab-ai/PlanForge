@@ -31,7 +31,7 @@ use planforge_search::state_space::{
     StateSpaceEnumerationError as RustStateSpaceEnumerationError, enumerate_state_space,
 };
 use planforge_search::successor_generator::SuccessorTree;
-use planforge_search::task_restriction::build_restricted_task;
+use planforge_search::task_transformations::restriction::build_restricted_task;
 
 create_exception!(planforge, PlanforgeError, PyException);
 create_exception!(planforge, TranslateError, PlanforgeError);

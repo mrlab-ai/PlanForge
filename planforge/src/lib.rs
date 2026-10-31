@@ -32,7 +32,9 @@ use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef}
 use planforge_search::heuristic_factory::{HeuristicEntry, register_external_heuristics};
 use planforge_search::search::{SearchConfig, SearchResult, solve_task};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
-use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
+use planforge_search::task_transformations::restriction::{
+    build_icaps26_restricted_task, build_restricted_task,
+};
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;

@@ -1355,42 +1355,45 @@ impl<'task> LandmarkCutLandmarks<'task> {
         if self.proposition_status(proposition_id) == PropositionStatus::GoalZone {
             return;
         }
-
+        // Depth-first over zero-cost applicable achievers, with an explicit
+        // stack of (proposition, next achiever index, end) in the order the
+        // recursive definition visits: a deep plateau would overflow the call
+        // stack.
         self.set_proposition_status(proposition_id, PropositionStatus::GoalZone);
-        let (achiever_start, achiever_end) = self.proposition_effect_of_range(proposition_id);
-        for achiever_index in achiever_start..achiever_end {
-            let achiever_id = self.proposition_effect_of_data[achiever_index];
-            let (is_zero_cost_applicable, achiever_supporter) = {
-                let _achiever = self
-                    .relaxed_operators
-                    .get(achiever_id.index())
-                    .unwrap_or_else(|| panic!("LM-cut achiever id {achiever_id} is invalid"));
-                (
-                    self.operator_cost_1(achiever_id) < self.config.precision
-                        && self.operator_cost_2(achiever_id) < self.config.precision
-                        && self.operator_unsatisfied_preconditions(achiever_id) == 0,
-                    self.operator_h_max_supporter(achiever_id),
-                )
-            };
-            let recurse_to = if is_zero_cost_applicable {
-                let ms = self.calculate_numeric_times(
-                    propositional_values,
-                    numeric_values,
-                    proposition_id,
-                    achiever_id,
-                    !self.config.disable_ma,
-                );
-                if self.multiplier_allows_traversal(achiever_id, ms) {
-                    achiever_supporter
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            if let Some(supporter_id) = recurse_to {
-                self.mark_goal_plateau(propositional_values, numeric_values, supporter_id);
+        let (start, end) = self.proposition_effect_of_range(proposition_id);
+        let mut stack = vec![(proposition_id, start, end)];
+        while let Some(top) = stack.last_mut() {
+            let (proposition_id, achiever_index, end) = *top;
+            if achiever_index == end {
+                stack.pop();
+                continue;
             }
+            top.1 += 1;
+            let achiever_id = self.proposition_effect_of_data[achiever_index];
+            let is_zero_cost_applicable = self.operator_cost_1(achiever_id) < self.config.precision
+                && self.operator_cost_2(achiever_id) < self.config.precision
+                && self.operator_unsatisfied_preconditions(achiever_id) == 0;
+            if !is_zero_cost_applicable {
+                continue;
+            }
+            let Some(supporter_id) = self.operator_h_max_supporter(achiever_id) else {
+                continue;
+            };
+            let ms = self.calculate_numeric_times(
+                propositional_values,
+                numeric_values,
+                proposition_id,
+                achiever_id,
+                !self.config.disable_ma,
+            );
+            if !self.multiplier_allows_traversal(achiever_id, ms)
+                || self.proposition_status(supporter_id) == PropositionStatus::GoalZone
+            {
+                continue;
+            }
+            self.set_proposition_status(supporter_id, PropositionStatus::GoalZone);
+            let (start, end) = self.proposition_effect_of_range(supporter_id);
+            stack.push((supporter_id, start, end));
         }
     }
 

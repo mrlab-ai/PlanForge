@@ -34,7 +34,7 @@ use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
-use planforge_search::task_restriction::build_restricted_task;
+use planforge_search::task_transformations::restriction::build_restricted_task;
 
 use crate::corpus::{self, Scratch, translate_to_disk};
 

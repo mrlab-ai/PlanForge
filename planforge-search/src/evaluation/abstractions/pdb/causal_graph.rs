@@ -8,7 +8,7 @@ use planforge_sas::numeric_task::{
     VariableIndex, ZERO_VALUE,
 };
 
-use crate::task_restriction::validate_restricted_task;
+use crate::task_transformations::restriction::validate_restricted_task;
 
 /// A node of the causal graph: a propositional variable no axiom derives, or
 /// a regular numeric variable.

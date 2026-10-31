@@ -372,15 +372,17 @@ fn numeric_states_support_more_than_u16_distinct_values() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
-    let registry = StateRegistry::for_task(task);
+    let mut registry = StateRegistry::for_task(task);
 
     let mut last = 0;
     for value in 0..=u16::MAX as u32 + 1 {
-        last = registry.pack_regular_numeric(NumericValue::new(value as f64));
+        last = registry
+            .compact_numeric_values
+            .intern(NumericValue::new(value as f64));
     }
     assert_eq!(last, u16::MAX as u64 + 1);
     assert_eq!(
-        registry.unpack_regular_numeric(last),
+        registry.compact_numeric_values.value(last),
         NumericValue::new(u16::MAX as f64 + 1.0)
     );
 }

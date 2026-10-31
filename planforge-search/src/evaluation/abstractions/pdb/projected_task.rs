@@ -17,7 +17,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::state_packer::StatePacker;
 
 use crate::evaluation::validate_abstractable_goal;
-use crate::task_restriction::validate_restricted_task;
+use crate::task_transformations::restriction::validate_restricted_task;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pattern {

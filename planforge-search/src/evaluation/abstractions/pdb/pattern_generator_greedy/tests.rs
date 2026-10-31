@@ -8,7 +8,7 @@ use planforge_sas::numeric_task::{
 
 use super::*;
 use crate::evaluation::abstractions::pdb::variable_order_finder::GreedyVariableOrderType;
-use crate::task_restriction::build_restricted_task;
+use crate::task_transformations::restriction::build_restricted_task;
 
 fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
     ExplicitVariable::new(
