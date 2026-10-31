@@ -307,3 +307,77 @@ fn registry_expander_matches_registry_successors() {
         );
     }
 }
+
+/// `n` binary variables and one operator per variable, operator `i` needing
+/// `v_i = 1`: the root's default chain passes through all `n` variables.
+fn one_condition_per_variable_task(n: usize) -> NumericRootTask {
+    let variables = (0..n)
+        .map(|i| {
+            ExplicitVariable::new(
+                2,
+                format!("v{i}"),
+                vec![format!("v{i}=0"), format!("v{i}=1")],
+                None,
+                ExplicitValueIndex::new(0),
+            )
+        })
+        .collect();
+    let operators = (0..n)
+        .map(|i| {
+            Operator::new(
+                format!("unset{i}"),
+                vec![ExplicitFact::propositional(i, 1)],
+                vec![Effect::new(
+                    Vec::new(),
+                    VariableIndex::from_usize(i),
+                    None,
+                    ExplicitValueIndex::new(0),
+                )],
+                Vec::new(),
+                OperatorCost::new(1),
+            )
+        })
+        .collect();
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
+        variables,
+        numeric_variables: vec![NumericVariable::new(
+            String::from("total_cost()"),
+            NumericType::Cost,
+            None,
+        )],
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: Vec::new(),
+        state: vec![ExplicitValueIndex::new(1); n],
+        numeric_state: vec![NumericValue::new(0f64)],
+        operators,
+        axioms: Vec::new(),
+        comparison_axioms: Vec::new(),
+        assignment_axioms: Vec::new(),
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+/// A default chain through every variable of a large task is built and
+/// walked without recursing once per variable (which overflowed the stack
+/// on grounded tasks with tens of thousands of variables).
+#[test]
+fn default_chains_through_all_variables_neither_overflow_nor_reorder() {
+    let n = 5_000;
+    let task = one_condition_per_variable_task(n);
+    let tree = SuccessorTree::new(&task);
+
+    let mut applicable: Vec<OperatorIndex> = Vec::new();
+    tree.get_applicable_operators(&vec![ExplicitValueIndex::new(1); n], &mut applicable);
+    assert_eq!(
+        applicable,
+        (0..n as u32).map(OperatorIndex::new).collect::<Vec<_>>()
+    );
+
+    let mut state = vec![ExplicitValueIndex::new(0); n];
+    state[n - 1] = ExplicitValueIndex::new(1);
+    applicable.clear();
+    tree.get_applicable_operators(&state, &mut applicable);
+    assert_eq!(applicable, vec![OperatorIndex::new(n as u32 - 1)]);
+}
