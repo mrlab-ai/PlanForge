@@ -1,89 +1,64 @@
 /target
 
-output.sas # no idea why but the wildcard below does not remove it for me
-./*.sas
-*.out
-.vscode
-
-//Fast downward files
-cpp/ 
-./pddl/
-//python/
-scripts/
+# Planner and translator output.
+/output
+/output.sas
+/output.sas.reference
 sas_plan
+/*.sas
+*.out
 
+# Profiling output.
 perf.*
 flamegraph.svg
-output.sas.reference
-output
-output.sas
+profile.json.gz
+proj.json
 
-# numeric-fd
-experiments/
-
+# Environments and editor state.
 .devenv*
 .direnv
 .venv/
-
-# playground python files
-*.py
-!/lab-files/abstraction_parser.py
-!/lab-files/benchmark_suites.py
+.vscode
 __pycache__/
-others
-profile.json.gz
-proj.json
-.verify/
-codex-plan.md
-codex-implement.log
-
-# Local planning research and generated comparison artifacts.
-#
-# Notes, reviews and rendered papers accumulate at the repo root faster than
-# they can be curated, and none of them are inputs to the build. Ignore the
-# whole class and re-admit the few documents that belong to the project.
-*.md
-!README.md
-!PUBLISHING.md
-!CONTRIBUTING.md
-!CHANGELOG.md
-!/planforge-py/README.md
-!/tutorials/**/*.md
-!/tests/assets/**/*.md
-*.pdf
-*.html
-
-# Personal dictionary for the Harper grammar LSP -- editor state, not project
-# content, and it differs per contributor.
 /.harper-dictionary.txt
 
-/.codex
-/AGENTS.md
-/CLAUDE.md
-/codex-*.md
-# The project website, served by GitHub Pages from `docs/` on `main`. Ignore the
-# directory's contents and re-admit exactly the hand-written site files: the
-# pages, the stylesheet, the logo assets, and the marker that tells Pages to
-# serve them as-is. Written as `/docs/*` plus negations rather than `/docs/`
-# because git cannot re-include a file whose parent directory is itself
-# excluded. Anything else that lands in `docs/` -- rendered papers, notes,
-# generated output -- stays ignored.
+# Local research material kept next to the checkout: notes, reviews,
+# rendered papers, scratch scripts and benchmark copies. Only the repository
+# root collects them, so only the root ignores them; files anywhere else are
+# project files and show up in `git status`.
+/*.md
+!/README.md
+!/PUBLISHING.md
+!/CONTRIBUTING.md
+!/CHANGELOG.md
+/*.py
+/*.pdf
+/*.html
+/*.zip
+/*.txt
+/*.log
+/.codex*
+/.verify/
+/cpp/
+/dominik/
+/experiments/
+/ipc2023
+/ipc2026
+/lab-reports/
+/numeric-fd
+/others
+/pddl/
+/scorpion/
+/scripts/
+/test_outputs/
+
+# The project website, served by GitHub Pages from `docs/`: the hand-written
+# pages, stylesheet, logos and the marker that serves them as-is.
 /docs/*
 !/docs/*.html
 !/docs/*.css
 !/docs/*.svg
 !/docs/.nojekyll
-/dominik/
-/ipc2023
-/ipc2026
-/numeric-fd
-/*.sas
-/sailing.txt
-/scorpion/
-/sstcp-code.zip
-/test_outputs/
 
-# Python bindings crate: track its Python sources despite the blanket *.py ignore above
-!planforge-py/**/*.py
-!tutorials/**/*.py
+# The Python extension module a local build places into the package.
 planforge-py/python/planforge/planforge.abi3.so
