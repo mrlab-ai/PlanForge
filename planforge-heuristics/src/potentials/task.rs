@@ -98,25 +98,7 @@ impl PotentialTask {
         goal_strengthening: bool,
     ) -> Result<Self, String> {
         validate_abstractable_goal(task)?;
-        for (operator_id, operator) in task.operators().iter().enumerate() {
-            for effect in operator.effects() {
-                if !effect.conditions().is_empty() {
-                    return Err(format!(
-                        "numeric_potential does not support conditional propositional effects (operator {operator_id}, `{}`)",
-                        operator.name()
-                    ));
-                }
-            }
-            for effect in operator.assignment_effects() {
-                if effect.is_conditional() || !effect.conditions().is_empty() {
-                    return Err(format!(
-                        "numeric_potential does not support conditional numeric effects (operator {operator_id}, `{}`)",
-                        operator.name()
-                    ));
-                }
-            }
-        }
-
+        reject_conditional_effects(task)?;
         let helper =
             NumericTaskHelper::new_potentials(task, precision, epsilon, simple_action_bounds);
         let domain_sizes = task
@@ -127,64 +109,19 @@ impl PotentialTask {
         let derived_propositional: Vec<bool> = (0..task.variables().len())
             .map(|var| task.variable_kind(VariableIndex::from_usize(var)) != VariableKind::Regular)
             .collect();
+        let goal = goal_conditions(task, &helper, goal_strengthening)?;
 
-        // A comparison goal becomes the linear conditions materializing it; every
-        // other goal fact is propositional, since `validate_abstractable_goal` has
-        // refused a goal on a derived variable. That case used to be rewritten into
-        // the conditions of its one defining axiom, and rejected when there was not
-        // exactly one -- a rewrite that had to be equivalent to the goal, not merely
-        // implied by it, to keep the LP bound admissible.
-        let mut propositional_goals = Vec::new();
-        let mut numeric_conditions = Vec::new();
-        for &goal in task.goals() {
-            let materialized = helper
-                .comparison_fact_materialized_conditions(goal.var_index(), goal.value_index());
-            if materialized.is_empty() {
-                propositional_goals.push(goal);
-            } else {
-                numeric_conditions.extend(materialized);
-            }
-        }
-        propositional_goals.sort_unstable();
-        propositional_goals.dedup();
-        // A comparison every reachable goal state satisfies joins the goal.
-        let implied_comparisons = if goal_strengthening {
-            goal_implied_comparisons(task, &helper, &propositional_goals)?
-        } else {
-            Vec::new()
-        };
-        info!(
-            "Numeric potential goal-implied comparisons: {}",
-            implied_comparisons.len()
-        );
-        for &comparison_var in &implied_comparisons {
-            numeric_conditions.extend(helper.comparison_fact_materialized_conditions(
-                comparison_var,
-                ExplicitValueIndex::from_usize(ConditionValue::True.as_usize()),
-            ));
-        }
-
-        let numeric_count = task.numeric_variables().len();
         // Classical-only mode keeps the complete C++ matrix shape: numeric
         // weight columns and the numeric goal-awareness row still exist, but
         // all weights are fixed to zero because no numeric goal interval is
         // registered below.
-        let features = build_cpp_numeric_features(task, &implied_comparisons)?;
-        let mut feature_keys: BTreeMap<Vec<(VariableIndex, NumericValue)>, usize> = BTreeMap::new();
-        for (feature_id, feature) in features.iter().enumerate() {
-            if !feature.affine || feature.coefficients.is_empty() {
-                continue;
-            }
-            let (canonical, _) = canonical_feature(&feature.coefficients)
-                .expect("nonconstant affine feature must be canonicalizable");
-            feature_keys.insert(feature_key(&canonical), feature_id);
-        }
-
+        let features = build_cpp_numeric_features(task, &goal.implied_comparisons)?;
+        let feature_keys = affine_feature_keys(&features);
         let mut feature_goal_bounds = vec![FeatureBounds::default(); features.len()];
         let mut goal_unsatisfiable = false;
         if !ignore_numeric_variables {
             let lattices = Coordinates::new(task).value_lattices();
-            for condition in &numeric_conditions {
+            for condition in &goal.numeric_conditions {
                 register_condition_bound(
                     condition,
                     &features,
@@ -196,49 +133,7 @@ impl PotentialTask {
             }
         }
 
-        let mut assignment_targets = vec![false; numeric_count];
-        let mut primitive_deltas = Vec::with_capacity(task.operators().len());
-        for (operator_id, operator) in task.operators().iter().enumerate() {
-            let linearized = task
-                .linearized_assignment_effects(OperatorIndex::from_usize(operator_id))
-                .map_err(|error| {
-                    format!(
-                        "numeric_potential cannot linearize numeric effects of operator {operator_id} (`{}`): {error}",
-                        operator.name()
-                    )
-                })?;
-            let mut deltas = BTreeMap::<VariableIndex, f64>::new();
-            for effect in linearized {
-                match effect.operation {
-                    AssignmentOperation::Assign => {
-                        assignment_targets[effect.affected_var_id.index()] = true;
-                    }
-                    AssignmentOperation::Plus | AssignmentOperation::Minus => {
-                        if !effect.delta.is_constant() {
-                            return Err(format!(
-                                "numeric_potential requires state-independent additive numeric effects; operator {operator_id} (`{}`) has a state-dependent effect on numeric variable {}",
-                                operator.name(),
-                                effect.affected_var_id
-                            ));
-                        }
-                        *deltas.entry(effect.affected_var_id).or_default() += effect.delta.constant;
-                    }
-                    AssignmentOperation::Times | AssignmentOperation::Divide => {
-                        return Err(format!(
-                            "numeric_potential does not support nonlinear numeric effects (operator {operator_id}, `{}`)",
-                            operator.name()
-                        ));
-                    }
-                }
-            }
-            primitive_deltas.push(
-                deltas
-                    .into_iter()
-                    .filter(|(_, delta)| *delta != 0.0)
-                    .collect::<Vec<_>>(),
-            );
-        }
-
+        let effects = primitive_effects(task)?;
         let assignment_target_features: Vec<bool> = features
             .iter()
             .map(|feature| {
@@ -246,183 +141,30 @@ impl PotentialTask {
                     || feature
                         .coefficients
                         .iter()
-                        .any(|(variable_id, _)| assignment_targets[variable_id.index()])
+                        .any(|(variable_id, _)| effects.assignment_targets[variable_id.index()])
             })
             .collect();
-        let initial_numeric = task.initial_numeric_values();
-        let mut global_linear_equalities = Vec::new();
-        for lhs in 0..numeric_count {
-            if task.numeric_variables()[lhs].numeric_type() != NumericType::Regular
-                || assignment_targets[lhs]
-            {
-                continue;
-            }
-            let lhs_id = VariableIndex::from_usize(lhs);
-            for rhs in (lhs + 1)..numeric_count {
-                if task.numeric_variables()[rhs].numeric_type() != NumericType::Regular
-                    || assignment_targets[rhs]
-                {
-                    continue;
-                }
-                let rhs_id = VariableIndex::from_usize(rhs);
-                let identical = primitive_deltas
-                    .iter()
-                    .all(|deltas| sparse_value(deltas, lhs_id) == sparse_value(deltas, rhs_id));
-                let opposite = primitive_deltas
-                    .iter()
-                    .all(|deltas| sparse_value(deltas, lhs_id) == -sparse_value(deltas, rhs_id));
-                let has_nonzero_delta = primitive_deltas.iter().any(|deltas| {
-                    sparse_value(deltas, lhs_id) != 0.0 || sparse_value(deltas, rhs_id) != 0.0
-                });
-                if !has_nonzero_delta || (!identical && !opposite) {
-                    continue;
-                }
-                let rhs_coefficient = if identical { -1.0 } else { 1.0 };
-                let coefficients = vec![(lhs_id, 1.0), (rhs_id, rhs_coefficient)];
-                global_linear_equalities.push(LinearEquality {
-                    rhs: NumericValue::affine(
-                        [
-                            (1.0, initial_numeric[lhs]),
-                            (rhs_coefficient, initial_numeric[rhs]),
-                        ],
-                        0.0,
-                    )
-                    .value(),
-                    coefficients,
-                });
-            }
-        }
-
-        let operators = task
-            .operators()
-            .iter()
-            .enumerate()
-            .map(|(operator_id, operator)| {
-                let mut numeric_precondition_bounds =
-                    vec![FeatureBounds::default(); features.len()];
-                for precondition in operator.preconditions() {
-                    for condition in helper.comparison_fact_materialized_conditions(
-                        precondition.var_index(),
-                        precondition.value_index(),
-                    ) {
-                        register_closed_condition_bound(
-                            &condition,
-                            &features,
-                            &feature_keys,
-                            &mut numeric_precondition_bounds,
-                        )?;
-                    }
-                }
-                Ok(PotentialOperator {
-                    preconditions: operator.preconditions().clone(),
-                    effects: operator
-                        .effects()
-                        .iter()
-                        .map(|effect| (effect.var_id(), effect.value()))
-                        .collect(),
-                    numeric_deltas: features
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(feature_id, feature)| {
-                            if feature.affine {
-                                let delta = dot_sparse(
-                                    &feature.coefficients,
-                                    &primitive_deltas[operator_id],
-                                );
-                                (delta != 0.0).then_some((feature_id, delta))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                    numeric_precondition_bounds: sparse_bounds(numeric_precondition_bounds),
-                    cost: task.operator_cost(OperatorIndex::from_usize(operator_id)),
-                    reachable: true,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let global_linear_equalities = mine_linear_equalities(task, &effects);
+        let mut operators =
+            potential_operators(task, &helper, &features, &feature_keys, &effects.deltas)?;
 
         // Rays keep explicit goal endpoints unchanged. For a goal-free
         // resource, however, C++ falls back to the merged reachable bounds so
         // the homogeneous system can retain the corresponding kappa
         // certificate instead of pinning its weight to zero.
         let raw_ray_feature_goal_bounds = feature_goal_bounds.clone();
-        let mut global_feature_bounds = vec![FeatureBounds::default(); features.len()];
-        if simple_action_bounds {
-            let mut primitive_bounds = vec![FeatureBounds::default(); numeric_count];
-            for (local_id, task_id) in task.regular_numeric_variable_ids().into_iter().enumerate() {
-                if assignment_targets[task_id.index()] {
-                    continue;
-                }
-                if let Some((lower, upper)) = helper.numeric_variable_bounds(local_id) {
-                    primitive_bounds[task_id.index()] = FeatureBounds {
-                        lower: if lower > -9_999_999.0 {
-                            lower
-                        } else {
-                            f64::NEG_INFINITY
-                        },
-                        upper: if upper < 9_999_999.0 {
-                            upper
-                        } else {
-                            f64::INFINITY
-                        },
-                    };
-                }
-            }
-            for (feature_id, feature) in features.iter().enumerate() {
-                if feature.affine
-                    && feature.coefficients.len() == 1
-                    && feature.constant == 0.0
-                    && task.numeric_type(feature.source_numeric_var) == NumericType::Regular
-                {
-                    global_feature_bounds[feature_id] =
-                        primitive_bounds[feature.source_numeric_var.index()];
-                }
-            }
-        }
-        if matches!(
+        let ReachableBounds {
+            features: global_feature_bounds,
+            facts: reachable_facts,
+        } = global_feature_bounds(
+            task,
+            &helper,
+            &features,
+            &assignment_target_features,
+            &effects,
             bounds_provider,
-            BoundsProvider::Monotone | BoundsProvider::All
-        ) {
-            let initial = task.initial_numeric_values();
-            for (feature_id, feature) in features.iter().enumerate() {
-                if assignment_target_features[feature_id] {
-                    continue;
-                }
-                let all_nonnegative = primitive_deltas
-                    .iter()
-                    .all(|deltas| dot_sparse(&feature.coefficients, deltas) >= 0.0);
-                let all_nonpositive = primitive_deltas
-                    .iter()
-                    .all(|deltas| dot_sparse(&feature.coefficients, deltas) <= 0.0);
-                let initial_value = if feature.affine {
-                    NumericValue::affine(
-                        feature
-                            .coefficients
-                            .iter()
-                            .map(|&(var, coefficient)| (coefficient, initial[var.index()])),
-                        feature.constant,
-                    )
-                    .value()
-                } else {
-                    initial[feature.source_numeric_var.index()].value()
-                };
-                if all_nonnegative {
-                    global_feature_bounds[feature_id].lower = initial_value;
-                }
-                if all_nonpositive {
-                    global_feature_bounds[feature_id].upper = initial_value;
-                }
-            }
-        }
-        let mut reachable_facts = None;
-        if matches!(bounds_provider, BoundsProvider::Aibr | BoundsProvider::All) {
-            let closure = compute_aibr_closure(task)?;
-            let mut contribution = vec![FeatureBounds::default(); features.len()];
-            map_primitive_bounds_to_features(&features, &closure.numeric_bounds, &mut contribution);
-            intersect_bounds(&mut global_feature_bounds, &contribution);
-            reachable_facts = Some(closure.reachable_facts);
-        }
+            simple_action_bounds,
+        )?;
         intersect_bounds(&mut feature_goal_bounds, &global_feature_bounds);
         let ray_feature_goal_bounds = raw_ray_feature_goal_bounds
             .into_iter()
@@ -438,44 +180,25 @@ impl PotentialTask {
         goal_unsatisfiable |= feature_goal_bounds
             .iter()
             .any(|bounds| bounds.lower > bounds.upper);
-        let mut operators = operators;
         if !matches!(bounds_provider, BoundsProvider::None) || simple_action_bounds {
-            for operator in &mut operators {
-                operator.reachable = operator.preconditions.iter().all(|fact| {
-                    reachable_facts.as_ref().is_none_or(|facts| {
-                        facts
-                            .get(fact.var())
-                            .and_then(|values| values.get(fact.value()))
-                            .copied()
-                            .unwrap_or(true)
-                    })
-                }) && operator.numeric_precondition_bounds.iter().all(
-                    |(feature_id, precondition)| {
-                        let global = global_feature_bounds[*feature_id];
-                        precondition.lower <= global.upper && precondition.upper >= global.lower
-                    },
-                );
-                operator.numeric_precondition_bounds = intersect_sparse_bounds(
-                    &operator.numeric_precondition_bounds,
-                    &global_feature_bounds,
-                );
-            }
+            restrict_operators_to_reachable(
+                &mut operators,
+                &global_feature_bounds,
+                reachable_facts.as_deref(),
+            );
         }
         if let Some(facts) = &reachable_facts {
-            goal_unsatisfiable |= propositional_goals.iter().any(|goal| {
-                !facts
-                    .get(goal.var())
-                    .and_then(|values| values.get(goal.value()))
-                    .copied()
-                    .unwrap_or(true)
-            });
+            goal_unsatisfiable |= goal
+                .propositional_goals
+                .iter()
+                .any(|goal| !facts[goal.var()][goal.value()]);
         }
 
         Ok(Self {
-            numeric_variable_count: numeric_count,
+            numeric_variable_count: task.numeric_variables().len(),
             domain_sizes,
             derived_propositional,
-            propositional_goals,
+            propositional_goals: goal.propositional_goals,
             features,
             feature_goal_bounds,
             ray_feature_goal_bounds,
@@ -514,6 +237,398 @@ impl PotentialTask {
                 }
             })
             .collect())
+    }
+}
+
+/// Fails on conditional effects, which the potential LP cannot express.
+fn reject_conditional_effects(task: &Task) -> Result<(), String> {
+    for (operator_id, operator) in task.operators().iter().enumerate() {
+        for effect in operator.effects() {
+            if !effect.conditions().is_empty() {
+                return Err(format!(
+                    "numeric_potential does not support conditional propositional effects (operator {operator_id}, `{}`)",
+                    operator.name()
+                ));
+            }
+        }
+        for effect in operator.assignment_effects() {
+            if effect.is_conditional() || !effect.conditions().is_empty() {
+                return Err(format!(
+                    "numeric_potential does not support conditional numeric effects (operator {operator_id}, `{}`)",
+                    operator.name()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The goal as the LP reads it.
+struct GoalConditions {
+    /// The propositional goal facts, sorted and without duplicates.
+    propositional_goals: Vec<ExplicitFact>,
+    /// The linear conditions of the comparison goals and of the comparisons
+    /// the goal implies.
+    numeric_conditions: Vec<LinearNumericCondition>,
+    /// The comparisons the propositional goals imply.
+    implied_comparisons: Vec<VariableIndex>,
+}
+
+/// A comparison goal becomes the linear conditions materializing it; every
+/// other goal fact is propositional, since `validate_abstractable_goal` has
+/// refused a goal on a derived variable. That case used to be rewritten into
+/// the conditions of its one defining axiom, and rejected when there was not
+/// exactly one -- a rewrite that had to be equivalent to the goal, not merely
+/// implied by it, to keep the LP bound admissible. With `goal_strengthening`,
+/// a comparison every reachable goal state satisfies joins the goal.
+fn goal_conditions(
+    task: &Task,
+    helper: &NumericTaskHelper,
+    goal_strengthening: bool,
+) -> Result<GoalConditions, String> {
+    let mut propositional_goals = Vec::new();
+    let mut numeric_conditions = Vec::new();
+    for &goal in task.goals() {
+        let materialized =
+            helper.comparison_fact_materialized_conditions(goal.var_index(), goal.value_index());
+        if materialized.is_empty() {
+            propositional_goals.push(goal);
+        } else {
+            numeric_conditions.extend(materialized);
+        }
+    }
+    propositional_goals.sort_unstable();
+    propositional_goals.dedup();
+    let implied_comparisons = if goal_strengthening {
+        goal_implied_comparisons(task, helper, &propositional_goals)?
+    } else {
+        Vec::new()
+    };
+    info!(
+        "Numeric potential goal-implied comparisons: {}",
+        implied_comparisons.len()
+    );
+    for &comparison_var in &implied_comparisons {
+        numeric_conditions.extend(helper.comparison_fact_materialized_conditions(
+            comparison_var,
+            ExplicitValueIndex::from_usize(ConditionValue::True.as_usize()),
+        ));
+    }
+    Ok(GoalConditions {
+        propositional_goals,
+        numeric_conditions,
+        implied_comparisons,
+    })
+}
+
+/// The id of every nonconstant affine feature, by its canonical
+/// coefficients.
+fn affine_feature_keys(
+    features: &[NumericFeature],
+) -> BTreeMap<Vec<(VariableIndex, NumericValue)>, usize> {
+    let mut feature_keys = BTreeMap::new();
+    for (feature_id, feature) in features.iter().enumerate() {
+        if !feature.affine || feature.coefficients.is_empty() {
+            continue;
+        }
+        let (canonical, _) = canonical_feature(&feature.coefficients)
+            .expect("nonconstant affine feature must be canonicalizable");
+        feature_keys.insert(feature_key(&canonical), feature_id);
+    }
+    feature_keys
+}
+
+/// What the operators do to the numeric variables.
+struct PrimitiveEffects {
+    /// Per numeric variable, whether some operator assigns it.
+    assignment_targets: Vec<bool>,
+    /// Per operator, its nonzero constant change of each numeric variable,
+    /// ascending by variable.
+    deltas: Vec<Vec<(VariableIndex, f64)>>,
+}
+
+/// The operators' numeric effects, which must be constant increases and
+/// decreases or assignments.
+fn primitive_effects(task: &Task) -> Result<PrimitiveEffects, String> {
+    let mut assignment_targets = vec![false; task.numeric_variables().len()];
+    let mut primitive_deltas = Vec::with_capacity(task.operators().len());
+    for (operator_id, operator) in task.operators().iter().enumerate() {
+        let linearized = task
+            .linearized_assignment_effects(OperatorIndex::from_usize(operator_id))
+            .map_err(|error| {
+                format!(
+                    "numeric_potential cannot linearize numeric effects of operator {operator_id} (`{}`): {error}",
+                    operator.name()
+                )
+            })?;
+        let mut deltas = BTreeMap::<VariableIndex, f64>::new();
+        for effect in linearized {
+            match effect.operation {
+                AssignmentOperation::Assign => {
+                    assignment_targets[effect.affected_var_id.index()] = true;
+                }
+                AssignmentOperation::Plus | AssignmentOperation::Minus => {
+                    if !effect.delta.is_constant() {
+                        return Err(format!(
+                            "numeric_potential requires state-independent additive numeric effects; operator {operator_id} (`{}`) has a state-dependent effect on numeric variable {}",
+                            operator.name(),
+                            effect.affected_var_id
+                        ));
+                    }
+                    *deltas.entry(effect.affected_var_id).or_default() += effect.delta.constant;
+                }
+                AssignmentOperation::Times | AssignmentOperation::Divide => {
+                    return Err(format!(
+                        "numeric_potential does not support nonlinear numeric effects (operator {operator_id}, `{}`)",
+                        operator.name()
+                    ));
+                }
+            }
+        }
+        primitive_deltas.push(
+            deltas
+                .into_iter()
+                .filter(|(_, delta)| *delta != 0.0)
+                .collect::<Vec<_>>(),
+        );
+    }
+    Ok(PrimitiveEffects {
+        assignment_targets,
+        deltas: primitive_deltas,
+    })
+}
+
+/// The pairwise invariants of the effect profile: two regular variables no
+/// operator assigns, whose changes coincide or cancel in every operator and
+/// that some operator changes, keep their difference or sum from the initial
+/// state.
+fn mine_linear_equalities(task: &Task, effects: &PrimitiveEffects) -> Vec<LinearEquality> {
+    let numeric_count = task.numeric_variables().len();
+    let initial_numeric = task.initial_numeric_values();
+    let candidate = |var: usize| {
+        task.numeric_variables()[var].numeric_type() == NumericType::Regular
+            && !effects.assignment_targets[var]
+    };
+    let mut equalities = Vec::new();
+    for lhs in (0..numeric_count).filter(|&var| candidate(var)) {
+        let lhs_id = VariableIndex::from_usize(lhs);
+        for rhs in ((lhs + 1)..numeric_count).filter(|&var| candidate(var)) {
+            let rhs_id = VariableIndex::from_usize(rhs);
+            let identical = effects
+                .deltas
+                .iter()
+                .all(|deltas| sparse_value(deltas, lhs_id) == sparse_value(deltas, rhs_id));
+            let opposite = effects
+                .deltas
+                .iter()
+                .all(|deltas| sparse_value(deltas, lhs_id) == -sparse_value(deltas, rhs_id));
+            let has_nonzero_delta = effects.deltas.iter().any(|deltas| {
+                sparse_value(deltas, lhs_id) != 0.0 || sparse_value(deltas, rhs_id) != 0.0
+            });
+            if !has_nonzero_delta || (!identical && !opposite) {
+                continue;
+            }
+            let rhs_coefficient = if identical { -1.0 } else { 1.0 };
+            equalities.push(LinearEquality {
+                rhs: NumericValue::affine(
+                    [
+                        (1.0, initial_numeric[lhs]),
+                        (rhs_coefficient, initial_numeric[rhs]),
+                    ],
+                    0.0,
+                )
+                .value(),
+                coefficients: vec![(lhs_id, 1.0), (rhs_id, rhs_coefficient)],
+            });
+        }
+    }
+    equalities
+}
+
+/// Every operator as the LP reads it: its propositional preconditions and
+/// effects, its change of every affine feature, the feature bounds its
+/// numeric preconditions require, and its cost.
+fn potential_operators(
+    task: &Task,
+    helper: &NumericTaskHelper,
+    features: &[NumericFeature],
+    feature_keys: &BTreeMap<Vec<(VariableIndex, NumericValue)>, usize>,
+    primitive_deltas: &[Vec<(VariableIndex, f64)>],
+) -> Result<Vec<PotentialOperator>, String> {
+    task.operators()
+        .iter()
+        .enumerate()
+        .map(|(operator_id, operator)| {
+            let mut numeric_precondition_bounds = vec![FeatureBounds::default(); features.len()];
+            for precondition in operator.preconditions() {
+                for condition in helper.comparison_fact_materialized_conditions(
+                    precondition.var_index(),
+                    precondition.value_index(),
+                ) {
+                    register_closed_condition_bound(
+                        &condition,
+                        features,
+                        feature_keys,
+                        &mut numeric_precondition_bounds,
+                    )?;
+                }
+            }
+            Ok(PotentialOperator {
+                preconditions: operator.preconditions().clone(),
+                effects: operator
+                    .effects()
+                    .iter()
+                    .map(|effect| (effect.var_id(), effect.value()))
+                    .collect(),
+                numeric_deltas: features
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(feature_id, feature)| {
+                        if feature.affine {
+                            let delta =
+                                dot_sparse(&feature.coefficients, &primitive_deltas[operator_id]);
+                            (delta != 0.0).then_some((feature_id, delta))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                numeric_precondition_bounds: sparse_bounds(numeric_precondition_bounds),
+                cost: task.operator_cost(OperatorIndex::from_usize(operator_id)),
+                reachable: true,
+            })
+        })
+        .collect()
+}
+
+/// What holds in every reachable state.
+struct ReachableBounds {
+    /// Per feature, the bounds it stays in.
+    features: Vec<FeatureBounds>,
+    /// Per variable and value, whether the fact can hold; known with the AIBR
+    /// closure only.
+    facts: Option<Vec<Vec<bool>>>,
+}
+
+/// The bounds every reachable state keeps each feature in -- from the simple
+/// action bounds, from monotone features, and from the AIBR closure, as
+/// configured -- and, with the AIBR closure, the reachable facts.
+fn global_feature_bounds(
+    task: &Task,
+    helper: &NumericTaskHelper,
+    features: &[NumericFeature],
+    assignment_target_features: &[bool],
+    effects: &PrimitiveEffects,
+    bounds_provider: BoundsProvider,
+    simple_action_bounds: bool,
+) -> Result<ReachableBounds, String> {
+    let mut global_feature_bounds = vec![FeatureBounds::default(); features.len()];
+    if simple_action_bounds {
+        let mut primitive_bounds = vec![FeatureBounds::default(); task.numeric_variables().len()];
+        for (local_id, task_id) in task.regular_numeric_variable_ids().into_iter().enumerate() {
+            if effects.assignment_targets[task_id.index()] {
+                continue;
+            }
+            if let Some((lower, upper)) = helper.numeric_variable_bounds(local_id) {
+                primitive_bounds[task_id.index()] = FeatureBounds {
+                    lower: if lower > -9_999_999.0 {
+                        lower
+                    } else {
+                        f64::NEG_INFINITY
+                    },
+                    upper: if upper < 9_999_999.0 {
+                        upper
+                    } else {
+                        f64::INFINITY
+                    },
+                };
+            }
+        }
+        for (feature_id, feature) in features.iter().enumerate() {
+            if feature.affine
+                && feature.coefficients.len() == 1
+                && feature.constant == 0.0
+                && task.numeric_type(feature.source_numeric_var) == NumericType::Regular
+            {
+                global_feature_bounds[feature_id] =
+                    primitive_bounds[feature.source_numeric_var.index()];
+            }
+        }
+    }
+    if matches!(
+        bounds_provider,
+        BoundsProvider::Monotone | BoundsProvider::All
+    ) {
+        let initial = task.initial_numeric_values();
+        for (feature_id, feature) in features.iter().enumerate() {
+            if assignment_target_features[feature_id] {
+                continue;
+            }
+            let all_nonnegative = effects
+                .deltas
+                .iter()
+                .all(|deltas| dot_sparse(&feature.coefficients, deltas) >= 0.0);
+            let all_nonpositive = effects
+                .deltas
+                .iter()
+                .all(|deltas| dot_sparse(&feature.coefficients, deltas) <= 0.0);
+            let initial_value = if feature.affine {
+                NumericValue::affine(
+                    feature
+                        .coefficients
+                        .iter()
+                        .map(|&(var, coefficient)| (coefficient, initial[var.index()])),
+                    feature.constant,
+                )
+                .value()
+            } else {
+                initial[feature.source_numeric_var.index()].value()
+            };
+            if all_nonnegative {
+                global_feature_bounds[feature_id].lower = initial_value;
+            }
+            if all_nonpositive {
+                global_feature_bounds[feature_id].upper = initial_value;
+            }
+        }
+    }
+    let mut reachable_facts = None;
+    if matches!(bounds_provider, BoundsProvider::Aibr | BoundsProvider::All) {
+        let closure = compute_aibr_closure(task)?;
+        let mut contribution = vec![FeatureBounds::default(); features.len()];
+        map_primitive_bounds_to_features(features, &closure.numeric_bounds, &mut contribution);
+        intersect_bounds(&mut global_feature_bounds, &contribution);
+        reachable_facts = Some(closure.reachable_facts);
+    }
+    Ok(ReachableBounds {
+        features: global_feature_bounds,
+        facts: reachable_facts,
+    })
+}
+
+/// Marks the operators no reachable state can apply -- a propositional
+/// precondition outside `reachable_facts`, or a numeric precondition outside
+/// the global feature bounds -- and narrows the others' numeric precondition
+/// bounds to the global ones.
+fn restrict_operators_to_reachable(
+    operators: &mut [PotentialOperator],
+    global_feature_bounds: &[FeatureBounds],
+    reachable_facts: Option<&[Vec<bool>]>,
+) {
+    for operator in operators {
+        operator.reachable = operator
+            .preconditions
+            .iter()
+            .all(|fact| reachable_facts.is_none_or(|facts| facts[fact.var()][fact.value()]))
+            && operator
+                .numeric_precondition_bounds
+                .iter()
+                .all(|(feature_id, precondition)| {
+                    let global = global_feature_bounds[*feature_id];
+                    precondition.lower <= global.upper && precondition.upper >= global.lower
+                });
+        operator.numeric_precondition_bounds =
+            intersect_sparse_bounds(&operator.numeric_precondition_bounds, global_feature_bounds);
     }
 }
 

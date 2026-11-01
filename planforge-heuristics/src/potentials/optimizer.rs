@@ -147,13 +147,11 @@ impl NumericPotentialOptimizer {
             for value in 0..domain_size {
                 let value_id = ExplicitValueIndex::from_usize(value);
                 if goals[var_id].is_none()
-                    && self.task.reachable_facts.as_ref().is_some_and(|facts| {
-                        !facts
-                            .get(var_id)
-                            .and_then(|values| values.get(value))
-                            .copied()
-                            .unwrap_or(true)
-                    })
+                    && self
+                        .task
+                        .reachable_facts
+                        .as_ref()
+                        .is_some_and(|facts| !facts[var_id][value])
                 {
                     continue;
                 }
@@ -655,13 +653,10 @@ fn build_plain_system(
             .enumerate()
         {
             if goal_value == task.domain_sizes[var_id]
-                && task.reachable_facts.as_ref().is_some_and(|facts| {
-                    !facts
-                        .get(var_id)
-                        .and_then(|values| values.get(value))
-                        .copied()
-                        .unwrap_or(true)
-                })
+                && task
+                    .reachable_facts
+                    .as_ref()
+                    .is_some_and(|facts| !facts[var_id][value])
             {
                 continue;
             }
