@@ -42,7 +42,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let base_order = (0..abstractions.len()).collect::<Vec<_>>();
     let abstraction_h = abstractions
         .iter()
-        .map(|abstraction| abstraction.initial_h())
+        .map(|abstraction| abstraction.abstraction.initial_h())
         .collect::<Vec<_>>();
     let components = abstractions
         .iter()
@@ -54,8 +54,8 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     };
     let goal = |component_id: usize| {
         abstractions[component_id]
-            .metadata()
-            .collection_membership()
+            .membership
+            .goal
             .map(|member| member.goal_id)
             .unwrap()
     };
@@ -66,8 +66,8 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     assert_eq!(baseline.len(), 3);
     assert_eq!(goal(baseline[0]), goal(baseline[1]));
     assert_ne!(goal(baseline[0]), goal(baseline[2]));
-    let first = &abstractions[baseline[0]].metadata();
-    let complement = &abstractions[baseline[1]].metadata();
+    let first = &abstractions[baseline[0]].abstraction.metadata();
+    let complement = &abstractions[baseline[1]].abstraction.metadata();
     assert_ne!(first.split_kind, complement.split_kind);
     assert_eq!(first.split_selection_rank, complement.split_selection_rank);
 
@@ -101,19 +101,13 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     assert_eq!(other_complement[0], baseline[0]);
     assert_ne!(other_complement[1], baseline[1]);
 
-    let mut mixed = abstractions.clone();
-    mixed.push(cartesian_abstraction(&task));
-    let mixed_order = (0..mixed.len()).collect::<Vec<_>>();
-    let mixed_h = mixed
-        .iter()
-        .map(|abstraction| abstraction.initial_h())
-        .collect::<Vec<_>>();
-    let structural_id = mixed.len() - 1;
-    let mixed_components = mixed
-        .iter()
-        .cloned()
-        .map(AbstractionComponent::from)
-        .collect::<Vec<_>>();
+    let structural = cartesian_abstraction(&task);
+    let mut mixed_h = abstraction_h.clone();
+    mixed_h.push(structural.initial_h());
+    let mut mixed_components = components;
+    mixed_components.push(structural.into());
+    let mixed_order = (0..mixed_components.len()).collect::<Vec<_>>();
+    let structural_id = mixed_components.len() - 1;
     let prefixed = goal_cover_order(
         &mixed_order,
         &mixed_components,

@@ -7,7 +7,7 @@ use crate::abstractions::collections::config::SplitKinds;
 use crate::abstractions::collections::generator::AbstractionGenerator;
 use crate::abstractions::collections::member::MemberConstruction;
 use crate::abstractions::collections::strategy::CollectionStrategy;
-use crate::abstractions::common::abstraction::{AbstractionUse, CegarAbstraction};
+use crate::abstractions::common::abstraction::CegarAbstraction;
 use crate::abstractions::common::cegar::initial_splits::{InitialSplitVar, RefinementScope};
 use crate::abstractions::common::cegar::options::CegarOptions;
 use crate::abstractions::common::cegar::{
@@ -96,11 +96,8 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
             .unwrap();
 
         assert_eq!(abstractions.len(), 1, "{collection_strategy}");
-        assert!(
-            matches!(
-                abstractions[0].metadata().abstraction_use,
-                AbstractionUse::CollectionMember { iteration: 1, .. }
-            ),
+        assert_eq!(
+            abstractions[0].membership.iteration, 1,
             "{collection_strategy}"
         );
     }
@@ -125,7 +122,7 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
 
     assert!(start.elapsed() < Duration::from_secs(60));
     assert_eq!(abstractions.len(), 1);
-    assert!(abstractions[0].metadata().solved_by_self());
+    assert!(abstractions[0].abstraction.metadata().solved_by_self());
 }
 
 #[test]
@@ -146,7 +143,10 @@ fn standard_collection_stops_when_the_states_left_admit_no_split() {
         .unwrap();
 
     assert!(start.elapsed() < Duration::from_secs(60));
-    let states: Vec<usize> = abstractions.iter().map(|a| a.num_states()).collect();
+    let states: Vec<usize> = abstractions
+        .iter()
+        .map(|a| a.abstraction.num_states())
+        .collect();
     assert_eq!(states, [2]);
 }
 
@@ -517,8 +517,12 @@ fn domain_members(task: &Task, config: DomainAbstractionCollectionConfig) -> Vec
         .unwrap()
         .into_iter()
         .map(|abstraction| {
-            let initial_h = abstraction.initial_h();
-            let plan = abstraction.metadata().concrete_plan_operator_ids.clone();
+            let initial_h = abstraction.abstraction.initial_h();
+            let plan = abstraction
+                .abstraction
+                .metadata()
+                .concrete_plan_operator_ids
+                .clone();
             let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
@@ -563,8 +567,12 @@ fn cartesian_members_with(
         .unwrap()
         .into_iter()
         .map(|abstraction| {
-            let initial_h = abstraction.initial_h();
-            let plan = abstraction.metadata().concrete_plan_operator_ids.clone();
+            let initial_h = abstraction.abstraction.initial_h();
+            let plan = abstraction
+                .abstraction
+                .metadata()
+                .concrete_plan_operator_ids
+                .clone();
             let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
@@ -758,12 +766,12 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
     assert_eq!(domain.len(), 4);
     assert_eq!(cartesian.len(), 4);
     for (index, (domain, cartesian)) in domain.iter().zip(&cartesian).enumerate() {
-        assert_eq!(domain.metadata().collection_iteration(), Some(index + 1));
-        assert_eq!(domain.metadata().collection_membership(), None);
-        assert_eq!(cartesian.metadata().collection_membership(), None);
+        assert_eq!(domain.membership.iteration, index + 1);
+        assert_eq!(domain.membership.goal, None);
+        assert_eq!(cartesian.membership.goal, None);
         let expected_backward = index >= 2;
         assert_eq!(
-            domain.metadata().split_kind,
+            domain.abstraction.metadata().split_kind,
             if expected_backward {
                 SplitKind::Wanted
             } else {
@@ -771,26 +779,37 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             }
         );
         assert_eq!(
-            cartesian.metadata().split_kind,
+            cartesian.abstraction.metadata().split_kind,
             if expected_backward {
                 SplitKind::Wanted
             } else {
                 SplitKind::Concrete
             }
         );
-        assert_eq!(domain.metadata().split_selection_rank, Some(0));
-        assert_eq!(cartesian.metadata().split_selection_rank, Some(0));
+        assert_eq!(domain.abstraction.metadata().split_selection_rank, Some(0));
+        assert_eq!(
+            cartesian.abstraction.metadata().split_selection_rank,
+            Some(0)
+        );
         // Both abstract the full task: the plan reaches x >= 2 and y >= 3.
         for (backend, initial_h, plan) in [
             (
                 "domain",
-                domain.initial_h(),
-                domain.metadata().concrete_plan_operator_ids.as_ref(),
+                domain.abstraction.initial_h(),
+                domain
+                    .abstraction
+                    .metadata()
+                    .concrete_plan_operator_ids
+                    .as_ref(),
             ),
             (
                 "Cartesian",
-                cartesian.initial_h(),
-                cartesian.metadata().concrete_plan_operator_ids.as_ref(),
+                cartesian.abstraction.initial_h(),
+                cartesian
+                    .abstraction
+                    .metadata()
+                    .concrete_plan_operator_ids
+                    .as_ref(),
             ),
         ] {
             assert_eq!(initial_h, 5.0, "{backend} member {index}");
@@ -887,11 +906,11 @@ fn both_representations_build_one_per_goal_member_per_goal() {
     .unwrap();
     let domain_goals: Vec<_> = domain
         .iter()
-        .map(|member| member.metadata().collection_membership().unwrap().goal_id)
+        .map(|member| member.membership.goal.unwrap().goal_id)
         .collect();
     let cartesian_goals: Vec<_> = cartesian
         .iter()
-        .map(|member| member.metadata().collection_membership().unwrap().goal_id)
+        .map(|member| member.membership.goal.unwrap().goal_id)
         .collect();
     assert_eq!(domain_goals, [0, 1]);
     assert_eq!(cartesian_goals, [0, 1]);
@@ -918,9 +937,9 @@ fn both_representations_stop_a_standard_collection_at_a_member_that_settles_the_
     .generate(&task)
     .unwrap();
     assert_eq!(domain.len(), 1);
-    assert!(domain[0].metadata().solved_by_self());
+    assert!(domain[0].abstraction.metadata().solved_by_self());
     assert_eq!(cartesian.len(), 1);
-    assert!(cartesian[0].metadata().solved_by_self());
+    assert!(cartesian[0].abstraction.metadata().solved_by_self());
 }
 
 #[test]
@@ -937,13 +956,13 @@ fn standard_cartesian_restarts_are_distinct_full_task_abstractions() {
     assert!(members.len() > 1, "only {} restart", members.len());
     let keys: HashSet<_> = members
         .iter()
-        .map(CartesianAbstractionGenerator::key)
+        .map(|member| CartesianAbstractionGenerator::key(&member.abstraction))
         .collect();
     assert_eq!(keys.len(), members.len());
     assert!(
         members
             .iter()
-            .all(|member| member.metadata().collection_membership().is_none())
+            .all(|member| member.membership.goal.is_none())
     );
 }
 

@@ -15,6 +15,7 @@ use planforge_heuristics::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
 };
+use planforge_heuristics::abstractions::collections::member::Member;
 use planforge_heuristics::abstractions::collections::strategy::CollectionStrategy;
 use planforge_heuristics::abstractions::common::abstraction::AbstractionHeuristic;
 use planforge_heuristics::abstractions::common::cegar::options::CegarOptions;
@@ -100,7 +101,7 @@ fn optimal_plan_states(task: &Task) -> (StateRegistry, Vec<(ConcreteState, f64)>
     (registry, states)
 }
 
-fn domain_collection(task: &Task) -> Vec<DomainAbstraction> {
+fn domain_collection(task: &Task) -> Vec<Member<DomainAbstraction>> {
     DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 3_000,
         total_max_time: None.into(),
@@ -125,7 +126,7 @@ fn domain_collection(task: &Task) -> Vec<DomainAbstraction> {
     .expect("the goal-focused domain collection must build")
 }
 
-fn cartesian_collection(task: &Task) -> Vec<CartesianAbstraction> {
+fn cartesian_collection(task: &Task) -> Vec<Member<CartesianAbstraction>> {
     CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
         member: CartesianAbstractionConfig {
             cegar: CegarOptions {
@@ -194,22 +195,22 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
 
         let domain = domain_collection(&task);
         let cartesian = cartesian_collection(&task);
-        for (index, abstraction) in domain.iter().enumerate() {
+        for (index, member) in domain.iter().enumerate() {
             assert_admissible_along_plan(
                 &format!("{instance} domain member {index}"),
                 &task,
                 &registry,
                 &states,
-                &mut AbstractionHeuristic::new("abstraction", abstraction.clone()),
+                &mut AbstractionHeuristic::new("abstraction", member.abstraction.clone()),
             );
         }
-        for (index, abstraction) in cartesian.iter().enumerate() {
+        for (index, member) in cartesian.iter().enumerate() {
             assert_admissible_along_plan(
                 &format!("{instance} Cartesian member {index}"),
                 &task,
                 &registry,
                 &states,
-                &mut AbstractionHeuristic::new("abstraction", abstraction.clone()),
+                &mut AbstractionHeuristic::new("abstraction", member.abstraction.clone()),
             );
         }
         for partitioning in [
@@ -309,8 +310,8 @@ admissibility_tests! {
 /// The collection heuristics' components: the domain abstractions, then the
 /// Cartesian ones.
 fn components(
-    domain: Vec<DomainAbstraction>,
-    cartesian: Vec<CartesianAbstraction>,
+    domain: Vec<Member<DomainAbstraction>>,
+    cartesian: Vec<Member<CartesianAbstraction>>,
 ) -> Vec<AbstractionComponent> {
     domain
         .into_iter()

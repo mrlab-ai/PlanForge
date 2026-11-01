@@ -95,7 +95,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             &shortest_paths,
             initial_abstract_state,
             &self.config.cegar,
-            AbstractionMetadata::standalone(
+            AbstractionMetadata::new(
                 outcome,
                 self.config.cegar.split_kind,
                 self.config.cegar.split_selection_rank,

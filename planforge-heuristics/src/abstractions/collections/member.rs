@@ -5,9 +5,7 @@ use std::time::Duration;
 use planforge_sas::numeric_task::OperatorIndex;
 
 use super::budget::CollectionStopReason;
-use crate::abstractions::common::abstraction::{
-    AbstractionUse, CegarAbstraction, CollectionMembership,
-};
+use crate::abstractions::common::abstraction::CegarAbstraction;
 use crate::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::abstractions::common::cegar::{CegarStopReason, SplitKind};
 
@@ -23,19 +21,43 @@ pub struct MemberConstruction {
     pub(crate) scope: RefinementScope,
 }
 
-/// A member of a collection: what the collection reads from it once built,
-/// and how it is marked as a member.
+/// A built member with its place in the collection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Member<A> {
+    pub abstraction: A,
+    pub membership: CollectionMembership,
+}
+
+/// Where a member sits in its collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollectionMembership {
+    /// The one-based number of the build that produced the member; a
+    /// standard collection counts the restarts it dropped as duplicates too.
+    pub iteration: usize,
+    /// Set exactly for a member of a goal-focused collection built on its
+    /// goal's single-goal task.
+    pub goal: Option<GoalMembership>,
+}
+
+/// Where a member of a goal-focused collection sits among the members built
+/// on its goal's task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GoalMembership {
+    pub goal_id: usize,
+    /// The variant whose progress state the member refined from; none for an
+    /// initial-state specialist.
+    pub variant_id: Option<usize>,
+    /// The member refined from an advanced (non-initial) progress state.
+    pub from_progress_state: bool,
+}
+
+/// What a collection reads from a built member.
 pub(crate) trait CollectionMember {
     fn report(&self) -> BuiltReport;
 
     /// Operator ids of the concrete plan that solved the member's task from
     /// its refinement root, if refinement found one.
     fn concrete_plan(&self) -> Option<&[OperatorIndex]>;
-
-    /// Marks the member as built by the collection's build `iteration`, and
-    /// with `membership` for a member of a goal-focused collection built on
-    /// its goal's task.
-    fn record(&mut self, iteration: usize, membership: Option<CollectionMembership>);
 
     /// Why the member settles the task for a standard collection, if it does:
     /// its abstract plan is a concrete plan, or the initial state is an
@@ -73,12 +95,5 @@ impl<A: CegarAbstraction> CollectionMember for A {
 
     fn concrete_plan(&self) -> Option<&[OperatorIndex]> {
         self.metadata().concrete_plan_operator_ids.as_deref()
-    }
-
-    fn record(&mut self, iteration: usize, membership: Option<CollectionMembership>) {
-        self.metadata_mut().abstraction_use = AbstractionUse::CollectionMember {
-            iteration,
-            membership,
-        };
     }
 }

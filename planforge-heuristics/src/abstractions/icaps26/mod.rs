@@ -65,7 +65,7 @@ use working::*;
 use super::cartesian::{
     CartesianAbstraction, CartesianRefinementHierarchy, CartesianTransitions, RefinementNode,
 };
-use super::common::abstraction::{AbstractionCore, AbstractionMetadata, AbstractionUse};
+use super::common::abstraction::{AbstractionCore, AbstractionMetadata};
 use super::common::cegar::SplitKind;
 
 use std::cell::RefCell;

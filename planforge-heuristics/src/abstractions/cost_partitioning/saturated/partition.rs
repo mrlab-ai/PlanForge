@@ -62,9 +62,11 @@ fn saturate_component(
     deadline: Deadline,
 ) -> anyhow::Result<(Vec<f64>, SaturatedCosts)> {
     match (method, component) {
-        (CostPartitioningMethod::Region, AbstractionComponent::Cegar(abstraction)) => abstraction
-            .saturate_regions(remaining, perimeter_state, deadline)
-            .map(|(distances, allocation)| (distances, SaturatedCosts::Region(allocation))),
+        (CostPartitioningMethod::Region, AbstractionComponent::Cegar { abstraction, .. }) => {
+            abstraction
+                .saturate_regions(remaining, perimeter_state, deadline)
+                .map(|(distances, allocation)| (distances, SaturatedCosts::Region(allocation)))
+        }
         (CostPartitioningMethod::Label, _)
         | (CostPartitioningMethod::Region, AbstractionComponent::PatternDatabase(_)) => {
             saturate_component_labels(
@@ -86,7 +88,7 @@ pub(super) fn saturate_component_labels(
     deadline: Deadline,
 ) -> anyhow::Result<(Vec<f64>, Vec<f64>)> {
     match component {
-        AbstractionComponent::Cegar(abstraction) => {
+        AbstractionComponent::Cegar { abstraction, .. } => {
             abstraction.saturate_labels(operator_costs, perimeter_state, deadline)
         }
         AbstractionComponent::PatternDatabase(pdb) => Ok(match perimeter_state {

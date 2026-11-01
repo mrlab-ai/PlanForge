@@ -91,7 +91,7 @@ impl SaturatedCostPartitioningHeuristic {
                 .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
             for (component_id, component) in components.iter_mut().enumerate() {
                 match component {
-                    AbstractionComponent::Cegar(abstraction) => abstraction
+                    AbstractionComponent::Cegar { abstraction, .. } => abstraction
                         .prepare_regional_saturation(&regions, Deadline::NONE)
                         .map_err(|error| {
                             EvaluationError::ComputationFailed(format!(

@@ -10,7 +10,7 @@ use tracing::info;
 
 use super::config::{CollectionConfig, MemberConfig};
 use super::goal_focused::{GoalFocusedBackend, build_goal_focused_collection};
-use super::member::MemberConstruction;
+use super::member::{Member, MemberConstruction};
 use super::standard::build_standard_collection;
 use super::strategy::CollectionStrategy;
 use crate::abstractions::common::abstraction::CegarAbstraction;
@@ -76,7 +76,7 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
     /// task, and every member still partitions the task's full state space,
     /// so the members remain admissible components for canonical and
     /// cost-partitioned collection heuristics.
-    pub fn generate(&self, task: &Task) -> Result<Vec<G::Abstraction>> {
+    pub fn generate(&self, task: &Task) -> Result<Vec<Member<G::Abstraction>>> {
         let members = match self.config.collection_strategy {
             CollectionStrategy::Standard => build_standard_collection::<G>(
                 task,
@@ -88,14 +88,17 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
             }
         };
         if self.config.member.cegar().debug {
-            for member in &members {
-                let metadata = member.metadata();
+            for Member {
+                abstraction,
+                membership,
+            } in &members
+            {
+                let metadata = abstraction.metadata();
                 info!(
-                    "{} collection member: {:?}, states={}, h(init)={}, stop={:?}, split_kind={}",
+                    "{} collection member: {membership:?}, states={}, h(init)={}, stop={:?}, split_kind={}",
                     G::KIND,
-                    metadata.abstraction_use,
-                    member.num_states(),
-                    member.initial_h(),
+                    abstraction.num_states(),
+                    abstraction.initial_h(),
                     metadata.stop_reason,
                     metadata.split_kind,
                 );

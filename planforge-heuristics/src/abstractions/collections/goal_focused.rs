@@ -41,9 +41,10 @@ use tracing::{debug, info};
 pub(crate) use self::schedule::GoalFocusedSchedule;
 use self::schedule::{CollectionState, NextMember, ScheduledMember};
 use super::budget::{CollectionBudget, CollectionStopReason};
-use super::member::{CollectionMember, MemberConstruction};
+use super::member::{
+    CollectionMember, CollectionMembership, GoalMembership, Member, MemberConstruction,
+};
 use super::strategy::CollectionStrategy;
-use crate::abstractions::common::abstraction::CollectionMembership;
 
 /// A goal-focused collection stops once fewer states than this are left: a
 /// member with fewer is the trivial abstraction, which tells search nothing.
@@ -79,7 +80,7 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     task: &Task,
     schedule: &GoalFocusedSchedule,
     backend: &B,
-) -> Result<Vec<B::Member>> {
+) -> Result<Vec<Member<B::Member>>> {
     assert!(
         schedule.variants_per_goal > 0,
         "goal-focused collections need at least one variant per goal"
@@ -137,9 +138,14 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
             &member,
             members.len() + 1,
         )?;
-        let report = built.report();
+        let report = built.abstraction.report();
         budget.charge(report.num_states);
-        state.record_built_member::<B>(&member, root, report.initial_h, built.concrete_plan())?;
+        state.record_built_member::<B>(
+            &member,
+            root,
+            report.initial_h,
+            built.abstraction.concrete_plan(),
+        )?;
 
         members.push(built);
         if !planforge_search::resource_limits::poll_and_release_if_exceeded() {
@@ -171,12 +177,11 @@ fn build_goal_free_member<B: GoalFocusedBackend>(
     backend: &B,
     mut budget: CollectionBudget,
     start: Instant,
-) -> Result<Vec<B::Member>> {
-    let mut member = backend
+) -> Result<Vec<Member<B::Member>>> {
+    let member = backend
         .build(task, None, &schedule.goal_free_construction(&budget))
         .with_context(|| format!("failed to build the {} collection abstraction", B::NAME))?;
     budget.charge(member.report().num_states);
-    member.record(1, None);
     info!(
         "{} collection: abstractions=1, states={}, elapsed={:.3}s, stop_reason={}",
         B::NAME,
@@ -184,7 +189,13 @@ fn build_goal_free_member<B: GoalFocusedBackend>(
         start.elapsed().as_secs_f64(),
         CollectionStopReason::RequestedMembersBuilt
     );
-    Ok(vec![member])
+    Ok(vec![Member {
+        abstraction: member,
+        membership: CollectionMembership {
+            iteration: 1,
+            goal: None,
+        },
+    }])
 }
 
 /// Where a member's refinement started.
@@ -203,13 +214,13 @@ enum MemberRoot {
 
 /// One finished member, and where its refinement started.
 struct BuiltMember<M> {
-    member: M,
+    member: Member<M>,
     root: MemberRoot,
 }
 
 /// Restrict the task to the member's goal unless members abstract the full
 /// task, refine from its variant's progress state within what is left of
-/// `budget`, and tag the result as build `iteration` so collection
+/// `budget`, and record its membership as build `iteration` so collection
 /// heuristics can tell members apart.
 fn build_member<B: GoalFocusedBackend>(
     task: &Task,
@@ -249,7 +260,7 @@ fn build_member<B: GoalFocusedBackend>(
         })?;
     // A dead progress state says nothing about the initial state, so the
     // member is rebuilt from there; a dead initial state is a result.
-    let (mut built, root) = if refinement_root.is_some() && built.report().root_is_dead_end {
+    let (built, root) = if refinement_root.is_some() && built.report().root_is_dead_end {
         info!(
             "{} collection: progress state is an abstract dead end for goal {}, kind {:?}; rebuilding this member from the task initial state",
             B::NAME,
@@ -272,14 +283,16 @@ fn build_member<B: GoalFocusedBackend>(
         (built, MemberRoot::Initial)
     };
 
-    let membership = (!full_task).then_some(CollectionMembership {
+    let goal = (!full_task).then_some(GoalMembership {
         goal_id: member.goal_id,
         variant_id: member.kind.variant_id(),
         from_progress_state: root == MemberRoot::AdvancedProgress,
     });
-    built.record(iteration, membership);
     Ok(BuiltMember {
-        member: built,
+        member: Member {
+            abstraction: built,
+            membership: CollectionMembership { iteration, goal },
+        },
         root,
     })
 }
