@@ -6,7 +6,7 @@ use planforge_search::config::parse_call;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_factory::{
     BuildContext, EmptyConfig, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
-    RequiredBackend, entry, heuristic_names, register_external_heuristics,
+    RequiredBackend, entry, heuristic_names, register_heuristics,
 };
 
 static BUILD_CALLED: AtomicBool = AtomicBool::new(false);
@@ -40,8 +40,9 @@ impl HeuristicFeature for ExternalCplexTest {
 
 #[test]
 fn external_heuristic_is_visible_to_every_registry_path() {
-    register_external_heuristics(vec![entry::<ExternalTest>(), entry::<ExternalCplexTest>()])
-        .unwrap();
+    let mut heuristics = planforge_search::evaluation::heuristics();
+    heuristics.extend([entry::<ExternalTest>(), entry::<ExternalCplexTest>()]);
+    register_heuristics(heuristics).unwrap();
 
     assert!(heuristic_names().any(|name| name == "external_test"));
 
@@ -70,6 +71,6 @@ fn external_heuristic_is_visible_to_every_registry_path() {
     assert!(error.contains("blind"), "got `{error}`");
     assert!(error.contains("external_test"), "got `{error}`");
 
-    let error = register_external_heuristics(Vec::new()).unwrap_err();
+    let error = register_heuristics(Vec::new()).unwrap_err();
     assert!(error.contains("already been registered"), "got `{error}`");
 }

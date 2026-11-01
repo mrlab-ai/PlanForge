@@ -4,14 +4,14 @@
 //! keeps one per source set of every transition, so costs an abstraction
 //! does not need on part of the state space stay available there.
 
+use crate::graph::{BackwardGraph, backward_goal_distances};
 use anyhow::{Result, ensure};
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::float_tolerance;
 
 use super::{RemainingCosts, SATURATION_POLL_STRIDE, SCP_TABLE_CONSTRUCTION};
 use crate::evaluation::abstractions::common::transition_system::{
-    AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, BackwardGraph,
-    LabelSourceSet, backward_goal_distances,
+    AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, LabelSourceSet,
 };
 use crate::resource_limits::Deadline;
 

@@ -10,6 +10,7 @@ fn astar_heuristic(input: &str) -> ConfigCall {
 
 #[test]
 fn parses_heuristic_spec_ff_call() {
+    crate::evaluation::register_heuristics_for_tests();
     let h = parse_call("ff()").unwrap();
     assert_eq!(h.name, "ff");
     assert!(h.args.is_empty());
@@ -17,6 +18,7 @@ fn parses_heuristic_spec_ff_call() {
 
 #[test]
 fn parses_heuristic_spec_blind_bare_identifier() {
+    crate::evaluation::register_heuristics_for_tests();
     let h = parse_call("blind").unwrap();
     assert_eq!(h.name, "blind");
     assert!(h.args.is_empty());
@@ -24,6 +26,7 @@ fn parses_heuristic_spec_blind_bare_identifier() {
 
 #[test]
 fn parses_astar_blind_with_or_without_unit_parens() {
+    crate::evaluation::register_heuristics_for_tests();
     let h = astar_heuristic("astar(blind)");
     assert_eq!(h.name, "blind");
     assert!(h.args.is_empty());
@@ -35,6 +38,7 @@ fn parses_astar_blind_with_or_without_unit_parens() {
 
 #[test]
 fn parses_and_round_trips_astar_mpd() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed = parse_search_spec("astar(blind(), mpd=true)").unwrap();
     assert!(matches!(&parsed, SearchConfig::AStar { mpd: true, .. }));
     assert_eq!(parsed.to_string(), "astar(blind(), mpd=true)");
@@ -46,6 +50,7 @@ fn parses_and_round_trips_astar_mpd() {
 
 #[test]
 fn rejects_invalid_or_duplicate_astar_mpd() {
+    crate::evaluation::register_heuristics_for_tests();
     let error = parse_search_spec("astar(blind(), mpd=yes)").unwrap_err();
     assert_eq!(error, "astar.mpd: expected boolean, got `yes`");
 
@@ -55,6 +60,7 @@ fn rejects_invalid_or_duplicate_astar_mpd() {
 
 #[test]
 fn parses_hierarchical_canonical_abstraction_sources() {
+    crate::evaluation::register_heuristics_for_tests();
     let h = astar_heuristic(
         "astar(canonical([domain_collection(max_states=100), cartesian(max_states=100), pdb(patterns=systematic(max_pdb_states=100))]))",
     );
@@ -74,6 +80,7 @@ fn parses_hierarchical_canonical_abstraction_sources() {
 
 #[test]
 fn parses_and_round_trips_collection_source_lists() {
+    crate::evaluation::register_heuristics_for_tests();
     let spec = parse_search_spec(
         "astar(scp([domain_collection(max_states=100), cartesian(), pdb(),], partitioning=region))",
     )
@@ -83,6 +90,7 @@ fn parses_and_round_trips_collection_source_lists() {
 
 #[test]
 fn rejects_nested_collection_source_lists() {
+    crate::evaluation::register_heuristics_for_tests();
     let error = parse_search_spec("astar(scp([[domain_collection()]]))").unwrap_err();
     assert!(
         error.contains("expected AbstractionSource, got a list"),
@@ -92,12 +100,14 @@ fn rejects_nested_collection_source_lists() {
 
 #[test]
 fn rejects_scp_without_abstraction_sources() {
+    crate::evaluation::register_heuristics_for_tests();
     assert!(parse_search_spec("astar(scp)").is_err());
     assert!(parse_search_spec("astar(scp())").is_err());
 }
 
 #[test]
 fn display_round_trips_max_domain_collection() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed =
         parse_search_spec("astar(max(domain_collection(max_states=42, max_time=infinity)))")
             .unwrap();
@@ -107,6 +117,7 @@ fn display_round_trips_max_domain_collection() {
 
 #[test]
 fn display_round_trips_canonical_domain_collection() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed =
         parse_search_spec("astar(canonical(domain_collection(max_states=42, max_time=infinity)))")
             .unwrap();
@@ -116,6 +127,7 @@ fn display_round_trips_canonical_domain_collection() {
 
 #[test]
 fn display_round_trips_hierarchical_abstraction_collection() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed = parse_search_spec(
         "astar(canonical([domain_collection(max_states=42), cartesian(max_states=42), pdb(patterns=systematic(max_pdb_states=42))]))",
     )
@@ -126,6 +138,7 @@ fn display_round_trips_hierarchical_abstraction_collection() {
 
 #[test]
 fn display_round_trips_scp_options() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed = parse_search_spec(
         "astar(scp([domain_collection(max_states=42, max_time=infinity)], max_time=12.5, partitioning=region, saturator=perimstar, orders=diverse_orders, diversify=true, max_orders=3))",
     )
@@ -136,6 +149,7 @@ fn display_round_trips_scp_options() {
 
 #[test]
 fn rejects_heuristic_combinators_in_abstraction_source_positions() {
+    crate::evaluation::register_heuristics_for_tests();
     let error =
         parse_search_spec("astar(scp(max(domain_collection()),saturator=perimstar))").unwrap_err();
     assert!(error.contains("unknown AbstractionSource `max`"), "{error}");
@@ -143,6 +157,7 @@ fn rejects_heuristic_combinators_in_abstraction_source_positions() {
 
 #[test]
 fn display_round_trips_positional_args() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed = parse_search_spec("astar(pdb(patterns=greedy(321, false, 7)))").unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
     assert_eq!(parsed, reparsed);
@@ -150,6 +165,7 @@ fn display_round_trips_positional_args() {
 
 #[test]
 fn display_round_trips_greedy_pdb() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed = parse_search_spec(
         "astar(pdb(patterns=greedy(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=cg_goal_random), exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
     )
@@ -160,6 +176,7 @@ fn display_round_trips_greedy_pdb() {
 
 #[test]
 fn display_round_trips_canonical_systematic_pdb() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed = parse_search_spec(
         "astar(canonical(pdb(patterns=systematic(max_pdb_states=42, max_pattern_size=3), exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut)))",
     )
@@ -170,6 +187,7 @@ fn display_round_trips_canonical_systematic_pdb() {
 
 #[test]
 fn display_round_trips_lmcutnumeric() {
+    crate::evaluation::register_heuristics_for_tests();
     let parsed = parse_search_spec(
         "astar(lmcutnumeric(ceiling_less_than_one=true, disable_ma=true, bound_iterations=4, precision=0.5, epsilon=0.25))",
     )
@@ -180,6 +198,7 @@ fn display_round_trips_lmcutnumeric() {
 
 #[test]
 fn parses_check_admissible_around_a_nested_heuristic() {
+    crate::evaluation::register_heuristics_for_tests();
     let spec = astar_heuristic("astar(check_admissible(domain()))");
     assert_eq!(spec.name, "check_admissible");
     assert_eq!(spec.args.len(), 1);
@@ -189,6 +208,7 @@ fn parses_check_admissible_around_a_nested_heuristic() {
 
 #[test]
 fn check_admissible_round_trips_through_display() {
+    crate::evaluation::register_heuristics_for_tests();
     let spec = parse_search_spec("astar(check_admissible(blind()))").unwrap();
     // `parse_value` normalizes a zero-argument call into a bare name, so the
     // round-trip is over the spec, not over the exact input text.
@@ -208,12 +228,14 @@ fn check_admissible_round_trips_through_display() {
 
 #[test]
 fn errors_are_human_readable() {
+    crate::evaluation::register_heuristics_for_tests();
     let err = parse_search_spec("astar(").unwrap_err();
     assert!(err.to_lowercase().contains("invalid"));
 }
 
 #[test]
 fn unknown_heuristic_name_is_rejected_from_the_registry() {
+    crate::evaluation::register_heuristics_for_tests();
     let error = parse_search_spec("astar(does_not_exist)").unwrap_err();
     assert!(error.contains("unknown heuristic `does_not_exist`"));
     assert!(error.contains("blind"));
@@ -222,12 +244,14 @@ fn unknown_heuristic_name_is_rejected_from_the_registry() {
 
 #[test]
 fn lists_are_typed_errors_where_heuristics_are_expected() {
+    crate::evaluation::register_heuristics_for_tests();
     let error = parse_search_spec("astar([blind()])").unwrap_err();
     assert_eq!(error, "astar.heuristic: expected heuristic, got a list");
 }
 
 #[test]
 fn display_round_trips_enum_valued_options() {
+    crate::evaluation::register_heuristics_for_tests();
     for spec in [
         "astar(canonical(domain_collection(flaw_scope=whole_plan)))",
         "astar(canonical(domain_collection(split_kind=wanted)))",
@@ -239,6 +263,7 @@ fn display_round_trips_enum_valued_options() {
 
 #[test]
 fn lazy_astar_round_trips_and_none_disables_it() {
+    crate::evaluation::register_heuristics_for_tests();
     let astar = parse_search_spec("astar(blind(), lazy=lmcutnumeric())").unwrap();
     assert_eq!(parse_search_spec(&astar.to_string()).unwrap(), astar);
     assert_eq!(
@@ -249,6 +274,7 @@ fn lazy_astar_round_trips_and_none_disables_it() {
 
 #[test]
 fn gbfs_has_no_mpd_or_lazy_options() {
+    crate::evaluation::register_heuristics_for_tests();
     assert!(parse_search_spec("gbfs(blind(), mpd=true)").is_err());
     assert!(parse_search_spec("gbfs(blind(), lazy=ff())").is_err());
     assert!(parse_search_spec("astar(blind(), lazy=none, lazy=ff())").is_err());
@@ -256,6 +282,7 @@ fn gbfs_has_no_mpd_or_lazy_options() {
 
 #[test]
 fn task_requirements_follow_typed_sources_and_wrappers() {
+    crate::evaluation::register_heuristics_for_tests();
     let spec = parse_search_spec("astar(check_admissible(scp([domain(),pdb()])))").unwrap();
     let requirements = spec.requirements();
     assert!(requirements.restricted);
@@ -270,11 +297,13 @@ fn task_requirements_follow_typed_sources_and_wrappers() {
 
 #[test]
 fn potential_seconds_beyond_duration_range_are_still_valid_configuration() {
+    crate::evaluation::register_heuristics_for_tests();
     parse_search_spec("astar(numeric_potential(max_ray_generation_time=1e300))").unwrap();
 }
 
 #[test]
 fn maximum_accepts_any_heuristic_and_unions_nested_requirements() {
+    crate::evaluation::register_heuristics_for_tests();
     for text in [
         "astar(max(ff()))",
         "astar(max([blind(),ff()]))",
@@ -303,6 +332,7 @@ fn maximum_accepts_any_heuristic_and_unions_nested_requirements() {
 #[test]
 #[cfg(target_os = "linux")]
 fn construction_clock_overflow_is_rejected_without_rejecting_capped_source_budgets() {
+    crate::evaluation::register_heuristics_for_tests();
     // This fits Duration but exceeds the Linux Instant range.
     assert!(std::time::Duration::try_from_secs_f64(1e19).is_ok());
     for combinator in ["canonical", "scp", "posthoc_optimization"] {
@@ -319,6 +349,7 @@ fn construction_clock_overflow_is_rejected_without_rejecting_capped_source_budge
 
 #[test]
 fn rejects_nan_floats_quoted_heuristics_and_zero_budgets() {
+    crate::evaluation::register_heuristics_for_tests();
     for spec in [
         "astar(lmcutnumeric(precision=nan))",
         "astar(\"blind\")",

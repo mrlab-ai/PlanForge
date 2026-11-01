@@ -20,7 +20,7 @@ use super::sources::{AbstractionPurpose, AbstractionSource, PdbSourceConfig, bui
 use crate::config::{ApplyOptions, ConfigError};
 use crate::evaluation::Heuristic;
 use crate::heuristic_factory::{
-    BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
+    BuildContext, HeuristicBuildError, HeuristicConfig, HeuristicFeature, TaskRequirements,
 };
 use crate::resource_limits::Deadline;
 
@@ -75,6 +75,21 @@ impl SourceConfig for Icaps26CartesianConfig {
     }
 }
 
+/// The abstraction source a configured heuristic is the maximum over, for a
+/// combination of abstraction heuristics to build from directly; `None` for
+/// any other heuristic.
+pub(crate) fn abstraction_source(heuristic: &HeuristicConfig) -> Option<AbstractionSource> {
+    fn source_of<C: SourceConfig>(heuristic: &HeuristicConfig) -> Option<AbstractionSource> {
+        heuristic.config::<C>().map(SourceConfig::source)
+    }
+    source_of::<DomainAbstractionConfig>(heuristic)
+        .or_else(|| source_of::<CartesianAbstractionConfig>(heuristic))
+        .or_else(|| source_of::<DomainAbstractionCollectionConfig>(heuristic))
+        .or_else(|| source_of::<CartesianAbstractionCollectionConfig>(heuristic))
+        .or_else(|| source_of::<PdbSourceConfig>(heuristic))
+        .or_else(|| source_of::<Icaps26CartesianConfig>(heuristic))
+}
+
 /// One abstraction as a heuristic: its goal distances, without the
 /// transition system a cost partitioning needs.
 pub struct SingleAbstractionFeature<G>(PhantomData<G>);
@@ -91,9 +106,6 @@ where
     }
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
         config.source().validate()
-    }
-    fn source(config: &Self::Config) -> Option<AbstractionSource> {
-        Some(config.source())
     }
     fn build<'a>(
         config: &Self::Config,
@@ -128,9 +140,6 @@ impl<C: SourceConfig> HeuristicFeature for SourceFeature<C> {
     }
     fn validate(config: &C) -> Result<(), ConfigError> {
         config.source().validate()
-    }
-    fn source(config: &C) -> Option<AbstractionSource> {
-        Some(config.source())
     }
     fn build<'a>(
         config: &C,

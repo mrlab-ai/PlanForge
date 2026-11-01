@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use crate::graph::{BackwardGraph, backward_goal_distances, no_limit};
 use planforge_sas::explicit_state::StateValues;
 use std::cell::RefCell;
 use std::cmp::Reverse;
@@ -20,9 +21,6 @@ use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumeric
 use crate::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use crate::successor_generator::RegistryExpander;
 
-use crate::evaluation::abstractions::common::transition_system::{
-    BackwardGraph, backward_goal_distances, no_limit,
-};
 use crate::task_transformations::projection::ProjectedTask;
 
 /// The heuristic a pattern database estimates abstract goal distances with

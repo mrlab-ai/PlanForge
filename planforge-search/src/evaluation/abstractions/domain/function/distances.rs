@@ -1,3 +1,4 @@
+use crate::graph::{BackwardGraph, backward_goal_distances};
 use anyhow::Result;
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::numeric_task::Task;
@@ -5,7 +6,7 @@ use planforge_sas::numeric_task::Task;
 use super::state_encoding::MatchTree;
 use super::{DISTANCE_TABLE, DomainAbstractionFunction, TRANSITION_SYSTEM};
 use crate::evaluation::abstractions::common::transition_system::{
-    AbstractTransition, AbstractTransitionSystem, BackwardGraph, backward_goal_distances,
+    AbstractTransition, AbstractTransitionSystem,
 };
 use crate::evaluation::abstractions::cost_partitioning::costs::{SaturationGraph, cheapest_label};
 use crate::evaluation::abstractions::domain::abstract_operators::{

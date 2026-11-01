@@ -1,10 +1,11 @@
 use super::{BuildContext, EmptyConfig, HeuristicBuildError, HeuristicFeature, entry};
-use super::{heuristic_names, register_external_heuristics};
+use super::{heuristic_names, register_heuristics};
 use crate::evaluation::Heuristic;
 use crate::evaluation::heuristic::{BlindFeature, BlindHeuristic};
 
 #[test]
 fn heuristic_registry_names_are_unique_and_complete() {
+    crate::evaluation::register_heuristics_for_tests();
     let names = heuristic_names().collect::<Vec<_>>();
     let unique = names
         .iter()
@@ -34,14 +35,15 @@ fn heuristic_registry_names_are_unique_and_complete() {
 
 #[test]
 fn external_registration_rejects_builtin_name_collision() {
-    let error = register_external_heuristics(vec![entry::<BlindFeature>()]).unwrap_err();
+    crate::evaluation::register_heuristics_for_tests();
+    let error = register_heuristics(vec![entry::<BlindFeature>()]).unwrap_err();
     assert!(error.contains("collides with a built-in"), "got `{error}`");
 }
 
 #[test]
 fn external_registration_rejects_duplicate_external_names() {
-    let error =
-        register_external_heuristics(vec![entry::<Duplicate>(), entry::<Duplicate>()]).unwrap_err();
+    crate::evaluation::register_heuristics_for_tests();
+    let error = register_heuristics(vec![entry::<Duplicate>(), entry::<Duplicate>()]).unwrap_err();
     assert!(error.contains("registered more than once"), "got `{error}`");
 }
 

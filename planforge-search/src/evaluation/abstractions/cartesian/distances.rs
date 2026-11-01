@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use crate::graph::{BackwardGraph, backward_goal_distances, no_limit};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -11,9 +12,6 @@ use planforge_sas::utils::float_tolerance;
 use super::semantics::CartesianSemantics;
 use super::working::WorkingAbstraction;
 use crate::evaluation::abstractions::common::cegar::view::TransitionKey;
-use crate::evaluation::abstractions::common::transition_system::{
-    BackwardGraph, backward_goal_distances, no_limit,
-};
 
 #[derive(Debug)]
 pub(super) struct ShortestPaths {

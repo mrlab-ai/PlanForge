@@ -10,7 +10,7 @@
 //! - implement [`evaluation::Heuristic`] for a new state evaluator;
 //! - implement [`search::best_first::NodeOrdering`] for a new best-first
 //!   node ordering;
-//! - call [`heuristic_factory::register_external_heuristics`] to make external
+//! - call [`heuristic_factory::register_heuristics`] to make external
 //!   heuristic factories visible to the standard configuration grammar.
 //!
 //! The repository tutorials contain complete examples for all three paths. A
@@ -29,6 +29,7 @@ extern crate self as planforge_search;
 
 pub mod config;
 pub mod evaluation;
+pub mod graph;
 pub mod heuristic_factory;
 pub mod resource_limits;
 pub mod search;

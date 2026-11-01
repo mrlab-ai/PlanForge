@@ -1,5 +1,5 @@
 use crate::config::ConfigError;
-use crate::evaluation::abstractions::features::max_over_sources;
+use crate::evaluation::abstractions::features::{abstraction_source, max_over_sources};
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::maximum::MaximumHeuristic;
@@ -80,7 +80,7 @@ impl HeuristicFeature for MaxFeature {
         let mut sources = Vec::new();
         let mut others = Vec::new();
         for child in &config.heuristics {
-            match child.as_abstraction_source() {
+            match abstraction_source(child) {
                 Some(source) => sources.push(source),
                 None => others.push(child),
             }

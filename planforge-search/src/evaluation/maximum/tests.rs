@@ -55,6 +55,7 @@ fn child(estimate: Result<f64, EvaluationError>) -> Box<Child> {
 
 #[test]
 fn maximum_combines_estimates_preferences_and_independent_revisions() {
+    crate::evaluation::register_heuristics_for_tests();
     let first = Rc::new(Cell::new(100));
     let second = Rc::new(Cell::new(1));
     let mut maximum = MaximumHeuristic::new(
@@ -104,6 +105,7 @@ fn maximum_combines_estimates_preferences_and_independent_revisions() {
 
 #[test]
 fn maximum_propagates_child_errors_and_rejects_nan() {
+    crate::evaluation::register_heuristics_for_tests();
     let task = one_step_task();
     let mut registry = StateRegistry::for_task(task.clone());
     let state = registry.get_initial_state();
@@ -121,6 +123,7 @@ fn maximum_propagates_child_errors_and_rejects_nan() {
 
 #[test]
 fn maximum_of_a_dead_end_is_a_dead_end() {
+    crate::evaluation::register_heuristics_for_tests();
     let task = one_step_task();
     let mut registry = StateRegistry::for_task(task.clone());
     let state = registry.get_initial_state();
@@ -132,6 +135,7 @@ fn maximum_of_a_dead_end_is_a_dead_end() {
 
 #[test]
 fn configured_maximum_builds_arbitrary_and_mixed_children() {
+    crate::evaluation::register_heuristics_for_tests();
     let task = one_step_task();
     let context = BuildContext::new(&task);
     let mut registry = StateRegistry::for_task(task.clone());
