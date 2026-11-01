@@ -8,6 +8,8 @@ use planforge_sas::numeric_task::{
     OperatorIndex, TaskRef, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
+
+use super::operator_conditions::OperatorConditionTable;
 use planforge_sas::utils::linear_effects::LinearNumericEffect;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -248,15 +250,6 @@ impl OperatorRuntime {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct OperatorConditionEval {
-    simple_effect: Option<f64>,
-    has_sose: bool,
-    composite_expression: Option<LinearExpression>,
-    has_upper_bound: bool,
-    upper_bound: f64,
-}
-
 pub struct LandmarkCutLandmarks<'task> {
     task: TaskRef<'task>,
     config: LmCutNumericConfig,
@@ -280,7 +273,7 @@ pub struct LandmarkCutLandmarks<'task> {
     comparison_false_fact_condition_ids: BTreeMap<VariableIndex, Vec<usize>>,
     linear_effect_to_conditions_plus: Vec<Vec<Vec<usize>>>,
     linear_effect_to_conditions_minus: Vec<Vec<Vec<usize>>>,
-    operator_condition_eval: Vec<Vec<OperatorConditionEval>>,
+    operator_condition_eval: OperatorConditionTable,
     relaxed_operators: Vec<RelaxedOperator>,
     operator_runtime: Vec<OperatorRuntime>,
     proposition_runtime_epoch: u32,
@@ -310,8 +303,10 @@ pub struct LandmarkCutLandmarks<'task> {
     incremental_original_operator_marks: Vec<u32>,
     incremental_original_operator_epoch: u32,
     incremental_original_operator_ids_scratch: Vec<OperatorIndex>,
-    composite_expression_values: Vec<Vec<f64>>,
-    composite_expression_value_marks: Vec<Vec<u32>>,
+    /// The value of each condition-table entry's composite expression in the
+    /// evaluated state, valid where its mark is the current epoch.
+    composite_expression_values: Vec<f64>,
+    composite_expression_value_marks: Vec<u32>,
     composite_expression_value_epoch: u32,
     cut_scratch: Vec<OperatorIndex>,
     multiplier_scratch: Vec<(f64, f64)>,
@@ -380,7 +375,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             comparison_false_fact_condition_ids: BTreeMap::new(),
             linear_effect_to_conditions_plus: Vec::new(),
             linear_effect_to_conditions_minus: Vec::new(),
-            operator_condition_eval: Vec::new(),
+            operator_condition_eval: OperatorConditionTable::default(),
             relaxed_operators: Vec::new(),
             operator_runtime: Vec::new(),
             proposition_runtime_epoch: 1,
@@ -440,7 +435,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.comparison_false_fact_condition_ids.clear();
         self.linear_effect_to_conditions_plus.clear();
         self.linear_effect_to_conditions_minus.clear();
-        self.operator_condition_eval.clear();
+        self.operator_condition_eval = OperatorConditionTable::default();
         self.composite_expression_values.clear();
         self.composite_expression_value_marks.clear();
         self.relaxed_operators.clear();
@@ -489,16 +484,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .iter()
             .map(OperatorRuntime::new)
             .collect();
-        self.composite_expression_values = self
-            .operator_condition_eval
-            .iter()
-            .map(|row| vec![0.0; row.len()])
-            .collect();
-        self.composite_expression_value_marks = self
-            .operator_condition_eval
-            .iter()
-            .map(|row| vec![0; row.len()])
-            .collect();
+        self.composite_expression_values = vec![0.0; self.operator_condition_eval.len()];
+        self.composite_expression_value_marks = vec![0; self.operator_condition_eval.len()];
         self.original_operator_min_cut_costs
             .resize(self.original_to_relaxed_operators.len(), 0.0);
         self.original_operator_min_cut_cost_marks
@@ -551,9 +538,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn start_state_numeric_tracking(&mut self) {
         if self.composite_expression_value_epoch == u32::MAX {
-            for row in &mut self.composite_expression_value_marks {
-                row.fill(0);
-            }
+            self.composite_expression_value_marks.fill(0);
             self.composite_expression_value_epoch = 1;
         } else {
             self.composite_expression_value_epoch += 1;
@@ -686,21 +671,25 @@ impl<'task> LandmarkCutLandmarks<'task> {
         condition_id: usize,
         numeric_values: &[NumericValue],
     ) -> f64 {
-        let Some(expression) = self.operator_condition_eval[operator_id.index()][condition_id]
+        let Some(index) = self
+            .operator_condition_eval
+            .index(operator_id, condition_id)
+        else {
+            return 0.0;
+        };
+        let Some(expression) = self
+            .operator_condition_eval
+            .get(operator_id, condition_id)
             .composite_expression
             .as_ref()
         else {
             return 0.0;
         };
-        if self.composite_expression_value_marks[operator_id.index()][condition_id]
-            != self.composite_expression_value_epoch
-        {
-            self.composite_expression_value_marks[operator_id.index()][condition_id] =
-                self.composite_expression_value_epoch;
-            self.composite_expression_values[operator_id.index()][condition_id] =
-                expression.evaluate(numeric_values).value();
+        if self.composite_expression_value_marks[index] != self.composite_expression_value_epoch {
+            self.composite_expression_value_marks[index] = self.composite_expression_value_epoch;
+            self.composite_expression_values[index] = expression.evaluate(numeric_values).value();
         }
-        self.composite_expression_values[operator_id.index()][condition_id]
+        self.composite_expression_values[index]
     }
 
     fn update_original_operator_min_cut_cost(&mut self, original_id: OperatorIndex, cut_cost: f64) {
@@ -823,7 +812,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     return true;
                 };
 
-                !self.operator_condition_eval[original_op_id.index()][condition_id].has_sose
+                !self
+                    .operator_condition_eval
+                    .get(original_op_id, condition_id)
+                    .has_sose
             });
         }
     }
@@ -1546,7 +1538,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
         original_op_id_1: OperatorIndex,
         original_op_id_2: OperatorIndex,
     ) -> (f64, f64) {
-        let eval_row = &self.operator_condition_eval[original_op_id_2.index()][condition_id];
+        let eval_row = self
+            .operator_condition_eval
+            .get(original_op_id_2, condition_id);
         let c = eval_row.simple_effect.unwrap_or(0.0);
         let has_upper_bound = eval_row.has_upper_bound;
         let upper_bound = eval_row.upper_bound;
@@ -1625,7 +1619,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     ) -> (f64, f64) {
         let mut net = 0.0;
         if let Some(original_id) = original_op_id_2 {
-            let eval_row = &self.operator_condition_eval[original_id.index()][condition_id];
+            let eval_row = self.operator_condition_eval.get(original_id, condition_id);
             net += eval_row.simple_effect.unwrap_or(0.0);
             if eval_row.composite_expression.is_some() {
                 net += self.cached_composite_expression_value(
@@ -1638,8 +1632,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
         if self.config.use_constant_assignment {
             let original_operator_id = original_op_id_2
                 .expect("LM-cut relaxed operator must store its concrete operator id");
-            let has_supported_sose =
-                self.operator_condition_eval[original_operator_id.index()][condition_id].has_sose;
+            let has_supported_sose = self
+                .operator_condition_eval
+                .get(original_operator_id, condition_id)
+                .has_sose;
             net += self.calculate_constant_assignment_effect_infallible(
                 original_operator_id,
                 &self.conditions[condition_id].coefficients,
@@ -1997,8 +1993,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .collect();
 
             for condition_id in 0..self.conditions.len() {
-                let has_supported_sose =
-                    self.operator_condition_eval[original_op_id.index()][condition_id].has_sose;
+                let has_supported_sose = self
+                    .operator_condition_eval
+                    .get(original_op_id, condition_id)
+                    .has_sose;
                 let (has_simple_effect, simple_effect) = self.calculate_simple_effect_constant(
                     original_op_id,
                     &self.conditions[condition_id].coefficients,
@@ -2015,8 +2013,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     continue;
                 }
 
-                self.operator_condition_eval[original_op_id.index()][condition_id].simple_effect =
-                    Some(simple_effect);
+                self.operator_condition_eval
+                    .get_mut(original_op_id, condition_id)
+                    .simple_effect = Some(simple_effect);
                 let proposition_id = self.get_numeric_proposition_id(condition_id)?;
                 if seen.insert(proposition_id) {
                     additional_effect_ids.push(proposition_id);
@@ -2309,8 +2308,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn build_supported_sose_operators(&mut self) -> Result<(), String> {
         let operator_count = self.task.operators().len();
-        self.operator_condition_eval =
-            vec![vec![OperatorConditionEval::default(); self.conditions.len()]; operator_count];
+        self.operator_condition_eval = OperatorConditionTable::new(
+            self.config.condition_table,
+            operator_count,
+            self.conditions.len(),
+        );
         if !self.config.use_second_order_simple {
             return Ok(());
         }
@@ -2411,9 +2413,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     continue;
                 }
 
-                self.operator_condition_eval[op2_id.index()][condition_id].has_sose = true;
-                self.operator_condition_eval[op2_id.index()][condition_id].composite_expression =
-                    Some(composite_expression);
+                self.operator_condition_eval
+                    .get_mut(op2_id, condition_id)
+                    .has_sose = true;
+                self.operator_condition_eval
+                    .get_mut(op2_id, condition_id)
+                    .composite_expression = Some(composite_expression);
                 if self.use_bounds {
                     let projected_coefficients = self
                         .regular_numeric_variable_ids
@@ -2455,10 +2460,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     }
 
                     if has_bound {
-                        self.operator_condition_eval[op2_id.index()][condition_id]
+                        self.operator_condition_eval
+                            .get_mut(op2_id, condition_id)
                             .has_upper_bound = true;
-                        self.operator_condition_eval[op2_id.index()][condition_id].upper_bound =
-                            upper_bound;
+                        self.operator_condition_eval
+                            .get_mut(op2_id, condition_id)
+                            .upper_bound = upper_bound;
                     }
                 }
 
