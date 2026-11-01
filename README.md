@@ -171,7 +171,8 @@ Common options:
 
 ## Layout
 
-Workspace crates:
+[ARCHITECTURE.md](ARCHITECTURE.md) explains how the crates fit together and
+where each extension point lives. Workspace crates:
 
 - `planforge` — both binaries: the planner (`planforge`) and the translate-only
   staging tool (`planforge-translator`), plus the CLI, the reporting allocator,
