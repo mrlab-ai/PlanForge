@@ -21,7 +21,7 @@ planforge   (binaries, CLI, limits; registers the heuristics)
 
 ## The task (`planforge-sas`)
 
-A [`Task`](planforge-sas/src/numeric_task/task_api.rs) is plain, immutable
+A [`Task`](../planforge-sas/src/numeric_task/task_api.rs) is plain, immutable
 data: propositional and numeric variables, operators and their costs,
 propositional, comparison and arithmetic axioms, the numeric conditions, the
 translator's mutex groups, the initial state closed under the axioms, and the
@@ -39,7 +39,7 @@ returning a new `Task`, plus a mapping back where ids change:
 
 Both live in `planforge-search/src/task_transformations`.
 
-States are stored packed in the [`StateRegistry`](planforge-sas/src/state_registry.rs);
+States are stored packed in the [`StateRegistry`](../planforge-sas/src/state_registry.rs);
 a `ConcreteStateView` reads them, and `StateValues` lets lookups read single
 propositional values without decoding a whole state.
 
