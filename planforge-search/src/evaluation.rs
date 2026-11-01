@@ -1,18 +1,13 @@
-//! State evaluation and heuristic implementations.
+//! What every heuristic builds on: the [`Heuristic`] trait, the state it
+//! evaluates, and the shared helpers -- random walks, seeds and a per-state
+//! value cache. The heuristics themselves live in `planforge_heuristics`.
 
 use planforge_sas::numeric_task::Task;
-pub mod abstractions;
-pub mod check_admissible;
 pub mod evaluator;
-pub mod ff_heuristic;
 pub mod heuristic;
-pub(crate) mod maximal_cliques;
-pub mod maximum;
-pub mod numeric_landmarks;
-pub mod numeric_potentials;
-pub(crate) mod sampling;
+pub mod sampling;
 pub mod seed;
-pub(crate) mod state_value_cache;
+pub mod state_value_cache;
 pub use evaluator::{EvaluationError, EvaluationState};
 pub use heuristic::Heuristic;
 

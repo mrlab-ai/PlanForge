@@ -15,7 +15,7 @@ use crate::resource_limits::Deadline;
 use crate::successor_generator::RegistryExpander;
 
 /// Samples states as the ends of random walks from the initial state.
-pub(crate) struct RandomWalkSampler {
+pub struct RandomWalkSampler {
     task: Arc<Task>,
     registry: StateRegistry,
     expander: RegistryExpander,
@@ -24,7 +24,7 @@ pub(crate) struct RandomWalkSampler {
 }
 
 impl RandomWalkSampler {
-    pub(crate) fn new(task: Arc<Task>) -> Self {
+    pub fn new(task: Arc<Task>) -> Self {
         let mut registry = StateRegistry::for_task(task.clone());
         let initial_state = registry.get_initial_state();
         let num_operators = task.operators().len();
@@ -46,11 +46,11 @@ impl RandomWalkSampler {
     }
 
     /// The registry every sampled state lives in.
-    pub(crate) fn registry(&self) -> &StateRegistry {
+    pub fn registry(&self) -> &StateRegistry {
         &self.registry
     }
 
-    pub(crate) fn initial_state(&self) -> &ConcreteState {
+    pub fn initial_state(&self) -> &ConcreteState {
         &self.initial_state
     }
 
@@ -59,7 +59,7 @@ impl RandomWalkSampler {
     /// reaches a state `is_dead_end` holds restarts from the initial state; a
     /// walk without an applicable operator ends early. `None` when `deadline`
     /// passes.
-    pub(crate) fn sample(
+    pub fn sample(
         &mut self,
         initial_h: f64,
         rng: &mut SmallRng,

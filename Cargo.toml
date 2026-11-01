@@ -3,6 +3,8 @@ default-members = [
     "planforge-sas",
     "planforge-translate",
     "planforge-search",
+    "planforge-heuristics",
+    "planforge-heuristics",
     "planforge",
     "planforge-config-derive",
     "tests",

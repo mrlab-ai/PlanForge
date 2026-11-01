@@ -3,13 +3,13 @@
 
 use std::sync::Arc;
 
+use planforge_heuristics::landmarks::lm_cut_numeric_heuristic::{
+    LandmarkCutNumericHeuristic, LmCutNumericConfig,
+};
 use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
-    LandmarkCutNumericHeuristic, LmCutNumericConfig,
-};
 
 use crate::corpus::{self, translate_in_memory};
 

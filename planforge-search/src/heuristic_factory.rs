@@ -1,18 +1,14 @@
 //! The heuristic registry: every heuristic the configuration grammar names
 //! is a [`HeuristicFeature`], a typed configuration and how to build the
-//! heuristic from it. The built-in features are listed in one place,
-//! `BUILTIN`; a binary can add its own with
-//! [`register_external_heuristics`].
+//! heuristic from it. Only blind search is built in; a binary registers every
+//! other heuristic once, with [`register_heuristics`], before it parses a
+//! configuration.
 
 use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, configure};
 use crate::evaluation::Heuristic;
-use crate::evaluation::abstractions;
-use crate::evaluation::abstractions::cartesian::CartesianAbstractionCollectionConfig;
-use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
-use crate::evaluation::abstractions::icaps26::Icaps26CartesianConfig;
-use crate::evaluation::abstractions::pdb::validate_restricted_task;
-use crate::evaluation::abstractions::sources::{AbstractionSource, PdbSourceConfig};
+use crate::task_transformations::restriction::validate_restricted_task;
 use planforge_sas::numeric_task::Task;
+use std::any::Any;
 use std::fmt::{self, Debug};
 use std::sync::{Arc, OnceLock};
 #[cfg(test)]
@@ -59,7 +55,7 @@ impl TaskRequirements {
     /// A task that is not restricted is a usage error, since `--restrict-task`
     /// would restrict it; a goal no abstraction can express is a task the
     /// heuristic does not support.
-    pub(crate) fn validate(self, task: &Task) -> Result<(), HeuristicBuildError> {
+    pub fn validate(self, task: &Task) -> Result<(), HeuristicBuildError> {
         if self.restricted {
             validate_restricted_task(task).map_err(HeuristicBuildError::Failure)?;
         }
@@ -107,11 +103,6 @@ pub trait HeuristicFeature: 'static {
     fn nested(_: &Self::Config) -> Vec<&HeuristicConfig> {
         Vec::new()
     }
-    /// The abstraction source the heuristic is the maximum over, for a
-    /// combination of abstraction heuristics to build from directly.
-    fn source(_: &Self::Config) -> Option<AbstractionSource> {
-        None
-    }
     fn build<'a>(
         config: &Self::Config,
         context: &BuildContext<'a>,
@@ -122,7 +113,7 @@ trait ErasedHeuristicConfig: Debug + Send + Sync {
     fn spec(&self) -> &ConfigCall;
     fn requirements(&self) -> TaskRequirements;
     fn backend(&self) -> RequiredBackend;
-    fn source(&self) -> Option<AbstractionSource>;
+    fn config(&self) -> &dyn Any;
     fn build<'a>(
         &self,
         context: &BuildContext<'a>,
@@ -161,8 +152,8 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
             RequiredBackend::None
         }
     }
-    fn source(&self) -> Option<AbstractionSource> {
-        F::source(&self.config)
+    fn config(&self) -> &dyn Any {
+        &self.config
     }
     fn build<'a>(
         &self,
@@ -199,14 +190,15 @@ impl HeuristicConfig {
     pub fn required_backend(&self) -> RequiredBackend {
         self.0.backend()
     }
-    pub fn as_abstraction_source(&self) -> Option<AbstractionSource> {
-        self.0.source()
+    /// The typed configuration, if the heuristic's configuration is a `T`.
+    pub fn config<T: 'static>(&self) -> Option<&T> {
+        self.0.config().downcast_ref()
     }
     pub fn build<'a>(
         &self,
         context: &BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        let _ = external_heuristics();
+        let _ = registered_heuristics();
         check_backend(self.required_backend())
             .map_err(|error| HeuristicBuildError::Failure(error.to_string()))?;
         self.requirements().validate(context.task)?;
@@ -272,69 +264,60 @@ fn parse_feature<F: HeuristicFeature>(spec: &ConfigCall) -> Result<HeuristicConf
     })))
 }
 
-/// The built-in heuristics.
-static BUILTIN: &[HeuristicEntry] = &[
-    entry::<crate::evaluation::heuristic::BlindFeature>(),
-    entry::<crate::evaluation::check_admissible::CheckAdmissibleFeature>(),
-    entry::<crate::evaluation::ff_heuristic::FfFeature>(),
-    entry::<crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericFeature>(),
-    entry::<crate::evaluation::numeric_potentials::NumericPotentialFeature>(),
-    entry::<abstractions::features::DomainFeature>(),
-    entry::<abstractions::features::CartesianFeature>(),
-    entry::<abstractions::features::SourceFeature<DomainAbstractionCollectionConfig>>(),
-    entry::<abstractions::features::SourceFeature<CartesianAbstractionCollectionConfig>>(),
-    entry::<abstractions::features::SourceFeature<PdbSourceConfig>>(),
-    entry::<abstractions::features::SourceFeature<Icaps26CartesianConfig>>(),
-    entry::<abstractions::cost_partitioning::max::MaxFeature>(),
-    entry::<abstractions::cost_partitioning::canonical::CanonicalFeature>(),
-    entry::<abstractions::cost_partitioning::saturated::ScpFeature>(),
-    entry::<abstractions::cost_partitioning::posthoc_optimization::PostHocFeature>(),
-];
+/// The heuristics every build knows.
+static BUILTIN: &[HeuristicEntry] = &[entry::<crate::evaluation::heuristic::BlindFeature>()];
 
-static EXTERNAL: OnceLock<Vec<HeuristicEntry>> = OnceLock::new();
-fn external_heuristics() -> &'static [HeuristicEntry] {
-    EXTERNAL.get_or_init(Vec::new)
+static REGISTERED: OnceLock<Vec<HeuristicEntry>> = OnceLock::new();
+fn registered_heuristics() -> &'static [HeuristicEntry] {
+    REGISTERED.get_or_init(Vec::new)
 }
 fn lookup(name: &str) -> Option<&'static HeuristicEntry> {
     BUILTIN
         .iter()
         .find(|entry| entry.matches(name))
         .or_else(|| {
-            external_heuristics()
+            registered_heuristics()
                 .iter()
                 .find(|entry| entry.matches(name))
         })
 }
-pub fn register_external_heuristics(entries: Vec<HeuristicEntry>) -> Result<(), String> {
+
+/// Registers the heuristics besides blind search, once per process and
+/// before any configuration is parsed.
+pub fn register_heuristics(entries: Vec<HeuristicEntry>) -> Result<(), String> {
     let mut names = std::collections::HashSet::new();
     for HeuristicEntry { name, .. } in &entries {
         if name.is_empty() {
-            return Err("external heuristic names must not be empty".into());
+            return Err("heuristic names must not be empty".into());
         }
         if BUILTIN.iter().any(|builtin| builtin.matches(name)) {
             return Err(format!(
-                "external heuristic `{name}` collides with a built-in heuristic"
+                "heuristic `{name}` collides with a built-in heuristic"
             ));
         }
         if !names.insert(name.to_ascii_lowercase()) {
-            return Err(format!(
-                "external heuristic `{name}` is registered more than once"
-            ));
+            return Err(format!("heuristic `{name}` is registered more than once"));
         }
     }
-    EXTERNAL
+    REGISTERED
         .set(entries)
-        .map_err(|_| "external heuristics have already been registered or used".into())
+        .map_err(|_| "heuristics have already been registered or used".into())
+}
+
+/// Registers `entries` unless heuristics were registered already: for test
+/// processes, which all register the same entries.
+pub fn ensure_heuristics_registered(entries: impl FnOnce() -> Vec<HeuristicEntry>) {
+    REGISTERED.get_or_init(entries);
 }
 pub fn heuristic_names() -> impl Iterator<Item = &'static str> {
     BUILTIN
         .iter()
-        .chain(external_heuristics())
+        .chain(registered_heuristics())
         .map(HeuristicEntry::name)
 }
 pub fn heuristic_help() -> String {
     format!(
-        "Built-in heuristics: {}. Externally registered heuristic names are also accepted. Custom Rust heuristics can be passed directly as Box<dyn Heuristic>.",
+        "Heuristics: {}. Custom Rust heuristics can be passed directly as Box<dyn Heuristic>.",
         heuristic_names().collect::<Vec<_>>().join(", ")
     )
 }
@@ -344,7 +327,11 @@ fn check_backend(backend: RequiredBackend) -> std::io::Result<()> {
     }
     #[cfg(feature = "cplex")]
     {
-        crate::evaluation::numeric_potentials::assert_cplex_ready().map_err(std::io::Error::other)
+        planforge_cplex::assert_unrestricted_license().map_err(|error| {
+            std::io::Error::other(format!(
+                "an unrestricted CPLEX installation is required: {error}"
+            ))
+        })
     }
     #[cfg(not(feature = "cplex"))]
     {
@@ -365,7 +352,7 @@ pub enum HeuristicBuildError {
 impl HeuristicBuildError {
     /// The error building an abstraction source ended in, keeping whether
     /// the task was unsupported.
-    pub(crate) fn from_source(error: anyhow::Error, context: String) -> Self {
+    pub fn from_source(error: anyhow::Error, context: String) -> Self {
         let message = format!("{context}: {error:#}");
         if crate::unsupported::is_unsupported_task(&error) {
             Self::Unsupported(message)

@@ -25,6 +25,7 @@ pub use time_limit::TimeLimit;
 
 /// Implements `Display` and [`FromOptionValue`] for a fieldless option enum
 /// from its `Variant => "name"` pairs; `option` names the option in errors.
+#[macro_export]
 macro_rules! option_enum {
     (
         $option:literal,
@@ -41,7 +42,7 @@ macro_rules! option_enum {
         impl $crate::config::FromOptionValue for $type {
             fn from_option_value(
                 value: &$crate::config::ConfigValue,
-            ) -> ::std::result::Result<Self, crate::config::ConfigError> {
+            ) -> ::std::result::Result<Self, $crate::config::ConfigError> {
                 match value.as_atom()?.to_ascii_lowercase().as_str() {
                     $($name => Ok(Self::$variant),)+
                     other => Err(format!(
@@ -54,7 +55,7 @@ macro_rules! option_enum {
         }
     };
 }
-pub(crate) use option_enum;
+pub use crate::option_enum;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigCall {

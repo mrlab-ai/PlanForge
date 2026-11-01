@@ -171,15 +171,24 @@ Common options:
 
 ## Layout
 
-Workspace crates:
+[ARCHITECTURE.md](ARCHITECTURE.md) explains how the crates fit together and
+where each extension point lives. Workspace crates:
 
 - `planforge` — both binaries: the planner (`planforge`) and the translate-only
   staging tool (`planforge-translator`), plus the CLI, the reporting allocator,
   the resource limits, the portfolio and the plan output.
-- `planforge-translate`, `planforge-search`, `planforge-sas` — translation, search and task libraries.
-  `planforge-search` also parses the `--search` language. Adding a heuristic is a
-  change to `planforge-search` alone: the heuristic's own module, and one entry
-  in the `heuristic_factory` registry.
+- `planforge-sas` — the task: variables, operators, axioms, states and the
+  state registry, and the SAS format.
+- `planforge-translate` — PDDL to task translation.
+- `planforge-search` — the search core: search algorithms, the `Heuristic`
+  trait and the heuristic registry, successor generation, the exact state
+  space, task transformations and the `--search` language. It knows no
+  heuristic but blind search.
+- `planforge-heuristics` — the heuristics, one module per technique:
+  abstractions (with cost partitioning), landmarks (numeric LM-cut),
+  relaxation (FF), potentials and combinations. It depends on the core only.
+  Adding a heuristic is a change to this crate alone: its own module, and one
+  entry in `heuristics()`, which `planforge` registers.
 - `planforge-config-derive` — `#[derive(ApplyOptions)]`, which cannot be merged: a
   `proc-macro` crate is its own compilation unit. Fields marked
   `#[option(positional)]` also take positional arguments, in field order; a

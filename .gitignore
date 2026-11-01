@@ -29,6 +29,7 @@ __pycache__/
 /*.md
 !/README.md
 !/PUBLISHING.md
+!/ARCHITECTURE.md
 !/CONTRIBUTING.md
 !/CHANGELOG.md
 /*.py

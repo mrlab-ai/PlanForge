@@ -9,7 +9,7 @@ use planforge_sas::numeric_task::{
 
 /// One variable `location` in {start, goal}, starting at `start` with the
 /// goal `goal`, and one unit-cost operator `finish` from `start` to `goal`.
-pub(crate) fn one_step_task() -> Arc<Task> {
+pub fn one_step_task() -> Arc<Task> {
     Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(

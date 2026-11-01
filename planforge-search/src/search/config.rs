@@ -135,6 +135,3 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchConfig, String> {
         }
     })
 }
-
-#[cfg(test)]
-mod tests;

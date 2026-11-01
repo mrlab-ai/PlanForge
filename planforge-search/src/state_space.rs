@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests;
 
+use crate::graph::{BackwardGraph, backward_goal_distances};
 use std::cell::Cell;
 use std::fmt;
 use std::sync::Arc;
@@ -13,9 +14,6 @@ use ordered_float::NotNan;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, Task};
 use planforge_sas::state_registry::StateRegistry;
 
-use crate::evaluation::abstractions::common::transition_system::{
-    BackwardGraph, backward_goal_distances,
-};
 use crate::resource_limits::Deadline;
 use crate::successor_generator::RegistryExpander;
 

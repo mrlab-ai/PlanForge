@@ -1,0 +1,37 @@
+[package]
+name = "planforge-heuristics"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "PlanForge's heuristics: abstractions and cost partitionings, numeric LM-cut, FF, potential heuristics."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["planning", "heuristics", "abstractions", "landmarks"]
+categories = ["algorithms", "science", "mathematics"]
+license = "LGPL-3.0"
+
+[dependencies]
+planforge-sas = { path = "../planforge-sas", version = "0.1.0" }
+planforge-search = { path = "../planforge-search", version = "0.1.0" }
+planforge-config-derive = { path = "../planforge-config-derive", version = "0.1.0" }
+tracing = "0.1"
+ordered-float = "5.1.0"
+anyhow = "1"
+serde_json = "1"
+itertools = "0.13"
+rand = { version = "0.8", features = ["small_rng"] }
+rustc-hash = "2"
+planforge-cplex = { path = "../planforge-cplex", version = "0.1.0", optional = true }
+
+[features]
+# Enables the native CPLEX backend of the LP-based heuristics.
+cplex = ["dep:planforge-cplex", "planforge-cplex/cplex", "planforge-search/cplex"]
+
+[package.metadata.docs.rs]
+# Never ask docs.rs to build the proprietary native backend.
+no-default-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dev-dependencies]
+planforge-search = { path = "../planforge-search", version = "0.1.0", features = ["test-tasks"] }
+planforge-translate = { path = "../planforge-translate", version = "0.1.0" }

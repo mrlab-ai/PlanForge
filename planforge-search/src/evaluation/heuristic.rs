@@ -90,7 +90,7 @@ impl Heuristic for BlindHeuristic {
 /// The cheapest operator cost: a lower bound on the remaining cost of every
 /// non-goal state, and zero for a task without operators. Tasks reject
 /// negative costs when they are constructed.
-pub(crate) fn minimum_action_cost(operator_costs: &[f64]) -> f64 {
+pub fn minimum_action_cost(operator_costs: &[f64]) -> f64 {
     operator_costs
         .iter()
         .copied()
