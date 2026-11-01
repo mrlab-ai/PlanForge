@@ -859,7 +859,134 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
         }
     }
 
+    add_derived_expression_demand(&mut rules, task);
     rules
+}
+
+/// Demand-driven ("magic sets") exploration of derived numeric expressions.
+///
+/// Explored bottom-up, a derived expression is instantiated for every tuple
+/// of arguments its operands are defined on, whether or not anything reads
+/// it. A sum over two parameterized fluents that one action compares then
+/// grounds the whole cross product: on pathwaysmetric and the farmland
+/// variants that was more than 99.9% of the model, and the preprocessor later
+/// discarded all but a few hundred of those derived variables as unnecessary.
+///
+/// Instead, every rule body that asks whether a derived expression is
+/// defined demands it for the arguments it asks about, and the expression's
+/// applicability rule waits for that demand. The expressions and actions the
+/// task can reach are exactly the same; only the unread instances are gone.
+fn add_derived_expression_demand(rules: &mut Vec<ExplorationRule>, task: &Task) {
+    let axioms = task.function_administrator.get_all_axioms();
+    let parameters_by_defined: HashMap<String, (&str, Vec<String>)> = axioms
+        .iter()
+        .map(|axiom| {
+            (
+                get_function_predicate(&axiom.name),
+                (
+                    axiom.name.as_str(),
+                    axiom.parameters.iter().map(|p| p.name.clone()).collect(),
+                ),
+            )
+        })
+        .collect();
+
+    // An applicability rule fires only for demanded tuples.
+    for rule in rules.iter_mut() {
+        let Condition::Atom(head) = &rule.effect else {
+            continue;
+        };
+        let Some(name) = head.predicate.strip_prefix("@function-axiom-") else {
+            continue;
+        };
+        let (_, parameters) = &parameters_by_defined[&get_function_predicate(name)];
+        rule.conditions.insert(
+            0,
+            Condition::Atom(Atom::new(get_demand_predicate(name), parameters.clone())),
+        );
+    }
+
+    let is_derived = |predicate: &str| parameters_by_defined.contains_key(predicate);
+    // `(body, derived expression, arguments)`: a body under which the
+    // expression is read for those arguments.
+    let mut requests: Vec<(Vec<Condition>, String, Vec<String>)> = Vec::new();
+
+    // Every body that asks whether a derived expression is defined demands
+    // it, under the rest of that body.
+    for rule in rules.iter() {
+        let (asked, rest): (Vec<&Condition>, Vec<&Condition>) = rule.conditions.iter().partition(
+            |condition| matches!(condition, Condition::Atom(atom) if is_derived(&atom.predicate)),
+        );
+        let rest: Vec<Condition> = rest.into_iter().cloned().collect();
+        for condition in asked {
+            let Condition::Atom(atom) = condition else {
+                unreachable!("partitioned on atoms");
+            };
+            requests.push((rest.clone(), atom.predicate.clone(), atom.args.clone()));
+        }
+    }
+
+    // Expressions read without a `defined!` guard: the right-hand sides of
+    // assignment effects, costs without one, and the metric.
+    let mut request_expression = |body: Vec<Condition>, expression: &FunctionalExpression| {
+        let body: Vec<Condition> = body
+            .into_iter()
+            .filter(|condition| {
+                !matches!(condition, Condition::Atom(atom) if is_derived(&atom.predicate))
+            })
+            .collect();
+        for pne in expression.primitive_numeric_expressions() {
+            let predicate = get_function_predicate(&pne.symbol);
+            if is_derived(&predicate) {
+                requests.push((body.clone(), predicate, pne.args));
+            }
+        }
+    };
+    for action in &task.actions {
+        let head = Condition::Atom(Atom::new(
+            get_action_predicate(&action.exploration_name()),
+            action.parameters.iter().map(|p| p.name.clone()).collect(),
+        ));
+        for (parameters, condition, assignment) in &action.assign_effects {
+            let mut body = vec![head.clone()];
+            body.extend(condition_to_rule_body(parameters, condition));
+            request_expression(body, &assignment.expression);
+        }
+        if let Some(cost) = &action.cost {
+            let guarded = matches!(&cost.expression,
+                FunctionalExpression::PrimitiveNumericExpression(pne) if !pne.args.is_empty());
+            if !guarded {
+                request_expression(vec![head.clone()], &cost.expression);
+            }
+        }
+    }
+    request_expression(
+        Vec::new(),
+        &FunctionalExpression::PrimitiveNumericExpression(task.metric.1.clone()),
+    );
+
+    let mut demand_rules = Vec::new();
+    for (body, predicate, args) in requests {
+        let (name, _) = parameters_by_defined[&predicate];
+        let bound: HashSet<&str> = body
+            .iter()
+            .flat_map(|condition| match condition {
+                Condition::Atom(atom) => atom.args.iter().map(String::as_str),
+                other => panic!("exploration rule body holds the non-atom {other}"),
+            })
+            .collect();
+        for argument in args.iter().filter(|arg| arg.starts_with('?')) {
+            assert!(
+                bound.contains(argument.as_str()),
+                "derived expression {name} is read for {argument}, which nothing else in its rule body binds"
+            );
+        }
+        demand_rules.push(ExplorationRule {
+            conditions: body,
+            effect: Condition::Atom(Atom::new(get_demand_predicate(name), args)),
+        });
+    }
+    rules.extend(demand_rules);
 }
 
 /// An exploration rule for the grounding process
@@ -885,6 +1012,11 @@ pub fn get_function_predicate(func_name: &str) -> String {
 
 pub fn get_fluent_function_predicate(func_name: &str) -> String {
     format!("@fluent-function-{}", func_name)
+}
+
+/// The argument tuples of a derived expression some rule body asks about.
+pub fn get_demand_predicate(axiom_name: &str) -> String {
+    format!("@demand-{}", axiom_name)
 }
 
 pub fn get_function_axiom_predicate(axiom_name: &str) -> String {
