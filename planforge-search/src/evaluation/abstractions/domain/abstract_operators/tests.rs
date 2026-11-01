@@ -101,7 +101,6 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
         OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -113,7 +112,7 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let partitions = NumericPartitions::trivial(&task);
     let operators = identity_operators(&task, partitions, true).unwrap();
@@ -177,7 +176,6 @@ fn numeric_partition_transitions_and_comparison_filtering() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -193,7 +191,7 @@ fn numeric_partition_transitions_and_comparison_filtering() {
         axioms: vec![],
         comparison_axioms,
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     // Partitions for x0: (-inf,10) and [10,inf)
@@ -257,7 +255,6 @@ fn repeated_numeric_operator_generation_is_deterministic() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -273,7 +270,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
         axioms: vec![],
         comparison_axioms,
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -320,7 +317,6 @@ fn affected_numeric_var_keeps_its_partition_in_an_identity_transition() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -332,7 +328,7 @@ fn affected_numeric_var_keeps_its_partition_in_an_identity_transition() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -361,7 +357,6 @@ fn affected_numeric_var_keeps_its_partition_in_an_identity_transition() {
 #[test]
 fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![global_constraint_variable()],
         numeric_variables: vec![
@@ -396,7 +391,7 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
                 (VariableIndex::new(1), NumericValue::new(1.0)),
             ],
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let singleton = |value| Interval::singleton(NumericValue::new(value));
     let partitions = NumericPartitions::with_partitions(vec![
@@ -459,7 +454,6 @@ fn multiply_out_unconditional_propositional_effects() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -471,7 +465,7 @@ fn multiply_out_unconditional_propositional_effects() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let partitions = NumericPartitions::with_partitions(vec![]);
@@ -517,7 +511,6 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables,
         numeric_variables,
@@ -529,7 +522,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -591,7 +584,6 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -609,7 +601,7 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
         axioms: vec![],
         comparison_axioms,
         assignment_axioms,
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -680,7 +672,6 @@ fn additive_view_filters_false_equality_precondition() {
         NumericVariable::new("target".into(), NumericType::Regular, None),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -716,7 +707,7 @@ fn additive_view_filters_false_equality_precondition() {
                 (VariableIndex::new(4), NumericValue::new(-1.0)),
             ],
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::unbounded()],
@@ -751,7 +742,6 @@ fn additive_view_filters_false_equality_precondition() {
 #[should_panic(expected = "derived variable has an arithmetic definition")]
 fn task_rejects_a_missing_arithmetic_definition() {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![global_constraint_variable()],
         numeric_variables: vec![
@@ -778,7 +768,7 @@ fn task_rejects_a_missing_arithmetic_definition() {
             VariableIndex::from_usize(2),
             VariableIndex::from_usize(1),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 }
 
@@ -816,7 +806,6 @@ fn duplicate_assignment_effects_are_rejected() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -832,7 +821,7 @@ fn duplicate_assignment_effects_are_rejected() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let error = semantics_error(&task);
@@ -894,7 +883,6 @@ fn conditional_propositional_effect_branches() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -910,7 +898,7 @@ fn conditional_propositional_effect_branches() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let err = semantics_error(&task);
@@ -962,7 +950,6 @@ fn conditional_assignment_effect_branches() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -974,7 +961,7 @@ fn conditional_assignment_effect_branches() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let err = semantics_error(&task);
@@ -1005,7 +992,6 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -1017,7 +1003,7 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let err = semantics_error(&task);

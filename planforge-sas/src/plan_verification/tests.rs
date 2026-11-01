@@ -86,7 +86,6 @@ fn chain_task_with(
         ),
     ];
     NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         // No metric variable, so every transition costs 1.0.
         metric: Metric::new(true, None),
         variables,
@@ -105,7 +104,7 @@ fn chain_task_with(
         )],
         comparison_axioms: Vec::new(),
         assignment_axioms: Vec::new(),
-        global_constraint,
+        global_constraint: Some(global_constraint),
     })
 }
 

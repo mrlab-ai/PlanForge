@@ -60,7 +60,6 @@ fn derived_parts(
         OperatorCost::new(1),
     );
     NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![
             global_constraint_variable(),
@@ -96,7 +95,7 @@ fn derived_parts(
             VariableIndex::from_usize(0),
             right,
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }
 }
 
@@ -136,7 +135,6 @@ fn cost_dependent_expression_is_not_an_additive_view() {
         NumericVariable::new("x-plus-cost".into(), NumericType::Derived, None),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, Some(VariableIndex::from_usize(1))),
         variables: vec![global_constraint_variable()],
         numeric_variables,
@@ -157,7 +155,7 @@ fn cost_dependent_expression_is_not_an_additive_view() {
             VariableIndex::from_usize(0),
             VariableIndex::from_usize(1),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     assert!(Coordinates::new(&task).views()[2].is_none());

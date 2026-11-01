@@ -47,7 +47,6 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         ),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -81,7 +80,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             ),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let mut abstractions =
@@ -283,7 +282,6 @@ fn goal_collection_builds_every_goal_with_source_sets() {
 #[test]
 fn progress_states_refine_from_reachable_concrete_checkpoints() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-two"),
@@ -336,7 +334,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             ),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let abstractions =
@@ -446,7 +444,6 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
 #[test]
 fn progress_states_complete_after_reaching_the_full_goal() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-four"),
@@ -499,7 +496,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
             ),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let abstractions =
@@ -568,7 +565,6 @@ fn progress_states_complete_after_reaching_the_full_goal() {
 #[test]
 fn progress_states_complete_after_a_dead_progress_state() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-one"),
@@ -619,7 +615,7 @@ fn progress_states_complete_after_a_dead_progress_state() {
             ),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let abstractions =
@@ -707,7 +703,6 @@ fn progress_states_complete_after_a_dead_progress_state() {
 #[test]
 fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-four"),
@@ -760,7 +755,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
             ),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let abstractions =
@@ -855,7 +850,6 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
 #[test]
 fn goal_collection_preserves_empty_goal_tasks() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 0,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -873,7 +867,7 @@ fn goal_collection_preserves_empty_goal_tasks() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let abstractions = CartesianAbstractionCollectionGenerator::new(
         CartesianAbstractionCollectionConfig::default(),

@@ -123,7 +123,6 @@ impl TaskBuilder {
             .map(|variable| ExplicitValueIndex::new(variable.domain_size() as u32 - 1))
             .collect();
         NumericRootTask::new(NumericRootTaskParts {
-            version: 1,
             metric: Metric::new(true, None),
             variables: self.variables,
             numeric_variables: self.numeric_variables,
@@ -135,7 +134,7 @@ impl TaskBuilder {
             axioms: self.axioms,
             comparison_axioms: self.comparison_axioms,
             assignment_axioms: vec![],
-            global_constraint: ExplicitFact::propositional(0, 0),
+            global_constraint: Some(ExplicitFact::propositional(0, 0)),
         })
     }
 }

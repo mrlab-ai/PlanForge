@@ -69,7 +69,6 @@ fn whole_plan_candidates_deduplicate_identical_refinements() {
 #[test]
 fn min_growth_uses_projected_transition_count() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -107,7 +106,7 @@ fn min_growth_uses_projected_transition_count() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 1),
+        global_constraint: Some(ExplicitFact::propositional(0, 1)),
     });
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let mut working = WorkingAbstraction::new(
@@ -150,7 +149,6 @@ fn min_growth_uses_projected_transition_count() {
 #[test]
 fn native_random_selector_is_seeded() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             ExplicitVariable::new(
@@ -177,7 +175,7 @@ fn native_random_selector_is_seeded() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let split = |var_id| Split::Propositional {
         state_id: 0,

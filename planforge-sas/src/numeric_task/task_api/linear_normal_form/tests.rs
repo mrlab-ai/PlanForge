@@ -41,7 +41,6 @@ fn task(
     }))
     .collect();
     NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -83,7 +82,7 @@ fn task(
                 )
             })
             .collect(),
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -305,7 +304,6 @@ fn rebuilding_a_normalized_task_preserves_numeric_ids_and_definitions() {
     let expected_assignments = original.assignment_axioms.clone();
     let expected_comparisons = original.comparison_axioms.clone();
     let rebuilt = NumericRootTask::new(NumericRootTaskParts {
-        version: original.version,
         metric: original.metric,
         variables: original.variables,
         numeric_variables: original.numeric_variables,

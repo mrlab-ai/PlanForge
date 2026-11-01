@@ -51,7 +51,6 @@ fn standard_collection_defaults() {
 #[test]
 fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -80,7 +79,7 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     for collection_strategy in [
         CollectionStrategy::Standard,
@@ -419,7 +418,6 @@ fn comparison_axiom(
 /// Goals `x >= 2` and `y >= 3` over two independent counters.
 fn two_counter_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-two"),
@@ -449,7 +447,7 @@ fn two_counter_task() -> NumericRootTask {
             comparison_axiom(1, 1, 4, ComparisonOperator::GreaterThanOrEqual),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -457,7 +455,6 @@ fn two_counter_task() -> NumericRootTask {
 /// `upper_second`, `x <= second`.
 fn one_counter_task(first: f64, second: f64, upper_second: bool) -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, None),
         variables: vec![comparison_variable("first"), comparison_variable("second")],
         numeric_variables: vec![
@@ -492,7 +489,7 @@ fn one_counter_task(first: f64, second: f64, upper_second: bool) -> NumericRootT
             ),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

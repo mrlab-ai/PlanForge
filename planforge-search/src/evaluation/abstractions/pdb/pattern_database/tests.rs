@@ -100,7 +100,6 @@ fn condition_var(name: &str, axiom_layer: usize) -> ExplicitVariable {
 
 fn comparison_guarded_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![condition_var("cmp", 0), simple_var("goal", None)],
         numeric_variables: vec![
@@ -131,13 +130,12 @@ fn comparison_guarded_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn truncated_chain_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             3,
@@ -180,13 +178,12 @@ fn truncated_chain_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn relevance_precision_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("p", None)],
         numeric_variables: vec![],
@@ -223,13 +220,12 @@ fn relevance_precision_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn cost_only_hidden_numeric_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables: vec![simple_var("p", None)],
         numeric_variables: vec![
@@ -276,13 +272,12 @@ fn cost_only_hidden_numeric_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables: vec![simple_var("p", None)],
         numeric_variables: vec![
@@ -314,13 +309,12 @@ fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn failed_lookup_chain_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             5,
@@ -393,7 +387,7 @@ fn failed_lookup_chain_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -401,7 +395,6 @@ fn failed_lookup_chain_task() -> NumericRootTask {
 /// 1 at cost 1; the goal is `x >= 5`.
 fn counter_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![condition_var("x>=5", 0), simple_var("p", None)],
         numeric_variables: vec![
@@ -447,7 +440,7 @@ fn counter_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

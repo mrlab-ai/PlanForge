@@ -22,7 +22,6 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
 
 fn sample_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             simple_var("p", None),
@@ -68,13 +67,12 @@ fn sample_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn operator_predecessor_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             simple_var("pre", None),
@@ -105,13 +103,12 @@ fn operator_predecessor_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn operator_comparison_predecessor_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             simple_var("goal", None),
@@ -163,12 +160,11 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
             VariableIndex::from_usize(1),
             VariableIndex::from_usize(2),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 fn numeric_goal_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("cmp", Some(0))],
         numeric_variables: vec![
@@ -188,7 +184,7 @@ fn numeric_goal_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -282,7 +278,6 @@ fn greedy_pattern_respects_estimated_numeric_domain_size_budget() {
 #[test]
 fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -320,7 +315,7 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
             VariableIndex::from_usize(1),
             VariableIndex::from_usize(2),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let restricted = build_restricted_task(&task).unwrap().unwrap();

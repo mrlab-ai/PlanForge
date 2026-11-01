@@ -40,7 +40,6 @@ fn simple_var(name: &str) -> ExplicitVariable {
 
 fn simple_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("p"), simple_var("q")],
         numeric_variables: vec![],
@@ -80,7 +79,7 @@ fn simple_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

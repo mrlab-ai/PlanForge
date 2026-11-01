@@ -254,7 +254,7 @@ impl NumericRootTask {
     /// task, however built.
     pub fn from_sas_parts(parts: SasTaskParts) -> Self {
         let SasTaskParts {
-            version,
+            version: _,
             metric,
             variables,
             numeric_variables,
@@ -270,7 +270,6 @@ impl NumericRootTask {
         } = parts;
 
         NumericRootTask::new(NumericRootTaskParts {
-            version,
             metric,
             variables: build_variables(variables, &state),
             numeric_variables,
@@ -285,7 +284,7 @@ impl NumericRootTask {
             axioms,
             comparison_axioms,
             assignment_axioms,
-            global_constraint,
+            global_constraint: Some(global_constraint),
         })
     }
 }

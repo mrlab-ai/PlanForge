@@ -56,7 +56,6 @@ pub(super) fn binary_variable(name: &str) -> ExplicitVariable {
 
 pub(super) fn independent_goals_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![binary_variable("p"), binary_variable("q")],
         numeric_variables: vec![],
@@ -96,7 +95,7 @@ pub(super) fn independent_goals_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

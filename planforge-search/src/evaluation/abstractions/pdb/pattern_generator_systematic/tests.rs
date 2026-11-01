@@ -21,7 +21,6 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
 
 fn propositional_predecessor_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("q", None), simple_var("p", None)],
         numeric_variables: vec![],
@@ -44,7 +43,7 @@ fn propositional_predecessor_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -53,7 +52,6 @@ fn propositional_predecessor_task() -> NumericRootTask {
 /// operand from it.
 fn numeric_goal_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("cmp", Some(0)), simple_var("reads-cmp", Some(1))],
         numeric_variables: vec![
@@ -78,13 +76,12 @@ fn numeric_goal_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn eff_eff_goal_join_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("g1", None), simple_var("g2", None)],
         numeric_variables: vec![],
@@ -118,13 +115,12 @@ fn eff_eff_goal_join_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
 fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("cmp", Some(1)), simple_var("goal", None)],
         numeric_variables: vec![
@@ -173,7 +169,7 @@ fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
             VariableIndex::from_usize(1),
             VariableIndex::from_usize(2),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

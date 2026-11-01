@@ -281,7 +281,10 @@ fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
         &ExplicitFact::propositional(0, 0),
         &ExplicitFact::propositional(2, 0)
     ));
-    assert_eq!(task.global_constraint(), &ExplicitFact::propositional(5, 0));
+    assert_eq!(
+        task.global_constraint(),
+        Some(&ExplicitFact::propositional(5, 0))
+    );
 
     // Operator preconditions and effects, including the effect condition and
     // the guard of an assignment effect. `raise_x` gains a precondition on

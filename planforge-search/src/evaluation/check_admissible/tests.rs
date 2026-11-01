@@ -33,7 +33,6 @@ fn chain_task() -> TaskRef<'static> {
     };
 
     Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 3,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -45,7 +44,7 @@ fn chain_task() -> TaskRef<'static> {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }))
 }
 

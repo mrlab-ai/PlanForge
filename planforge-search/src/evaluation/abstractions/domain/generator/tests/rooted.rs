@@ -31,7 +31,6 @@ fn doubling_cost_task(bound: f64, at_most: bool) -> NumericRootTask {
         (ComparisonOperator::GreaterThanOrEqual, 0.0 >= bound)
     };
     NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, Some(COST)),
         variables: vec![ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,
@@ -75,7 +74,7 @@ fn doubling_cost_task(bound: f64, at_most: bool) -> NumericRootTask {
             operator,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

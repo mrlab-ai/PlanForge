@@ -431,7 +431,6 @@ pub fn build_icaps26_restricted_task(
             .and_then(|mapped| *mapped)
     });
     let transformed_task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
@@ -443,7 +442,7 @@ pub fn build_icaps26_restricted_task(
         axioms: task.axioms().to_vec(),
         comparison_axioms,
         assignment_axioms: Vec::new(),
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: None,
     });
     validate_restricted_task(&transformed_task).map_err(|reason| {
         anyhow::anyhow!("ICAPS 2026 restricted task construction failed: {reason}")
@@ -556,7 +555,6 @@ fn build_task(
     });
 
     let transformed_task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
@@ -568,7 +566,7 @@ fn build_task(
         axioms: task.axioms().to_vec(),
         comparison_axioms,
         assignment_axioms: Vec::<AssignmentAxiom>::new(),
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: None,
     });
     validate_restricted_task(&transformed_task)
         .map_err(|reason| anyhow::anyhow!("restricted task construction failed: {reason}"))?;

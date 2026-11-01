@@ -44,7 +44,6 @@ fn icaps_numeric_splits_preserve_integer_lattices_without_dropping_continuous_va
 #[test]
 fn icaps_prevail_conditions_fix_the_post_value() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -68,7 +67,7 @@ fn icaps_prevail_conditions_fix_the_post_value() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let source = CartesianSet::with_all_props_constrained(
         vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
@@ -142,7 +141,6 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
         ),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -160,7 +158,7 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let semantics = CartesianSemantics::new(
         &task,
@@ -366,7 +364,6 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
 #[test]
 fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             4,
@@ -384,7 +381,7 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 3),
+        global_constraint: Some(ExplicitFact::propositional(0, 3)),
     });
     let mut config = Icaps26CartesianConfig {
         pick: Icaps26SplitSelection::MinUnwanted,
@@ -619,7 +616,6 @@ fn numeric_goal_task(
     assignment_axioms: Vec<AssignmentAxiom>,
 ) -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -631,6 +627,6 @@ fn numeric_goal_task(
         axioms: vec![],
         comparison_axioms,
         assignment_axioms,
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }

@@ -22,7 +22,6 @@ fn base_task(
     numeric_state: Vec<NumericValue>,
 ) -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 3,
         metric: Metric::new(true, None),
         variables: vec![simple_var("p", &["f", "t"], None)],
         numeric_variables,
@@ -34,7 +33,7 @@ fn base_task(
         axioms: vec![],
         comparison_axioms: Vec::<ComparisonAxiom>::new(),
         assignment_axioms,
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

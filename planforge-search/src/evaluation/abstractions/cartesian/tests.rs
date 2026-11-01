@@ -64,7 +64,6 @@ fn numeric_goal_task(
     assignment_axioms: Vec<AssignmentAxiom>,
 ) -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -76,7 +75,7 @@ fn numeric_goal_task(
         axioms: vec![],
         comparison_axioms,
         assignment_axioms,
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

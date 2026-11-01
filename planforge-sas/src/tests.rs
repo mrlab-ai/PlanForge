@@ -21,7 +21,6 @@ pub(crate) fn get_root_task() -> NumericRootTask {
 pub(crate) fn root_task_with_extra_preconditions(
     extra_preconditions: Vec<ExplicitFact>,
 ) -> NumericRootTask {
-    let version = 4;
     let metric = Metric::new(true, Some(VariableIndex::new(1)));
     let variables = vec![
         ExplicitVariable::new(
@@ -115,9 +114,8 @@ pub(crate) fn root_task_with_extra_preconditions(
     // assignment axiom: axioms define a numeric variable from *other*
     // numeric variables, and a self-referential definition has no fixpoint.
     let assignment_axioms = Vec::new();
-    let global_constraint = ExplicitFact::propositional(0, 0);
+    let global_constraint = Some(ExplicitFact::propositional(0, 0));
     NumericRootTask::new(NumericRootTaskParts {
-        version,
         metric,
         variables,
         numeric_variables,

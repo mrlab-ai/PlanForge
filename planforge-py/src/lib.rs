@@ -1067,7 +1067,7 @@ fn operation_name(operation: &AssignmentOperation) -> &'static str {
     }
 }
 
-fn numeric_type_name(numeric_type: &NumericType) -> &'static str {
+fn numeric_type_name(numeric_type: NumericType) -> &'static str {
     match numeric_type {
         NumericType::Constant => "constant",
         NumericType::Derived => "derived",
@@ -1289,7 +1289,7 @@ impl Task {
         self.task
             .numeric_variables()
             .iter()
-            .map(|variable| numeric_type_name(variable.get_type()).to_string())
+            .map(|variable| numeric_type_name(variable.numeric_type()).to_string())
             .collect()
     }
 

@@ -34,7 +34,6 @@ fn assignment_axiom_reports_division_by_zero_distinctly() {
 /// A task whose condition "left + right > zero" reads the derived sum.
 fn sum_condition_task_parts() -> NumericRootTaskParts {
     NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,
@@ -75,7 +74,7 @@ fn sum_condition_task_parts() -> NumericRootTaskParts {
             VariableIndex::new(0),
             VariableIndex::new(1),
         )],
-        global_constraint: ExplicitFact::condition(0, ConditionValue::True.as_usize()),
+        global_constraint: Some(ExplicitFact::condition(0, ConditionValue::True.as_usize())),
     }
 }
 

@@ -41,7 +41,6 @@ fn a_derived_goal_is_refused_by_name() {
         OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -58,7 +57,7 @@ fn a_derived_goal_is_refused_by_name() {
         )],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {

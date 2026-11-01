@@ -31,7 +31,6 @@ fn test_state_registry_initial_state() {
 /// constant, `cost` a cost variable and `d = x + c` derived.
 fn task_with_every_numeric_type() -> TaskRef<'static> {
     Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, Some(VariableIndex::new(2))),
         variables: vec![ExplicitVariable::new(
             2,
@@ -59,7 +58,7 @@ fn task_with_every_numeric_type() -> TaskRef<'static> {
             VariableIndex::new(0),
             VariableIndex::new(1),
         )],
-        global_constraint: ExplicitFact::propositional(0, 1),
+        global_constraint: Some(ExplicitFact::propositional(0, 1)),
     }))
 }
 
@@ -97,7 +96,6 @@ fn a_decoded_view_has_no_unevaluated_numeric_values() {
 #[test]
 fn initial_state_registration_does_not_mutate_shared_task() {
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -120,7 +118,7 @@ fn initial_state_registration_does_not_mutate_shared_task() {
         )],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let original_propositions = task.initial_propositional_values().to_vec();
     let original_numeric = task.initial_numeric_values().to_vec();
@@ -198,7 +196,6 @@ fn duplicate_state_keeps_better_metric_cost_information() {
     );
 
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, Some(VariableIndex::new(0))),
         variables,
         numeric_variables,
@@ -214,7 +211,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
 
     let mut state_registry = StateRegistry::for_task(task.clone());
@@ -275,7 +272,6 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         OperatorCost::new(1),
     );
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables,
         numeric_variables,
@@ -291,7 +287,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
 
     let mut state_registry = StateRegistry::for_task(task.clone());
@@ -314,7 +310,6 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
 #[test]
 fn numeric_states_pack_exact_value_ids_with_propositions() {
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -335,7 +330,7 @@ fn numeric_states_pack_exact_value_ids_with_propositions() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task);
     let initial = registry.get_initial_state();
@@ -350,7 +345,6 @@ fn numeric_states_pack_exact_value_ids_with_propositions() {
 #[test]
 fn numeric_states_support_more_than_u16_distinct_values() {
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(false, None),
         // The global constraint below names variable 0, so the task has to
         // have one.
@@ -370,7 +364,7 @@ fn numeric_states_support_more_than_u16_distinct_values() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task);
 
@@ -449,7 +443,6 @@ fn a_maximised_metric_charges_its_decrease() {
         OperatorCost::new(1),
     );
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, Some(VariableIndex::new(0))),
         variables: vec![ExplicitVariable::new(
             2,
@@ -470,7 +463,7 @@ fn a_maximised_metric_charges_its_decrease() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();

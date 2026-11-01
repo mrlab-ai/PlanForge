@@ -20,15 +20,13 @@ use std::fmt;
 use std::sync::Arc;
 
 use planforge_sas::axioms::{
-    AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, NumericExpression, PropositionalAxiom,
+    AssignmentAxiom, ComparisonAxiom, NumericExpression, PropositionalAxiom,
 };
-use planforge_sas::numeric_conditions::{NumericConditionError, NumericConditions};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorIndex,
-    TaskRef, VariableIndex,
+    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
+    NumericVariable, Operator, OperatorIndex, VariableIndex,
 };
-use planforge_sas::utils::state_packer::StatePacker;
 
 use crate::evaluation::validate_abstractable_goal;
 use crate::task_transformations::restriction::validate_restricted_task;
@@ -133,10 +131,6 @@ pub enum ProjectedTaskBuildError {
         numeric_var_id: VariableIndex,
         numeric_type: NumericType,
     },
-    InitialStateEvaluationFailed {
-        reason: String,
-    },
-    MalformedNumericConditions(NumericConditionError),
 }
 
 impl fmt::Display for ProjectedTaskBuildError {
@@ -161,46 +155,29 @@ impl fmt::Display for ProjectedTaskBuildError {
                 "pattern numeric variable {numeric_var_id} has unsupported type {:?}; PDB patterns over restricted tasks accept only regular numeric variables",
                 numeric_type
             ),
-            Self::InitialStateEvaluationFailed { reason } => write!(
-                formatter,
-                "failed to evaluate projected initial state: {reason}"
-            ),
-            Self::MalformedNumericConditions(error) => {
-                write!(
-                    formatter,
-                    "projected task has malformed numeric axioms: {error}"
-                )
-            }
         }
     }
 }
 
 impl std::error::Error for ProjectedTaskBuildError {}
 
-pub struct ProjectedTask<'task> {
-    base: &'task dyn AbstractNumericTask,
-    variables: Vec<ExplicitVariable>,
-    numeric_variables: Vec<NumericVariable>,
-    assignment_axioms: Vec<AssignmentAxiom>,
-    comparison_axioms: Vec<ComparisonAxiom>,
-    numeric_conditions: Arc<NumericConditions>,
-    axioms: Vec<PropositionalAxiom>,
-    metric: Metric,
-    operators: Vec<Operator>,
-    operator_costs: Vec<f64>,
+/// The projection of a task onto a pattern: a task of its own over the
+/// pattern's variables, and the ids that lead back to the base task.
+///
+/// The projected task keeps the base task's operator costs, so its goal
+/// distances are those of the abstraction the pattern induces.
+pub struct ProjectedTask {
+    task: Arc<NumericRootTask>,
     base_operator_ids: Vec<OperatorIndex>,
-    propositional_packer: Arc<StatePacker>,
-    goals: Vec<ExplicitFact>,
-    state: Vec<ExplicitValueIndex>,
-    numeric_state: Vec<NumericValue>,
     projected_var_to_original: Vec<VariableIndex>,
     projected_num_var_to_original: Vec<VariableIndex>,
-    fact_names: Vec<Vec<String>>,
+    base_num_variables: usize,
+    base_num_numeric_variables: usize,
 }
 
-impl<'task> ProjectedTask<'task> {
+impl ProjectedTask {
     pub fn new(
-        base: &'task dyn AbstractNumericTask,
+        base: &dyn AbstractNumericTask,
         pattern: &Pattern,
     ) -> Result<Self, ProjectedTaskBuildError> {
         validate_restricted_task(base)
@@ -428,38 +405,35 @@ impl<'task> ProjectedTask<'task> {
                 .map(VariableIndex::from_usize)
         };
 
-        let numeric_conditions = Arc::new(
-            NumericConditions::build(
-                variables.len(),
-                &numeric_variables,
-                &comparison_axioms,
-                &assignment_axioms,
-            )
-            .map_err(ProjectedTaskBuildError::MalformedNumericConditions)?,
-        );
-
-        let propositional_packer =
-            Arc::new(projected_propositional_packer_from_variables(&variables));
-        Ok(Self {
-            base,
+        let mutexes = projected_mutex_groups(base, &original_var_to_projected);
+        let task = NumericRootTask::new(NumericRootTaskParts {
+            metric: Metric::new(base.metric().is_min(), metric_var_id),
             variables,
             numeric_variables,
-            assignment_axioms,
-            comparison_axioms,
-            numeric_conditions,
-            axioms,
-            metric: Metric::new(base.metric().is_min(), metric_var_id),
-            operators,
-            operator_costs,
-            base_operator_ids,
-            propositional_packer,
             goals,
+            mutexes,
             state: projected_prop_values,
             numeric_state: projected_numeric_values,
+            operators,
+            axioms,
+            comparison_axioms,
+            assignment_axioms,
+            global_constraint: None,
+        })
+        .with_operator_costs(operator_costs);
+        Ok(Self {
+            task: Arc::new(task),
+            base_operator_ids,
             projected_var_to_original,
             projected_num_var_to_original,
-            fact_names,
+            base_num_variables: num_vars,
+            base_num_numeric_variables: num_numeric_vars,
         })
+    }
+
+    /// The projected task.
+    pub fn task(&self) -> &Arc<NumericRootTask> {
+        &self.task
     }
 
     pub fn project_state_values(
@@ -490,12 +464,12 @@ impl<'task> ProjectedTask<'task> {
         let source_numeric_values = state.numeric();
         assert_eq!(
             state.num_propositional(),
-            self.base.variables().len(),
+            self.base_num_variables,
             "a projected state needs one value per base propositional variable"
         );
         assert_eq!(
             source_numeric_values.len(),
-            self.base.numeric_variables().len(),
+            self.base_num_numeric_variables,
             "a projected state needs one value per base numeric variable"
         );
 
@@ -513,42 +487,13 @@ impl<'task> ProjectedTask<'task> {
         }
     }
 
-    pub fn evaluated_initial_state_values(
-        &self,
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), ProjectedTaskBuildError> {
-        let mut buffer = vec![0u64; self.propositional_packer.num_bins()];
-        for (var_id, value) in self.state.iter().enumerate() {
-            self.propositional_packer
-                .set(&mut buffer, var_id, value.index() as u64);
-        }
-        let mut numeric = self.numeric_state.clone();
-        // Only the initial state is closed, once per projected task, so compiling
-        // the evaluator here costs nothing worth caching in the task.
-        let task: TaskRef<'_> = Arc::new(self);
-        let axiom_evaluator = AxiomEvaluator::new(task, Arc::clone(&self.propositional_packer));
-        axiom_evaluator
-            .evaluate(&mut buffer, &mut numeric)
-            .map_err(
-                |err| ProjectedTaskBuildError::InitialStateEvaluationFailed {
-                    reason: format!("propositional axioms: {err:?}"),
-                },
-            )?;
-        let propositional = (0..self.state.len())
-            .map(|var_id| {
-                ExplicitValueIndex::from_usize(
-                    self.propositional_packer.get(&buffer, var_id) as usize
-                )
-            })
-            .collect();
-        Ok((propositional, numeric))
-    }
-
     /// The cheapest cost of an operator the projection keeps, the least cost
     /// of reaching the goal from a state that is no abstract goal; infinite
     /// when the projection keeps no operator.
     pub fn min_operator_cost(&self) -> f64 {
         let min_operator_cost = self
-            .operator_costs
+            .task
+            .effective_operator_costs()
             .iter()
             .copied()
             .fold(f64::INFINITY, f64::min);
@@ -575,89 +520,30 @@ impl<'task> ProjectedTask<'task> {
     /// Whether a numeric variable that operators change, rather than a
     /// constant, cost or derived one, is projected.
     pub fn has_regular_numeric_variables(&self) -> bool {
-        self.numeric_variables
+        self.task
+            .numeric_variables()
             .iter()
             .any(|variable| variable.numeric_type() == NumericType::Regular)
     }
 }
 
-fn projected_propositional_packer_from_variables(variables: &[ExplicitVariable]) -> StatePacker {
-    let ranges: Vec<u64> = variables
+/// The base task's mutex groups restricted to the projected variables and
+/// renumbered into their ids; a group left with fewer than two facts says
+/// nothing and is dropped.
+fn projected_mutex_groups(
+    base: &dyn AbstractNumericTask,
+    original_var_to_projected: &[Option<usize>],
+) -> Vec<Vec<ExplicitFact>> {
+    base.mutexes()
         .iter()
-        .map(|variable| variable.domain_size() as u64)
-        .collect();
-    StatePacker::new(&ranges)
-}
-
-impl AbstractNumericTask for ProjectedTask<'_> {
-    fn variables(&self) -> &[ExplicitVariable] {
-        &self.variables
-    }
-
-    fn numeric_variables(&self) -> &[NumericVariable] {
-        &self.numeric_variables
-    }
-
-    fn assignment_axioms(&self) -> &[AssignmentAxiom] {
-        &self.assignment_axioms
-    }
-
-    fn comparison_axioms(&self) -> &[ComparisonAxiom] {
-        &self.comparison_axioms
-    }
-
-    fn numeric_conditions(&self) -> &Arc<NumericConditions> {
-        &self.numeric_conditions
-    }
-
-    fn axioms(&self) -> &[PropositionalAxiom] {
-        &self.axioms
-    }
-
-    fn metric(&self) -> &Metric {
-        &self.metric
-    }
-
-    fn goals(&self) -> &[ExplicitFact] {
-        &self.goals
-    }
-
-    fn fact_name(&self, fact: &ExplicitFact) -> &str {
-        let Some(var_fact_names) = self.fact_names.get(fact.var()) else {
-            return "";
-        };
-        var_fact_names.get(fact.value()).map_or("", String::as_str)
-    }
-
-    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
-        let original_fact1 = restore_fact(fact1, &self.projected_var_to_original)
-            .expect("projected fact must use a valid variable ID");
-        let original_fact2 = restore_fact(fact2, &self.projected_var_to_original)
-            .expect("projected fact must use a valid variable ID");
-        self.base.are_facts_mutex(&original_fact1, &original_fact2)
-    }
-
-    fn operators(&self) -> &[Operator] {
-        &self.operators
-    }
-
-    fn initial_propositional_values(&self) -> &[ExplicitValueIndex] {
-        &self.state
-    }
-
-    fn initial_numeric_values(&self) -> &[NumericValue] {
-        &self.numeric_state
-    }
-
-    fn evaluate_initial_state_values(
-        &self,
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        ProjectedTask::evaluated_initial_state_values(self).map_err(|err| err.to_string())
-    }
-
-    fn operator_cost(&self, operator_id: OperatorIndex) -> f64 {
-        self.operator_costs[operator_id.index()]
-    }
+        .map(|group| {
+            group
+                .iter()
+                .filter_map(|fact| project_fact(fact, original_var_to_projected))
+                .collect::<Vec<_>>()
+        })
+        .filter(|group| group.len() >= 2)
+        .collect()
 }
 
 fn push_unique_mapping(
@@ -822,20 +708,10 @@ fn collect_restricted_projected_goals(
 
 /// Projecting renames a variable; it never changes what kind of variable it is,
 /// so the namespace carries over.
+/// `fact` in the projected ids; `None` when its variable is not projected.
 fn project_fact(fact: &ExplicitFact, var_map: &[Option<usize>]) -> Option<ExplicitFact> {
-    var_map
-        .get(fact.var())
-        .and_then(|mapped| *mapped)
+    var_map[fact.var()]
         .map(|mapped| ExplicitFact::in_namespace(fact.namespace(), mapped, fact.value()))
-}
-
-fn restore_fact(
-    fact: &ExplicitFact,
-    projected_to_original: &[VariableIndex],
-) -> Option<ExplicitFact> {
-    projected_to_original.get(fact.var()).map(|&original| {
-        ExplicitFact::in_namespace(fact.namespace(), original.index(), fact.value())
-    })
 }
 
 fn project_effect(effect: &Effect, var_map: &[Option<usize>]) -> Option<Effect> {
