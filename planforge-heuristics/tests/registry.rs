@@ -31,3 +31,46 @@ fn heuristic_registry_names_are_unique_and_complete() {
         );
     }
 }
+
+/// Every heuristic's defaults, written as the option arguments the reference
+/// lists, parse back: the reference documents the configuration grammar.
+#[test]
+fn every_heuristics_default_options_parse_back() {
+    use planforge_search::config::parse_call;
+    use planforge_search::heuristic_factory::{HeuristicConfig, heuristic_entries};
+
+    ensure_heuristics_registered(planforge_heuristics::heuristics);
+    for entry in heuristic_entries() {
+        let options = entry.options();
+        // A combination has no default children; give it one.
+        let arguments: Vec<String> = options
+            .iter()
+            .map(|option| {
+                let value = if option.default == "[]" {
+                    "[domain()]"
+                } else {
+                    &option.default
+                };
+                format!("{}={value}", option.name)
+            })
+            .collect();
+        let spec = format!("{}({})", entry.name(), arguments.join(", "));
+        let spec = if entry.name() == "check_admissible" {
+            "check_admissible(blind())".to_string()
+        } else {
+            spec
+        };
+        HeuristicConfig::from_spec(&parse_call(&spec).unwrap_or_else(|error| {
+            panic!(
+                "the reference of `{}` does not parse: {error}\n{spec}",
+                entry.name()
+            )
+        }))
+        .unwrap_or_else(|error| {
+            panic!(
+                "the defaults of `{}` are rejected: {error}\n{spec}",
+                entry.name()
+            )
+        });
+    }
+}

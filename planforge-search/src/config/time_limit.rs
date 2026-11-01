@@ -42,6 +42,10 @@ impl FromOptionValue for TimeLimit {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         Ok(Self::from_seconds(f64::from_option_value(value)?)?)
     }
+
+    fn option_text(&self) -> String {
+        self.0.option_text()
+    }
 }
 
 #[cfg(test)]

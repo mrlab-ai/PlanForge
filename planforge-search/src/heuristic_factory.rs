@@ -4,7 +4,7 @@
 //! other heuristic once, with [`register_heuristics`], before it parses a
 //! configuration.
 
-use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, configure};
+use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, OptionDoc, configure};
 use crate::evaluation::Heuristic;
 use crate::task_transformations::restriction::validate_restricted_task;
 use planforge_sas::numeric_task::Task;
@@ -230,6 +230,10 @@ impl crate::config::FromOptionValue for HeuristicConfig {
     fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
         Self::from_spec(&ConfigCall::from_value(value).map_err(ConfigError::from)?)
     }
+
+    fn option_text(&self) -> String {
+        self.to_string()
+    }
 }
 
 /// A registered heuristic feature. External features use the same entries as
@@ -238,10 +242,16 @@ impl crate::config::FromOptionValue for HeuristicConfig {
 pub struct HeuristicEntry {
     name: &'static str,
     parse: fn(&ConfigCall) -> Result<HeuristicConfig, ConfigError>,
+    options: fn() -> Vec<OptionDoc>,
 }
 impl HeuristicEntry {
     pub fn name(&self) -> &'static str {
         self.name
+    }
+
+    /// The options the heuristic's configuration accepts, with its defaults.
+    pub fn options(&self) -> Vec<OptionDoc> {
+        (self.options)()
     }
     fn matches(&self, name: &str) -> bool {
         self.name.eq_ignore_ascii_case(name)
@@ -251,7 +261,13 @@ pub const fn entry<F: HeuristicFeature>() -> HeuristicEntry {
     HeuristicEntry {
         name: F::NAME,
         parse: parse_feature::<F>,
+        options: feature_options::<F>,
     }
+}
+fn feature_options<F: HeuristicFeature>() -> Vec<OptionDoc> {
+    let mut options = Vec::new();
+    F::Config::default().describe_options(&mut options);
+    options
 }
 fn parse_feature<F: HeuristicFeature>(spec: &ConfigCall) -> Result<HeuristicConfig, ConfigError> {
     let mut spec = spec.clone();
@@ -309,6 +325,37 @@ pub fn register_heuristics(entries: Vec<HeuristicEntry>) -> Result<(), String> {
 pub fn ensure_heuristics_registered(entries: impl FnOnce() -> Vec<HeuristicEntry>) {
     REGISTERED.get_or_init(entries);
 }
+/// Every known heuristic, built-in first, in registration order.
+pub fn heuristic_entries() -> impl Iterator<Item = &'static HeuristicEntry> {
+    BUILTIN.iter().chain(registered_heuristics())
+}
+
+/// A reference of every known heuristic and its options with their
+/// defaults, generated from the configuration types themselves.
+pub fn heuristic_reference() -> String {
+    let mut text = String::new();
+    for entry in heuristic_entries() {
+        let options = entry.options();
+        let positional: Vec<&str> = options
+            .iter()
+            .filter(|option| option.positional)
+            .map(|option| option.name.as_str())
+            .collect();
+        text.push_str(entry.name());
+        text.push('(');
+        text.push_str(&positional.join(", "));
+        text.push_str(")\n");
+        for option in &options {
+            text.push_str(&format!("    {} = {}", option.name, option.default));
+            if !option.doc.is_empty() {
+                text.push_str(&format!("  -- {}", option.doc));
+            }
+            text.push('\n');
+        }
+    }
+    text
+}
+
 pub fn heuristic_names() -> impl Iterator<Item = &'static str> {
     BUILTIN
         .iter()
@@ -317,7 +364,7 @@ pub fn heuristic_names() -> impl Iterator<Item = &'static str> {
 }
 pub fn heuristic_help() -> String {
     format!(
-        "Heuristics: {}. Custom Rust heuristics can be passed directly as Box<dyn Heuristic>.",
+        "Heuristics: {}. `planforge heuristics` lists their options and defaults. Custom Rust heuristics can be passed directly as Box<dyn Heuristic>.",
         heuristic_names().collect::<Vec<_>>().join(", ")
     )
 }

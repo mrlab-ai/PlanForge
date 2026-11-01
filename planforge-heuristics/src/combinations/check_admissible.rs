@@ -312,6 +312,16 @@ impl planforge_search::config::ApplyOptions for CheckAdmissibleConfig {
         self.inner = planforge_search::heuristic_factory::HeuristicConfig::from_spec(&spec)?;
         Ok(())
     }
+
+    fn describe_options(&self, out: &mut Vec<planforge_search::config::OptionDoc>) {
+        out.push(planforge_search::config::OptionDoc {
+            name: "heuristic".to_string(),
+            positional: true,
+            default: self.inner.to_string(),
+            doc: "the heuristic whose estimates are checked against optimal goal distances"
+                .to_string(),
+        });
+    }
 }
 pub struct CheckAdmissibleFeature;
 impl planforge_search::heuristic_factory::HeuristicFeature for CheckAdmissibleFeature {

@@ -52,6 +52,10 @@ macro_rules! option_enum {
                     ).into()),
                 }
             }
+
+            fn option_text(&self) -> ::std::string::String {
+                self.to_string()
+            }
         }
     };
 }
@@ -258,6 +262,22 @@ pub fn for_each_option(
 /// (e.g. coupled writes, curated subsets).
 pub trait ApplyOptions {
     fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), ConfigError>;
+
+    /// Appends the options this configuration accepts, with their values in
+    /// `self` as the defaults, in the order `apply_options` documents them.
+    fn describe_options(&self, out: &mut Vec<OptionDoc>);
+}
+
+/// One option of a configuration, for help texts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OptionDoc {
+    pub name: String,
+    /// Whether the option may also be given positionally, in this order.
+    pub positional: bool,
+    /// The default value, as `Debug` prints it.
+    pub default: String,
+    /// The field's documentation, empty when it has none.
+    pub doc: String,
 }
 
 /// `config` with the options `args` of `name(...)` applied; errors name it.
@@ -274,6 +294,20 @@ pub fn configure<C: ApplyOptions>(
 /// The derive picks `from_option_value` for each field automatically.
 pub trait FromOptionValue: Sized {
     fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError>;
+
+    /// The value as an option argument that `from_option_value` reads back.
+    fn option_text(&self) -> String;
+}
+
+/// The options of `config` as `key=value` arguments, comma-separated.
+pub fn options_text(config: &impl ApplyOptions) -> String {
+    let mut options = Vec::new();
+    config.describe_options(&mut options);
+    options
+        .iter()
+        .map(|option| format!("{}={}", option.name, option.default))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 // =============================================================================
@@ -288,6 +322,10 @@ impl FromOptionValue for bool {
             other => Err(format!("expected boolean, got `{other}`").into()),
         }
     }
+
+    fn option_text(&self) -> String {
+        self.to_string()
+    }
 }
 
 impl FromOptionValue for usize {
@@ -296,6 +334,10 @@ impl FromOptionValue for usize {
         scalar
             .parse::<usize>()
             .map_err(|_| format!("expected non-negative integer, got `{scalar}`").into())
+    }
+
+    fn option_text(&self) -> String {
+        self.to_string()
     }
 }
 
@@ -306,6 +348,10 @@ impl FromOptionValue for u64 {
             .parse::<u64>()
             .map_err(|_| format!("expected non-negative integer, got `{scalar}`").into())
     }
+
+    fn option_text(&self) -> String {
+        self.to_string()
+    }
 }
 
 impl FromOptionValue for f64 {
@@ -314,6 +360,14 @@ impl FromOptionValue for f64 {
         match s.parse::<f64>() {
             Ok(number) if !number.is_nan() => Ok(number),
             _ => Err(format!("expected a number or infinity, got `{s}`").into()),
+        }
+    }
+
+    fn option_text(&self) -> String {
+        if self.is_infinite() {
+            if *self > 0.0 { "infinity" } else { "-infinity" }.to_string()
+        } else {
+            self.to_string()
         }
     }
 }
@@ -328,6 +382,11 @@ impl<T: FromOptionValue> FromOptionValue for Option<T> {
         } else {
             T::from_option_value(value).map(Some)
         }
+    }
+
+    fn option_text(&self) -> String {
+        self.as_ref()
+            .map_or_else(|| "none".to_string(), FromOptionValue::option_text)
     }
 }
 
@@ -344,11 +403,32 @@ impl<T: FromOptionValue> FromOptionValue for Vec<T> {
             value => T::from_option_value(value).map(|value| vec![value]),
         }
     }
+
+    fn option_text(&self) -> String {
+        let items: Vec<String> = self.iter().map(FromOptionValue::option_text).collect();
+        format!("[{}]", items.join(", "))
+    }
 }
 
 impl FromOptionValue for String {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         Ok(value.as_atom()?.to_string())
+    }
+
+    fn option_text(&self) -> String {
+        let mut text = String::from("\"");
+        for ch in self.chars() {
+            match ch {
+                '"' => text.push_str("\\\""),
+                '\\' => text.push_str("\\\\"),
+                '\n' => text.push_str("\\n"),
+                '\r' => text.push_str("\\r"),
+                '\t' => text.push_str("\\t"),
+                ch => text.push(ch),
+            }
+        }
+        text.push('"');
+        text
     }
 }
 
