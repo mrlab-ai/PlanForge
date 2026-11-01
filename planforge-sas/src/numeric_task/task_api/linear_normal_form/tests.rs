@@ -87,10 +87,12 @@ fn task(
 }
 
 #[test]
-fn shares_linear_parts_across_constants_order_and_positive_scale() {
+fn shares_identical_linear_parts_across_constants_and_order() {
     use CalOperator::*;
     use ComparisonOperator::*;
-    // x+y-4 >= 0, 2*(y+x) > 4 and -(x+y) <= 0.
+    // x+y-4 >= 0 and y+x > 2 share x+y; -(x+y) <= 0 and -2(x+y) <= 4 are
+    // multiples of it and keep their own parts, since dividing them out
+    // would round.
     let task = task(
         &[2.0, 3.0],
         &[4.0, 0.0, 2.0, -1.0],
@@ -98,31 +100,37 @@ fn shares_linear_parts_across_constants_order_and_positive_scale() {
             (Sum, 0, 1),
             (Difference, 6, 2),
             (Sum, 1, 0),
-            (Product, 8, 4),
             (Product, 6, 5),
-            (Product, 10, 4),
+            (Product, 9, 4),
         ],
         &[
             (7, 3, GreaterThanOrEqual),
-            (9, 2, GreaterThan),
-            (10, 3, LessThanOrEqual),
-            (11, 2, LessThanOrEqual),
+            (8, 4, GreaterThan),
+            (9, 3, LessThanOrEqual),
+            (10, 2, LessThanOrEqual),
         ],
     );
-    assert_eq!(task.assignment_axioms().len(), 2);
+    assert_eq!(task.assignment_axioms().len(), 3);
     let comparisons = &task.comparison_axioms();
     assert_eq!(comparisons[0].left_hand_side, comparisons[1].left_hand_side);
-    assert_eq!(comparisons[2].left_hand_side, comparisons[3].left_hand_side);
     assert_ne!(comparisons[0].left_hand_side, comparisons[2].left_hand_side);
-    assert_eq!(comparisons[2].operator, LessThanOrEqual);
+    assert_ne!(comparisons[0].left_hand_side, comparisons[3].left_hand_side);
+    assert_ne!(comparisons[2].left_hand_side, comparisons[3].left_hand_side);
+    let operators: Vec<_> = comparisons.iter().map(|c| c.operator.clone()).collect();
     assert_eq!(
-        task.initial_numeric_values()[comparisons[0].right_hand_side.index()],
-        NumericValue::new(4.0)
+        operators,
+        [
+            GreaterThanOrEqual,
+            GreaterThan,
+            LessThanOrEqual,
+            LessThanOrEqual
+        ]
     );
-    assert_eq!(
-        task.initial_numeric_values()[comparisons[1].right_hand_side.index()],
-        NumericValue::new(2.0)
-    );
+    let thresholds: Vec<_> = comparisons
+        .iter()
+        .map(|c| task.initial_numeric_values()[c.right_hand_side.index()])
+        .collect();
+    assert_eq!(thresholds, [4.0, 2.0, 0.0, 4.0].map(NumericValue::new));
     assert!(
         task.numeric_conditions()
             .iter()
@@ -151,7 +159,7 @@ fn unary_negative_coefficients_reverse_all_ordered_comparisons() {
     ];
     let task = task(
         &[3.0],
-        &[-2.0, 8.0],
+        &[-1.0, 8.0],
         &[(CalOperator::Product, 0, 1)],
         &operators
             .iter()
@@ -165,9 +173,56 @@ fn unary_negative_coefficients_reverse_all_ordered_comparisons() {
         assert_eq!(comparison.operator, operator);
         assert_eq!(
             task.initial_numeric_values()[comparison.right_hand_side.index()],
-            NumericValue::new(-4.0)
+            NumericValue::new(-8.0)
         );
     }
+}
+
+/// Dividing `2x op 5` by 2 would be exact here, but in general the quotient
+/// rounds to the grid; a coefficient other than 1 or -1 stays in its part.
+#[test]
+fn unary_parts_with_other_coefficients_stay_linear_sums() {
+    let task = task(
+        &[3.0],
+        &[2.0, 5.0],
+        &[(CalOperator::Product, 0, 1)],
+        &[(3, 2, ComparisonOperator::GreaterThan)],
+    );
+    let NumericExpression::Linear(terms) = &task.assignment_axioms()[0].expression else {
+        panic!("expected a linear sum");
+    };
+    assert_eq!(terms, &[(VariableIndex::new(0), NumericValue::new(2.0))]);
+    assert!(task.numeric_conditions().all()[0].evaluate_point(task.initial_numeric_values()));
+}
+
+/// Farmland's goal at a state where the weighted sum is exactly 140: the
+/// strict comparison is false. Dividing by the leading coefficient 1.5
+/// rounded the other coefficients up and the threshold down, and it held.
+#[test]
+fn a_strict_comparison_at_its_boundary_is_false() {
+    use CalOperator::*;
+    let task = task(
+        &[77.0, 22.0, 1.0, 1.0],
+        &[1.5, 1.0, 1.3, 1.2, 140.0],
+        &[
+            (Product, 4, 0),
+            (Product, 5, 1),
+            (Product, 6, 2),
+            (Product, 7, 3),
+            (Sum, 11, 12),
+            (Sum, 10, 13),
+            (Sum, 9, 14),
+            (Difference, 15, 8),
+        ],
+        &[(16, 8, ComparisonOperator::GreaterThan)],
+    );
+    let condition = &task.numeric_conditions().all()[0];
+    assert!(!condition.evaluate_point(task.initial_numeric_values()));
+    let NumericExpression::Linear(terms) = &task.assignment_axioms()[0].expression else {
+        panic!("expected a linear sum");
+    };
+    let coefficients: Vec<_> = terms.iter().map(|(_, c)| *c).collect();
+    assert_eq!(coefficients, [1.5, 1.0, 1.3, 1.2].map(NumericValue::new));
 }
 
 #[test]
@@ -258,7 +313,7 @@ fn linear_sum_canonicalizes_once_in_both_concrete_evaluators() {
 }
 
 #[test]
-fn grid_unit_coefficients_are_scaled_before_comparison() {
+fn grid_unit_coefficients_compare_at_their_boundary() {
     let task = task(
         &[4.0],
         &[1e-12, 4e-12],
@@ -266,11 +321,11 @@ fn grid_unit_coefficients_are_scaled_before_comparison() {
         &[(3, 2, ComparisonOperator::GreaterThanOrEqual)],
     );
     let comparison = &task.comparison_axioms()[0];
-    assert_eq!(comparison.left_hand_side, VariableIndex::new(0));
     assert_eq!(
         task.initial_numeric_values()[comparison.right_hand_side.index()],
-        NumericValue::new(4.0)
+        NumericValue::new(4e-12)
     );
+    assert!(task.numeric_conditions().all()[0].evaluate_point(task.initial_numeric_values()));
 }
 
 #[test]
@@ -335,18 +390,20 @@ fn shared_expression_dags_are_not_expanded_as_trees() {
         &definitions,
         &[(101, 1, ComparisonOperator::GreaterThan)],
     );
-    assert!(task.assignment_axioms().is_empty());
+    let NumericExpression::Linear(terms) = &task.assignment_axioms()[0].expression else {
+        panic!("expected a linear sum");
+    };
     assert_eq!(
-        task.comparison_axioms()[0].left_hand_side,
-        VariableIndex::new(0)
+        terms,
+        &[(VariableIndex::new(0), NumericValue::new(2f64.powi(100)))]
     );
     assert!(task.numeric_conditions().all()[0].evaluate_point(task.initial_numeric_values()));
 }
 
 #[test]
-fn scaling_preserves_small_terms_in_a_multivariate_comparison() {
+fn small_terms_survive_in_a_multivariate_comparison() {
     use CalOperator::*;
-    // Leading-coefficient scaling would round y's nonzero coefficient away.
+    // Dividing by the leading coefficient would round y's coefficient away.
     let task = task(
         &[0.0, 1.0],
         &[1e6, 1e-7, 0.0],
@@ -356,11 +413,7 @@ fn scaling_preserves_small_terms_in_a_multivariate_comparison() {
     let NumericExpression::Linear(terms) = &task.assignment_axioms()[0].expression else {
         panic!("expected a linear sum");
     };
-    assert_eq!(terms.len(), 2);
-    assert!(
-        terms
-            .iter()
-            .all(|(_, coefficient)| *coefficient != ZERO_VALUE)
-    );
+    let coefficients: Vec<_> = terms.iter().map(|(_, c)| *c).collect();
+    assert_eq!(coefficients, [1e6, 1e-7].map(NumericValue::new));
     assert!(task.numeric_conditions().all()[0].evaluate_point(task.initial_numeric_values()));
 }
