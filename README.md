@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.svg" alt="PlanForge" width="480">
+</p>
+
 # planforge
 
 A grounded numeric planner written in Rust. Accepts PDDL or pre-translated SAS+ input and produces a sequential plan when one exists within the configured resource budget.
