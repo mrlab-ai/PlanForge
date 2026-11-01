@@ -49,7 +49,7 @@ fn restricted_task(folder: &str, stem: &str) -> Task {
         &scratch,
     );
     match build_restricted_task(&task).expect("restricted task construction must not fail") {
-        Some(restricted) => restricted.into_task(),
+        Some(restricted) => restricted,
         None => task,
     }
 }

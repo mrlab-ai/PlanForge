@@ -34,7 +34,7 @@ use planforge_search::heuristic_factory::{
 };
 use planforge_search::search::{SearchConfig, SearchResult, solve_task};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
-use planforge_search::task_transformations::restriction::{RestrictedTask, build_restricted_task};
+use planforge_search::task_transformations::restriction::build_restricted_task;
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
@@ -347,7 +347,7 @@ fn load_enumeration_task(
         && let Some(restricted) = build_restricted_task(&task)
             .map_err(|error| std::io::Error::other(format!("failed to restrict task: {error:#}")))?
     {
-        task = restricted.into_task();
+        task = restricted;
     }
     Ok(task)
 }
@@ -511,7 +511,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let original_numeric_count = task.numeric_variables().len();
         let restricted_task = match cli.search.requirements().restriction {
             Some(restriction) => (restriction.build)(&task),
-            None => build_restricted_task(&task).map(|task| task.map(RestrictedTask::into_task)),
+            None => build_restricted_task(&task),
         };
         if let Some(restricted_task) = restricted_task.map_err(|err| {
             let kind = if planforge_search::unsupported::is_unsupported_task(&err) {

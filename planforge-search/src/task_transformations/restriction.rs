@@ -15,21 +15,6 @@ use planforge_sas::numeric_task::{
 };
 use tracing::info;
 
-#[derive(Debug)]
-pub struct RestrictedTask {
-    task: Task,
-}
-
-impl RestrictedTask {
-    pub fn task(&self) -> &Task {
-        &self.task
-    }
-
-    pub fn into_task(self) -> Task {
-        self.task
-    }
-}
-
 pub fn validate_restricted_task(task: &Task) -> std::result::Result<(), String> {
     if let Some(variable) = task.metric().var_id()
         && task.numeric_type(variable) == NumericType::Derived
@@ -191,7 +176,7 @@ impl AffineExpression {
     }
 }
 
-pub fn build_restricted_task(task: &Task) -> Result<Option<RestrictedTask>> {
+pub fn build_restricted_task(task: &Task) -> Result<Option<Task>> {
     let restriction_reason = match validate_restricted_task(task) {
         Ok(()) => {
             info!("restricted task: task already satisfies restricted-task invariants");
@@ -254,7 +239,7 @@ fn build_task(
     initial_numeric: &[NumericValue],
     root_exprs: &BTreeMap<VariableIndex, AffineExpression>,
     numeric_var_ids: &[VariableIndex],
-) -> Result<Option<RestrictedTask>> {
+) -> Result<Option<Task>> {
     let num_original_numeric = task.numeric_variables().len();
     let mut original_to_transformed = vec![None; num_original_numeric];
     let mut transformed_to_expr = Vec::new();
@@ -357,9 +342,7 @@ fn build_task(
 
     ensure_operator_costs_unchanged(task, &transformed_task)?;
 
-    Ok(Some(RestrictedTask {
-        task: transformed_task,
-    }))
+    Ok(Some(transformed_task))
 }
 
 /// The affine expression of a metric that an assignment axiom derives, as in
