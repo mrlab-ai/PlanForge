@@ -88,8 +88,10 @@ returning a default.
 
 ## Verifying a change
 
-A refactoring must not change search behaviour. The gate compares plan costs
-and expansion counts on the test instances for the main heuristic families,
-before and after; identical counts are the requirement, run times are only
-checked for regressions. Behaviour changes are separate commits with their
-own measurements.
+A refactoring must not change search behaviour. The `search_snapshot` test
+(`tools/gate.sh semantic`) runs the main heuristic families on the test
+instances and compares plan costs and expanded and generated states with
+`tests/snapshots/search.txt`; identical counts are the requirement, run times
+are only checked for regressions (`tools/gate.sh timing`). Behaviour changes
+are separate commits that rewrite the snapshot (`PLANFORGE_BLESS=1`), so its
+diff shows what they moved.
