@@ -39,7 +39,7 @@ use planforge_search::task_transformations::restriction::build_restricted_task;
 
 use crate::corpus::{self, Scratch, translate_to_disk};
 
-/// The instance's task, restricted exactly as `--restrict-task` restricts it.
+/// The instance's task, restricted exactly as `--transform restrict` restricts it.
 fn restricted_task(folder: &str, stem: &str) -> Task {
     let root = corpus::assets().join("numeric-pddl-files").join(folder);
     let scratch = Scratch::new(&format!("goal_focused_admissibility_{folder}_{stem}"));
@@ -266,7 +266,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
 }
 
 /// One test per instance. Every instance is one blind A* solves in a few
-/// milliseconds: measured with `target/release/planforge --restrict-task
+/// milliseconds: measured with `target/release/planforge --transform restrict
 /// --search 'astar(blind())'`,
 ///
 /// | instance | expanded | search time |

@@ -9,8 +9,9 @@
 //! - [`combinations`]: the maximum over heuristics and the admissibility
 //!   check around one.
 //!
-//! A binary registers [`heuristics`] with the core's registry before it parses
-//! a configuration; `planforge` does so for its command line.
+//! A binary registers [`heuristics`] and [`transformations`] with the core's
+//! registries before it parses a configuration; `planforge` does so for its
+//! command line.
 
 // The configuration derive names `::planforge_search::config` paths.
 pub mod abstractions;
@@ -26,6 +27,7 @@ use abstractions::features::{CartesianFeature, DomainFeature, SourceFeature};
 use abstractions::icaps26::Icaps26CartesianConfig;
 use abstractions::sources::PdbSourceConfig;
 use planforge_search::heuristic_factory::{HeuristicEntry, entry};
+use planforge_search::task_transformations::TransformationEntry;
 
 /// Every heuristic of this crate, as a binary registers them.
 pub fn heuristics() -> Vec<HeuristicEntry> {
@@ -45,6 +47,13 @@ pub fn heuristics() -> Vec<HeuristicEntry> {
         entry::<abstractions::cost_partitioning::saturated::ScpFeature>(),
         entry::<abstractions::cost_partitioning::posthoc_optimization::PostHocFeature>(),
     ]
+}
+
+/// Every task transformation of this crate, as a binary registers them.
+pub fn transformations() -> Vec<TransformationEntry> {
+    vec![planforge_search::task_transformations::entry::<
+        abstractions::icaps26::Icaps26RestrictFeature,
+    >()]
 }
 
 /// Registers [`heuristics`] for a test process.

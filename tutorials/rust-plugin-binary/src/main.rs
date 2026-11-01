@@ -34,5 +34,8 @@ impl HeuristicFeature for GoalCountFeature {
     }
 }
 fn main() -> std::io::Result<()> {
-    planforge::run_with_heuristics(vec![entry::<GoalCountFeature>()])
+    planforge::run_with(planforge::Extensions {
+        heuristics: vec![entry::<GoalCountFeature>()],
+        ..Default::default()
+    })
 }

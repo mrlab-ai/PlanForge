@@ -25,52 +25,38 @@ pub enum RequiredBackend {
 pub struct TaskRequirements {
     pub restricted: bool,
     pub abstractable_goal: bool,
-    /// The transformation `--restrict-task` applies instead of the standard
-    /// restriction.
-    pub restriction: Option<TaskRestriction>,
+    /// The task transformation the heuristic needs applied, by name, when it
+    /// needs another normal form than the standard restriction.
+    pub transformation: Option<&'static str>,
 }
-
-/// A task transformation a heuristic brings along for `--restrict-task`
-/// because it needs another normal form than the standard restriction.
-#[derive(Debug, Clone, Copy)]
-pub struct TaskRestriction {
-    pub name: &'static str,
-    /// The transformed task; `None` when the task already has the form.
-    pub build: fn(&Task) -> anyhow::Result<Option<Task>>,
-}
-
-impl PartialEq for TaskRestriction {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl Eq for TaskRestriction {}
 
 impl TaskRequirements {
     pub const ANY: Self = Self {
         restricted: false,
         abstractable_goal: false,
-        restriction: None,
+        transformation: None,
     };
     pub const ABSTRACTABLE_GOAL: Self = Self {
         restricted: false,
         abstractable_goal: true,
-        restriction: None,
+        transformation: None,
     };
     pub const RESTRICTED_ABSTRACTABLE_GOAL: Self = Self {
         restricted: true,
         abstractable_goal: true,
-        restriction: None,
+        transformation: None,
     };
 
     pub fn union(self, other: Self) -> Self {
         Self {
             restricted: self.restricted || other.restricted,
             abstractable_goal: self.abstractable_goal || other.abstractable_goal,
-            restriction: match (self.restriction, other.restriction) {
+            transformation: match (self.transformation, other.transformation) {
                 (Some(left), Some(right)) => {
-                    assert_eq!(left, right, "one search cannot apply two task restrictions");
+                    assert_eq!(
+                        left, right,
+                        "one search cannot need two task transformations"
+                    );
                     Some(left)
                 }
                 (left, right) => left.or(right),
@@ -78,8 +64,8 @@ impl TaskRequirements {
         }
     }
 
-    /// A task that is not restricted is a usage error, since `--restrict-task`
-    /// would restrict it; a goal no abstraction can express is a task the
+    /// A task that is not restricted is a usage error, since `--transform
+    /// restrict` would restrict it; a goal no abstraction can express is a task the
     /// heuristic does not support.
     pub fn validate(self, task: &Task) -> Result<(), HeuristicBuildError> {
         if self.restricted {

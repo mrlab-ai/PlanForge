@@ -22,6 +22,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::heuristic_factory::TaskRequirements;
 use planforge_search::search::{
     AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchOutcome, SearchParams, SearchResult,
     parse_search_spec,
@@ -31,7 +32,7 @@ use planforge_search::state_space::{
     StateSpaceEnumerationError as RustStateSpaceEnumerationError, enumerate_state_space,
 };
 use planforge_search::successor_generator::SuccessorTree;
-use planforge_search::task_transformations::restriction::build_restricted_task;
+use planforge_search::task_transformations::{parse_transformation_spec, transform_task};
 
 create_exception!(planforge, PlanforgeError, PyException);
 create_exception!(planforge, TranslateError, PlanforgeError);
@@ -44,7 +45,7 @@ create_exception!(planforge, EnumerationError, PlanforgeError);
 enum SolveError {
     Translate(String),
     Parse(String),
-    Restrict(String),
+    Transform(String),
     Search(String),
     FileNotFound(String),
 }
@@ -1049,17 +1050,18 @@ fn translate_pddl_to_task(
         .map_err(|err| err.to_string())
 }
 
-fn restrict_numeric_task(
+/// `task` transformed by the transformation specifications `transforms`,
+/// in order, which must include the one `requirements` names.
+fn transform_numeric_task(
     task: planforge_sas::numeric_task::Task,
-    restrict_task: bool,
+    transforms: &[String],
+    requirements: TaskRequirements,
 ) -> Result<planforge_sas::numeric_task::Task, String> {
-    if !restrict_task {
-        return Ok(task);
-    }
-    match build_restricted_task(&task).map_err(|err| format!("{err:#}"))? {
-        Some(restricted_task) => Ok(restricted_task),
-        None => Ok(task),
-    }
+    let transformations = transforms
+        .iter()
+        .map(|raw| parse_transformation_spec(raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    transform_task(task, &transformations, requirements).map_err(|err| format!("{err:#}"))
 }
 
 fn fact_to_py(fact: &planforge_sas::numeric_task::ExplicitFact) -> PyFact {
@@ -1180,42 +1182,44 @@ fn state_space_to_py(
 #[pymethods]
 impl Task {
     #[staticmethod]
-    #[pyo3(signature = (text, restrict_task=false))]
-    fn from_sas_text(text: &str, restrict_task: bool) -> PyResult<Self> {
-        let task = restrict_numeric_task(
+    #[pyo3(signature = (text, transforms=Vec::new()))]
+    fn from_sas_text(text: &str, transforms: Vec<String>) -> PyResult<Self> {
+        let task = transform_numeric_task(
             planforge_sas::numeric_task::Task::try_from_str(text).map_err(ParseError::new_err)?,
-            restrict_task,
+            &transforms,
+            TaskRequirements::ANY,
         )
         .map_err(PlanforgeError::new_err)?;
         Ok(Self::build(Arc::new(task)))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (path, restrict_task=false))]
-    fn from_sas(path: PathBuf, restrict_task: bool) -> PyResult<Self> {
+    #[pyo3(signature = (path, transforms=Vec::new()))]
+    fn from_sas(path: PathBuf, transforms: Vec<String>) -> PyResult<Self> {
         let text = std::fs::read_to_string(&path).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => {
                 PyFileNotFoundError::new_err(format!("{}: {e}", path.display()))
             }
             _ => ParseError::new_err(format!("failed to read {}: {e}", path.display())),
         })?;
-        Self::from_sas_text(&text, restrict_task)
+        Self::from_sas_text(&text, transforms)
     }
 
     #[staticmethod]
-    #[pyo3(signature = (domain, problem, restrict_task=false))]
+    #[pyo3(signature = (domain, problem, transforms=Vec::new()))]
     fn from_pddl(
         py: Python<'_>,
         domain: PathBuf,
         problem: PathBuf,
-        restrict_task: bool,
+        transforms: Vec<String>,
     ) -> PyResult<Self> {
         let task = py
             .allow_threads(|| -> Result<planforge_sas::numeric_task::Task, String> {
                 translate_pddl_to_task(&domain, &problem)
             })
             .map_err(TranslateError::new_err)?;
-        let task = restrict_numeric_task(task, restrict_task).map_err(PlanforgeError::new_err)?;
+        let task = transform_numeric_task(task, &transforms, TaskRequirements::ANY)
+            .map_err(PlanforgeError::new_err)?;
         Ok(Self::build(Arc::new(task)))
     }
 
@@ -1636,7 +1640,7 @@ impl Task {
 /// form for callers who want it; this stays the flat one.
 #[pyfunction]
 #[pyo3(signature = (*, domain=None, problem=None, sas=None, sas_text=None,
-                    search=None, max_time=None, max_memory=None, restrict_task=false))]
+                    search=None, max_time=None, max_memory=None, transforms=Vec::new()))]
 #[allow(clippy::too_many_arguments)]
 fn solve(
     py: Python<'_>,
@@ -1647,7 +1651,7 @@ fn solve(
     search: Option<String>,
     max_time: Option<f64>,
     max_memory: Option<u64>,
-    restrict_task: bool,
+    transforms: Vec<String>,
 ) -> PyResult<PySearchResult> {
     let has_pddl = domain.is_some() && problem.is_some();
     let has_partial_pddl = domain.is_some() ^ problem.is_some();
@@ -1689,7 +1693,8 @@ fn solve(
             planforge_sas::numeric_task::Task::try_from_str(&sas_text).map_err(SolveError::Parse)?
         };
 
-        let task = restrict_numeric_task(task, restrict_task).map_err(SolveError::Restrict)?;
+        let task = transform_numeric_task(task, &transforms, spec.requirements())
+            .map_err(SolveError::Transform)?;
         let task: Arc<planforge_sas::numeric_task::Task> = Arc::new(task);
         spec.solve(
             task,
@@ -1705,7 +1710,7 @@ fn solve(
         match err {
             SolveError::Translate(message) => TranslateError::new_err(message),
             SolveError::Parse(message) => ParseError::new_err(message),
-            SolveError::Restrict(message) => PlanforgeError::new_err(message),
+            SolveError::Transform(message) => PlanforgeError::new_err(message),
             SolveError::Search(message) => PlanforgeError::new_err(message),
             SolveError::FileNotFound(message) => PyFileNotFoundError::new_err(message),
         }
@@ -1750,6 +1755,8 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
 fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     planforge_search::heuristic_factory::HEURISTICS
         .ensure_registered(planforge_heuristics::heuristics);
+    planforge_search::task_transformations::TRANSFORMATIONS
+        .ensure_registered(planforge_heuristics::transformations);
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_class::<PySearchResult>()?;
     m.add_class::<PyEdge>()?;

@@ -35,7 +35,7 @@ pub fn validate_restricted_task(task: &Task) -> std::result::Result<(), String> 
             })?;
             if numeric_var.numeric_type() == NumericType::Derived {
                 return Err(format!(
-                    "task is not restricted: comparison axiom {comparison_axiom_id} has derived {side} operand {numeric_var_id}; use `--restrict-task` or provide an already restricted task"
+                    "task is not restricted: comparison axiom {comparison_axiom_id} has derived {side} operand {numeric_var_id}; use `--transform restrict` or provide an already restricted task"
                 ));
             }
         }
@@ -57,7 +57,7 @@ pub fn validate_restricted_task(task: &Task) -> std::result::Result<(), String> 
                 NumericType::Regular | NumericType::Cost
             ) {
                 return Err(format!(
-                    "task is not restricted: operator {operator_id} ({}) numeric effect {effect_id} targets unsupported variable {} ({:?}); use `--restrict-task` or provide an already restricted task",
+                    "task is not restricted: operator {operator_id} ({}) numeric effect {effect_id} targets unsupported variable {} ({:?}); use `--transform restrict` or provide an already restricted task",
                     operator.name(),
                     effect.affected_var_id(),
                     affected.numeric_type()
@@ -76,7 +76,7 @@ pub fn validate_restricted_task(task: &Task) -> std::result::Result<(), String> 
                 })?;
             if source.numeric_type() == NumericType::Derived {
                 return Err(format!(
-                    "task is not restricted: operator {operator_id} ({}) numeric effect {effect_id} reads derived variable {}; use `--restrict-task` or provide an already restricted task",
+                    "task is not restricted: operator {operator_id} ({}) numeric effect {effect_id} reads derived variable {}; use `--transform restrict` or provide an already restricted task",
                     operator.name(),
                     effect.var_id()
                 ));
@@ -176,6 +176,19 @@ impl AffineExpression {
     }
 }
 
+/// `restrict()`: the restricted task.
+pub struct RestrictFeature;
+
+impl super::TransformationFeature for RestrictFeature {
+    const NAME: &'static str = "restrict";
+    type Config = crate::heuristic_factory::EmptyConfig;
+
+    fn apply(_: &Self::Config, task: Task) -> Result<Task> {
+        Ok(build_restricted_task(&task)?.unwrap_or(task))
+    }
+}
+
+/// The restricted task; `None` when `task` already is restricted.
 pub fn build_restricted_task(task: &Task) -> Result<Option<Task>> {
     let restriction_reason = match validate_restricted_task(task) {
         Ok(()) => {

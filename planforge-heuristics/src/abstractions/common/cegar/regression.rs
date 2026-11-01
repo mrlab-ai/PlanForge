@@ -126,7 +126,7 @@ pub(crate) fn ensure_regressable(task: &Task, coordinates: &Coordinates<'_>) -> 
         if fact.is_condition() {
             ensure_supported!(
                 coordinates.requirement(fact).is_some(),
-                "regression flaws need conditions over one coordinate, but {} has {fact:?}; --restrict-task compiles every linear condition into one",
+                "regression flaws need conditions over one coordinate, but {} has {fact:?}; --transform restrict compiles every linear condition into one",
                 context()
             );
         } else {

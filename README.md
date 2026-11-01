@@ -86,15 +86,15 @@ evaluator; other heuristics are evaluated alongside it.
 Hierarchical abstraction sources make collection generation and combination
 independent. For example:
 
-    planforge --restrict-task --search \
+    planforge --transform restrict --search \
       'astar(canonical([cartesian_collection(max_states=1000,max_collection_size=100000)],construction_max_time=900))' \
       domain.pddl problem.pddl
 
-    planforge --restrict-task --search \
+    planforge --transform restrict --search \
       'astar(scp([domain_collection(max_states=1000,max_collection_size=100000)],partitioning=region,construction_max_time=900))' \
       domain.pddl problem.pddl
 
-    planforge --restrict-task --search \
+    planforge --transform icaps26_restrict --search \
       'astar(canonical([icaps26_cartesian(pick=min_unwanted,max_time=900)]))' \
       domain.pddl problem.pddl
 
@@ -131,7 +131,7 @@ split kind), `random_seed` (the seed members derive theirs from),
 `enable_blacklist_on_stagnation`.
 
 `icaps26_cartesian` accepts `pick=random|min_unwanted|max_unwanted` and requires
-`--restrict-task`. It reproduces the artifact semantics on integer restricted
+its own restriction, `--transform icaps26_restrict`. It reproduces the artifact semantics on integer restricted
 tasks; the dedicated affine restriction and continuous-split extensions cover
 the full supported SNP benchmark set without changing other heuristics.
 `construction_max_time` is one shared budget
@@ -165,8 +165,11 @@ Common options:
 - `--max-grounding-memory SIZE` — approximate memory budget for the ground
   atoms, join tables, reachable facts and ground actions materialized by the
   translator (default: no limit; `--max-memory` still bounds the run).
-- `--restrict-task` — convert an SNP task to its restricted representation;
-  already restricted tasks are retained unchanged.
+- `--transform SPEC` — transform the task before the search, repeatable and
+  applied in order: `restrict` converts an SNP task to its restricted
+  representation (already restricted tasks are retained unchanged),
+  `icaps26_restrict` to the one `icaps26_cartesian` needs. A binary registers
+  further transformations like heuristics.
 - `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
   under a tight budget (`--lmcut-time`, `--lmcut-memory`), then
   `astar(canonical([domain(max_states=1000)]))` (`--canonical-construction-time`,

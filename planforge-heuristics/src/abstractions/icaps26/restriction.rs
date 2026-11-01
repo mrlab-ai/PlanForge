@@ -1,7 +1,7 @@
 //! The restricted task the ICAPS 2026 artifact consumes, frozen with the rest
 //! of this module: regular variables stay Cartesian dimensions, a unary affine
 //! condition becomes a threshold on its variable, and every other condition a
-//! threshold on an auxiliary variable of its own. `--restrict-task` builds it
+//! threshold on an auxiliary variable of its own. `--transform icaps26_restrict` builds it
 //! instead of the standard restriction whenever the search uses
 //! `icaps26_cartesian`.
 
@@ -17,15 +17,22 @@ use planforge_sas::numeric_task::{
     NumericType, NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorIndex, Task,
     TaskParts, VariableIndex, ZERO_VALUE,
 };
-use planforge_search::heuristic_factory::TaskRestriction;
+use planforge_search::heuristic_factory::EmptyConfig;
+use planforge_search::task_transformations::TransformationFeature;
 use planforge_search::task_transformations::restriction::validate_restricted_task;
 use tracing::info;
 
-/// The restriction `icaps26_cartesian` requires of `--restrict-task`.
-pub(crate) const RESTRICTION: TaskRestriction = TaskRestriction {
-    name: "icaps26",
-    build: build_icaps26_restricted_task,
-};
+/// `icaps26_restrict()`: the restriction `icaps26_cartesian` requires.
+pub struct Icaps26RestrictFeature;
+
+impl TransformationFeature for Icaps26RestrictFeature {
+    const NAME: &'static str = "icaps26_restrict";
+    type Config = EmptyConfig;
+
+    fn apply(_: &EmptyConfig, task: Task) -> Result<Task> {
+        Ok(build_icaps26_restricted_task(&task)?.unwrap_or(task))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 struct AffineExpression {

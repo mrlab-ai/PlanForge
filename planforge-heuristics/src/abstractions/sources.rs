@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use planforge_search::config::{ApplyOptions, ConfigError, TimeLimit};
 use planforge_search::heuristic_factory::{EmptyConfig, HeuristicBuildError, TaskRequirements};
 use planforge_search::resource_limits::{Deadline, min_time_limit};
+use planforge_search::task_transformations::TransformationFeature;
 
 use crate::abstractions::cartesian::CartesianAbstractionGenerator;
 use crate::abstractions::collections::config::{CollectionConfig, MemberConfig};
@@ -103,8 +104,9 @@ impl AbstractionSource {
         TaskRequirements {
             restricted: matches!(self, Self::Pdb(_) | Self::Icaps26Cartesian(_)),
             abstractable_goal: true,
-            restriction: matches!(self, Self::Icaps26Cartesian(_))
-                .then_some(crate::abstractions::icaps26::RESTRICTION),
+            transformation: matches!(self, Self::Icaps26Cartesian(_)).then_some(
+                <crate::abstractions::icaps26::Icaps26RestrictFeature as TransformationFeature>::NAME,
+            ),
         }
     }
 

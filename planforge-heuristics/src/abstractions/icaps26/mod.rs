@@ -58,7 +58,7 @@ use flaws::*;
 pub use generator::*;
 use planforge_sas::numeric_task::Task;
 use planforge_search::graph::{backward_goal_distances, no_limit};
-pub(crate) use restriction::RESTRICTION;
+pub use restriction::Icaps26RestrictFeature;
 use semantics::*;
 use split::*;
 use split_selection::*;
