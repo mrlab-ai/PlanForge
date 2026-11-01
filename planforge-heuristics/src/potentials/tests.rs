@@ -1207,3 +1207,41 @@ fn a_decreasable_precondition_does_not_strengthen_the_goal() {
     let (value, _) = optimize_initial(threshold_achiever_task(true));
     assert!((value - 1.0).abs() < 1e-7, "got {value}");
 }
+
+/// The translator's encoding of a task whose goal it proved unreachable: no
+/// operators. Sampling walks cannot move, so every sample is the initial
+/// state, and the portfolio must still be built.
+#[test]
+fn sampling_a_task_without_operators_yields_the_initial_state() {
+    let task = Arc::new(Task::new(TaskParts {
+        metric: Metric::new(false, None),
+        variables: vec![ExplicitVariable::new(
+            2,
+            "unreachable".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        )],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: None,
+    }));
+    let mut config = NumericPotentialConfig::default();
+    config.opt = OptimizeFor::DiverseSamples;
+    config.num_samples = 4;
+    let max_potential = config.max_potential;
+    let mut heuristic = NumericPotentialHeuristic::from_config(task.clone(), config).unwrap();
+    let mut registry = StateRegistry::for_task(task.clone());
+    let initial = registry.get_initial_state();
+    let h = heuristic
+        .evaluate(&EvaluationState::new(&initial, &task, &registry))
+        .unwrap();
+    assert_eq!(h, max_potential);
+}
