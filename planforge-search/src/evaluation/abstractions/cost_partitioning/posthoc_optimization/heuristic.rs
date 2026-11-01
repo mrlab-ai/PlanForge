@@ -36,7 +36,7 @@ use planforge_cplex::{
     Constraint as LpConstraint, Model as LpModel, ObjectiveSense, SolveStatus, Variable,
     assert_unrestricted_license,
 };
-use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use planforge_sas::utils::float_tolerance;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -59,7 +59,7 @@ pub struct PostHocOptimizationHeuristic<'task> {
     lp_model: LpModel,
     /// Estimates by the state ids of the search's registry.
     state_value_cache: StateValueCache,
-    values: ExplicitState,
+    numeric_values: Vec<NumericValue>,
     h_values: Vec<f64>,
 }
 
@@ -103,7 +103,7 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             constraints,
             lp_model,
             state_value_cache: StateValueCache::default(),
-            values: ExplicitState::default(),
+            numeric_values: Vec::new(),
             h_values: Vec::new(),
         })
     }
@@ -112,11 +112,11 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
-        eval_state.fill_values(&mut self.values)?;
+        let state = eval_state.values(&mut self.numeric_values)?;
         let mut h_values = std::mem::take(&mut self.h_values);
         h_values.clear();
         for (component_id, component) in self.components.iter().enumerate() {
-            let value = standalone_estimate(component, component_id, &self.values);
+            let value = standalone_estimate(component, component_id, state);
             if value == f64::INFINITY {
                 self.h_values = h_values;
                 return Ok(f64::INFINITY);

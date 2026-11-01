@@ -1,7 +1,7 @@
+use planforge_sas::explicit_state::StateValues;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
 
 use super::hierarchy::CartesianRefinementHierarchy;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
@@ -75,13 +75,9 @@ impl CegarAbstraction for CartesianAbstraction {
         &mut self.core
     }
 
-    fn abstract_state(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> usize {
-        self.hierarchy.map_state_with(propositional, |var_id| {
-            coordinate_value(&self.views, numeric, var_id)
+    fn abstract_state(&self, state: StateValues<'_>) -> usize {
+        self.hierarchy.map_state_with(state, |var_id| {
+            coordinate_value(&self.views, state.numeric(), var_id)
         })
     }
 

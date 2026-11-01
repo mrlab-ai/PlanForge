@@ -2,8 +2,8 @@
 //! construction and use, for domain and Cartesian abstractions alike.
 
 use anyhow::Result;
-use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex};
+use planforge_sas::explicit_state::StateValues;
+use planforge_sas::numeric_task::{NumericValue, OperatorIndex};
 
 use super::cegar::progression::ConcretePlan;
 use super::cegar::refine::CegarOutcome;
@@ -143,11 +143,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
     fn core_mut(&mut self) -> &mut AbstractionCore;
 
     /// The abstract state containing the concrete state with these values.
-    fn abstract_state(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> usize;
+    fn abstract_state(&self, state: StateValues<'_>) -> usize;
 
     /// Drops the transitions, which only cost partitioning reads. Lookups
     /// stay intact; saturation fails afterwards.
@@ -220,8 +216,8 @@ pub trait CegarAbstraction: std::fmt::Debug {
 
     /// The goal distance of the abstract state of the concrete state with
     /// these values.
-    fn goal_distance(&self, propositional: &[ExplicitValueIndex], numeric: &[NumericValue]) -> f64 {
-        self.core().distances[self.abstract_state(propositional, numeric)]
+    fn goal_distance(&self, state: StateValues<'_>) -> f64 {
+        self.core().distances[self.abstract_state(state)]
     }
 }
 
@@ -258,7 +254,7 @@ pub(crate) fn finish_abstraction(
 pub struct AbstractionHeuristic<A> {
     name: String,
     abstraction: A,
-    values: ExplicitState,
+    numeric: Vec<NumericValue>,
 }
 
 impl<A: CegarAbstraction> AbstractionHeuristic<A> {
@@ -266,7 +262,7 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
         Self {
             name: name.into(),
             abstraction,
-            values: ExplicitState::default(),
+            numeric: Vec::new(),
         }
     }
 
@@ -277,10 +273,8 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
 
 impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
     fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        eval_state.fill_values(&mut self.values)?;
-        Ok(self
-            .abstraction
-            .goal_distance(&self.values.propositional, &self.values.numeric))
+        let state = eval_state.values(&mut self.numeric)?;
+        Ok(self.abstraction.goal_distance(state))
     }
 
     fn proves_initial_state_optimal(&self) -> bool {

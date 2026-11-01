@@ -1,3 +1,4 @@
+use planforge_sas::explicit_state::StateValues;
 use std::sync::Arc;
 
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
@@ -47,7 +48,7 @@ fn initial_state(task: &NumericRootTask) -> ExplicitState {
 }
 
 fn value(pdb: &PatternDatabase<'_>, state: &ExplicitState) -> f64 {
-    pdb.value(&state.propositional, &state.numeric)
+    pdb.value(StateValues::new(&state.propositional, &state.numeric))
 }
 
 fn propositional(values: &[usize]) -> Vec<ExplicitValueIndex> {
@@ -477,9 +478,9 @@ fn propositional_projection_is_explored_in_full() {
 
     assert!(pdb.is_exhausted());
     assert_eq!(pdb.num_states(), 3);
-    assert_eq!(pdb.value(&propositional(&[0]), &[]), 10.0);
-    assert_eq!(pdb.value(&propositional(&[1]), &[]), 5.0);
-    assert_eq!(pdb.value(&propositional(&[2]), &[]), 0.0);
+    assert_eq!(pdb.value(StateValues::new(&propositional(&[0]), &[])), 10.0);
+    assert_eq!(pdb.value(StateValues::new(&propositional(&[1]), &[])), 5.0);
+    assert_eq!(pdb.value(StateValues::new(&propositional(&[2]), &[])), 0.0);
 }
 
 #[test]
@@ -488,8 +489,8 @@ fn unreachable_state_of_an_exhausted_projection_is_a_dead_end() {
     let pdb = build(&task, &regular_pattern(0), 1);
 
     assert!(pdb.is_exhausted());
-    assert_eq!(pdb.value(&propositional(&[0]), &[]), 4.0);
-    assert_eq!(pdb.value(&propositional(&[3]), &[]), 1.0);
+    assert_eq!(pdb.value(StateValues::new(&propositional(&[0]), &[])), 4.0);
+    assert_eq!(pdb.value(StateValues::new(&propositional(&[3]), &[])), 1.0);
 }
 
 #[test]
@@ -533,10 +534,10 @@ fn failed_lookup_is_zero_at_an_abstract_goal_and_blind_elsewhere() {
     let pdb = build(&task, &counter_pattern(), 3);
 
     assert_eq!(
-        pdb.abstract_state_id(
+        pdb.abstract_state_id(StateValues::new(
             &counter_state(7.0, 0).propositional,
             &counter_state(7.0, 0).numeric
-        ),
+        )),
         None
     );
     assert_eq!(value(&pdb, &counter_state(7.0, 0)), 0.0);
@@ -621,7 +622,10 @@ fn relevant_operators_of_an_exhausted_projection_label_a_transition() {
 fn cost_partitioned_tables_saturate_the_operator_costs() {
     let task = truncated_chain_task();
     let pdb = build(&task, &regular_pattern(0), 32);
-    let id = |p| pdb.abstract_state_id(&propositional(&[p]), &[]).unwrap();
+    let id = |p| {
+        pdb.abstract_state_id(StateValues::new(&propositional(&[p]), &[]))
+            .unwrap()
+    };
 
     let (distances, saturated) = pdb.build_cost_partitioned_distance_table(&[3.0, 4.0]);
     assert_eq!(distances[id(0)], 7.0);

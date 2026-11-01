@@ -1,10 +1,10 @@
 //! The working abstraction as CEGAR's flaw search sees it.
 
+use planforge_sas::explicit_state::StateValues;
 use std::borrow::Cow;
 use std::collections::HashSet;
 
 use anyhow::{Context, Result, ensure};
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
 
 use super::distances::{ShortestPaths, update_shortest_paths_after_split};
 use super::refinement::{SplitStates, replacement_transitions};
@@ -71,17 +71,11 @@ impl AbstractionView for CartesianView<'_> {
         self.working.states().len()
     }
 
-    fn abstract_state(
-        &self,
-        propositions: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> usize {
+    fn abstract_state(&self, state: StateValues<'_>) -> usize {
         let views = self.semantics.cegar().coordinates().views();
-        self.working
-            .hierarchy()
-            .map_state_with(propositions, |var_id| {
-                coordinate_value(views, numeric, var_id)
-            })
+        self.working.hierarchy().map_state_with(state, |var_id| {
+            coordinate_value(views, state.numeric(), var_id)
+        })
     }
 
     fn region(&self, state: usize) -> Cow<'_, CartesianSet> {

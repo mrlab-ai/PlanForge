@@ -1,3 +1,4 @@
+use planforge_sas::explicit_state::StateValues;
 use planforge_sas::utils::interval::Interval;
 
 use super::*;
@@ -436,10 +437,10 @@ fn first_plan_step(
     let function = identity_cutpoint_function(task).unwrap();
     let mut refinement = DomainRefinement::new(task, function, limits, &config);
     let view = refinement.view(Deadline::NONE).unwrap();
-    let initial = view.abstract_state(
+    let initial = view.abstract_state(StateValues::new(
         task.initial_propositional_values(),
         task.initial_numeric_values(),
-    );
+    ));
     view.step_operators(&view.optimal_transition(initial).unwrap())
         .to_vec()
 }

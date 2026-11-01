@@ -6,7 +6,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::explicit_state::{ExplicitState, StateValues};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
@@ -374,7 +374,7 @@ impl<'task> HillClimbing<'task> {
                 .zip(&sample_h)
                 .filter(|&((sample, values), &h_collection)| {
                     raises_canonical_value(
-                        candidate.pdb.value(&sample.propositional, &sample.numeric),
+                        candidate.pdb.value(StateValues::from(sample)),
                         values,
                         h_collection,
                         &subsets,
@@ -466,7 +466,7 @@ impl<'task> Collection<'task> {
     fn values(&self, state: &ExplicitState) -> Vec<f64> {
         self.pdbs
             .iter()
-            .map(|pdb| pdb.value(&state.propositional, &state.numeric))
+            .map(|pdb| pdb.value(StateValues::from(state)))
             .collect()
     }
 
@@ -488,10 +488,9 @@ impl<'task> Collection<'task> {
     }
 
     fn is_dead_end(&self, state: &ExplicitState) -> bool {
-        self.pdbs.iter().any(|pdb| {
-            pdb.value(&state.propositional, &state.numeric)
-                .is_infinite()
-        })
+        self.pdbs
+            .iter()
+            .any(|pdb| pdb.value(StateValues::from(state)).is_infinite())
     }
 
     /// Every maximal additive subset, restricted to the pattern databases

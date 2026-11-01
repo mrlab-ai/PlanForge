@@ -2,6 +2,7 @@
 //! abstract plan, refine one, and repeat until the plan is concrete, the
 //! refinement root is an abstract dead end, or a limit is reached.
 
+use planforge_sas::explicit_state::StateValues;
 use std::time::Instant;
 
 use anyhow::{Result, ensure};
@@ -127,10 +128,7 @@ pub(crate) fn refine<R: Refinable>(
             let split = match check_abstract_plan(&view, run)? {
                 PlanCheck::ConcretePlan(plan) => {
                     validate_concrete_plan(run.semantics, run.refinement_root, &plan)?;
-                    let root = view.abstract_state(
-                        &run.refinement_root.propositional,
-                        &run.refinement_root.numeric,
-                    );
+                    let root = view.abstract_state(StateValues::from(run.refinement_root));
                     let root_distance = view.goal_distance(root);
                     ensure!(
                         (plan.cost() - root_distance).abs() <= float_tolerance::AGREEMENT_EPSILON,

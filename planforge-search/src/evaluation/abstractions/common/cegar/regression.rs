@@ -41,6 +41,7 @@ mod tests;
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
     VariableIndex,
@@ -540,8 +541,7 @@ pub(crate) fn regression_plan_check(
     refinement_root: &ExplicitState,
     scope: FlawScope,
 ) -> Result<PlanCheck> {
-    let initial_state =
-        view.abstract_state(&refinement_root.propositional, &refinement_root.numeric);
+    let initial_state = view.abstract_state(StateValues::from(refinement_root));
     if !view.goal_distance(initial_state).is_finite() {
         return Ok(PlanCheck::AbstractDeadEnd);
     }

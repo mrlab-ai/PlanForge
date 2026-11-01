@@ -1,7 +1,6 @@
+use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use tracing::info;
-
-use planforge_sas::explicit_state::ExplicitState;
 
 use super::lookup::{CostPartitioningHeuristic, abstract_state_ids_into};
 use super::{OrderSelection, ScpBuilder};
@@ -24,7 +23,7 @@ impl<'task> ScpBuilder<'task> {
         deadline: Deadline,
     ) -> Result<Vec<Vec<Option<usize>>>, EvaluationError> {
         let mut sampler = RandomWalkSampler::new(self.task.clone());
-        let mut values = ExplicitState::default();
+        let mut numeric = Vec::new();
         let mut ids = Vec::new();
         let mut samples = Vec::new();
 
@@ -32,7 +31,7 @@ impl<'task> ScpBuilder<'task> {
             components,
             sampler.initial_state(),
             sampler.registry(),
-            &mut values,
+            &mut numeric,
             &mut ids,
         )?;
         samples.push(ids.clone());
@@ -47,7 +46,7 @@ impl<'task> ScpBuilder<'task> {
                         components,
                         walk_state,
                         registry,
-                        &mut values,
+                        &mut numeric,
                         &mut ids,
                     )?;
                     Ok(dead_end_cp.compute_heuristic(&ids).is_infinite())
@@ -60,7 +59,7 @@ impl<'task> ScpBuilder<'task> {
                 components,
                 &sample,
                 sampler.registry(),
-                &mut values,
+                &mut numeric,
                 &mut ids,
             )?;
             samples.push(ids.clone());
@@ -83,10 +82,10 @@ impl<'task> ScpBuilder<'task> {
         components: &[AbstractionComponent<'_>],
         concrete_state: &ConcreteState,
         registry: &StateRegistry<'task>,
-        values: &mut ExplicitState,
+        numeric: &mut Vec<NumericValue>,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
         let eval_state = EvaluationState::new(concrete_state, &*self.task, registry);
-        abstract_state_ids_into(components, &eval_state, None, values, ids)
+        abstract_state_ids_into(components, &eval_state, None, numeric, ids)
     }
 }

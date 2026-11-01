@@ -1,4 +1,4 @@
-use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::numeric_task::TaskRef;
 use planforge_sas::state_registry::StateRegistry;
 use rand::{SeedableRng, rngs::SmallRng};
@@ -64,7 +64,7 @@ pub struct SaturatedCostPartitioningHeuristic<'task> {
     /// The components some lookup table reads, the only ones a state is
     /// mapped into.
     lookup_mask: Vec<bool>,
-    state_values: ExplicitState,
+    numeric_values: Vec<NumericValue>,
     abstract_state_ids: Vec<Option<usize>>,
 }
 
@@ -145,7 +145,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             rng: SmallRng::seed_from_u64(config.random_seed),
         };
 
-        let mut state_values = ExplicitState::default();
+        let mut numeric_values = Vec::new();
         let mut abstract_state_ids = Vec::new();
         {
             let mut registry = StateRegistry::for_task(task.clone());
@@ -154,7 +154,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 &components,
                 &EvaluationState::new(&initial_state, &*task, &registry),
                 None,
-                &mut state_values,
+                &mut numeric_values,
                 &mut abstract_state_ids,
             )?;
         }
@@ -196,7 +196,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             components,
             cost_partitionings,
             lookup_mask,
-            state_values,
+            numeric_values,
             abstract_state_ids,
         })
     }
@@ -285,7 +285,7 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
             &self.components,
             eval_state,
             Some(&self.lookup_mask),
-            &mut self.state_values,
+            &mut self.numeric_values,
             &mut self.abstract_state_ids,
         )?;
         Ok(compute_max_h(

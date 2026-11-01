@@ -7,7 +7,7 @@ use crate::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
 };
 
-use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::NumericValue;
 
 use super::standalone_estimate;
 use crate::evaluation::abstractions::component::AbstractionComponent;
@@ -15,7 +15,7 @@ use crate::evaluation::abstractions::component::AbstractionComponent;
 pub struct MaxAbstractionHeuristic<'task> {
     name: String,
     components: Vec<AbstractionComponent<'task>>,
-    state_values: ExplicitState,
+    numeric_values: Vec<NumericValue>,
 }
 
 impl<'task> MaxAbstractionHeuristic<'task> {
@@ -31,21 +31,17 @@ impl<'task> MaxAbstractionHeuristic<'task> {
         Ok(Self {
             name: name.unwrap_or_else(|| "max_abstractions".to_string()),
             components,
-            state_values: ExplicitState::default(),
+            numeric_values: Vec::new(),
         })
     }
 }
 
 impl Heuristic for MaxAbstractionHeuristic<'_> {
     fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        eval_state.fill_values(&mut self.state_values)?;
+        let state = eval_state.values(&mut self.numeric_values)?;
         let mut best = 0.0_f64;
         for (component_id, component) in self.components.iter().enumerate() {
-            best = best.max(standalone_estimate(
-                component,
-                component_id,
-                &self.state_values,
-            ));
+            best = best.max(standalone_estimate(component, component_id, state));
         }
         Ok(best)
     }

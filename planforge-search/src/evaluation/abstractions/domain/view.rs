@@ -1,13 +1,12 @@
 //! A domain abstraction with its goal distances, as CEGAR's flaw search sees
 //! it.
 
+use planforge_sas::explicit_state::StateValues;
 use std::borrow::Cow;
 use std::cell::RefCell;
 
 use anyhow::{Context, Result};
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use rustc_hash::FxHashMap;
 
 use super::config::DomainAbstractionConfig;
@@ -41,12 +40,8 @@ impl AbstractionView for DomainView<'_> {
         self.built.distances.len()
     }
 
-    fn abstract_state(
-        &self,
-        propositions: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> usize {
-        self.function.abstract_state(propositions, numeric)
+    fn abstract_state(&self, state: StateValues<'_>) -> usize {
+        self.function.abstract_state(state)
     }
 
     fn region(&self, state: usize) -> Cow<'_, CartesianSet> {

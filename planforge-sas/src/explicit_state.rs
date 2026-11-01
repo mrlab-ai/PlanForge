@@ -55,6 +55,82 @@ impl ExplicitState {
     }
 }
 
+/// The values of a state as lookups read them: the numeric values decoded and
+/// closed under the arithmetic axioms, the propositional values either decoded
+/// or read on demand from a registered state's packed bins.
+///
+/// An abstraction tests a few variables of a state; reading those from the
+/// packed bins spares decoding all of them for every evaluated state.
+#[derive(Clone, Copy)]
+pub struct StateValues<'a> {
+    propositional: PropositionalValues<'a>,
+    numeric: &'a [NumericValue],
+}
+
+#[derive(Clone, Copy)]
+enum PropositionalValues<'a> {
+    Decoded(&'a [ExplicitValueIndex]),
+    /// The bins of a concrete-state packer, whose propositional variables are
+    /// its first slots.
+    Packed {
+        packer: &'a StatePacker,
+        bins: &'a [u64],
+    },
+}
+
+impl<'a> StateValues<'a> {
+    pub fn new(propositional: &'a [ExplicitValueIndex], numeric: &'a [NumericValue]) -> Self {
+        Self {
+            propositional: PropositionalValues::Decoded(propositional),
+            numeric,
+        }
+    }
+
+    /// The values of a state packed into `bins` by `packer`.
+    pub fn packed(packer: &'a StatePacker, bins: &'a [u64], numeric: &'a [NumericValue]) -> Self {
+        Self {
+            propositional: PropositionalValues::Packed { packer, bins },
+            numeric,
+        }
+    }
+
+    /// The value of propositional variable `var`.
+    #[inline]
+    pub fn propositional(&self, var: usize) -> ExplicitValueIndex {
+        match self.propositional {
+            PropositionalValues::Decoded(values) => values[var],
+            PropositionalValues::Packed { packer, bins } => {
+                debug_assert!(var < packer.numeric_slot_offset());
+                ExplicitValueIndex::from_usize(packer.get(bins, var) as usize)
+            }
+        }
+    }
+
+    /// The number of propositional variables.
+    pub fn num_propositional(&self) -> usize {
+        match self.propositional {
+            PropositionalValues::Decoded(values) => values.len(),
+            PropositionalValues::Packed { packer, .. } => packer.numeric_slot_offset(),
+        }
+    }
+
+    pub fn numeric(&self) -> &'a [NumericValue] {
+        self.numeric
+    }
+
+    /// Writes the propositional values into `output`.
+    pub fn fill_propositional(&self, output: &mut Vec<ExplicitValueIndex>) {
+        output.clear();
+        output.extend((0..self.num_propositional()).map(|var| self.propositional(var)));
+    }
+}
+
+impl<'a> From<&'a ExplicitState> for StateValues<'a> {
+    fn from(state: &'a ExplicitState) -> Self {
+        Self::new(&state.propositional, &state.numeric)
+    }
+}
+
 /// The states of a task as explicit values: its initial state, successors and
 /// goal test.
 ///

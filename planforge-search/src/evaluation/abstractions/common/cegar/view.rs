@@ -1,11 +1,12 @@
 //! What CEGAR's flaw search and split selection read from an abstraction
 //! under refinement.
 
+use planforge_sas::explicit_state::StateValues;
 use std::borrow::Cow;
 use std::collections::HashSet;
 
 use anyhow::Result;
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex};
+use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
 
 use super::CegarStopReason;
 use super::initial_splits::RefinementScope;
@@ -51,11 +52,7 @@ pub(crate) trait AbstractionView {
     fn num_states(&self) -> usize;
 
     /// The abstract state containing the concrete state with these values.
-    fn abstract_state(
-        &self,
-        propositions: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> usize;
+    fn abstract_state(&self, state: StateValues<'_>) -> usize;
 
     /// The concrete states abstract state `state` stands for.
     fn region(&self, state: usize) -> Cow<'_, CartesianSet>;

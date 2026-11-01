@@ -2,8 +2,7 @@
 //! abstract ones, its goal distances, and, until discarded, its transitions.
 
 use anyhow::{Context, Result};
-
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
+use planforge_sas::explicit_state::StateValues;
 
 use super::function::{DomainAbstractionFunction, DomainTransitions, source_set_within};
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
@@ -78,12 +77,8 @@ impl CegarAbstraction for DomainAbstraction {
         &mut self.core
     }
 
-    fn abstract_state(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> usize {
-        self.function.abstract_state(propositional, numeric)
+    fn abstract_state(&self, state: StateValues<'_>) -> usize {
+        self.function.abstract_state(state)
     }
 
     fn discard_transitions(&mut self) {

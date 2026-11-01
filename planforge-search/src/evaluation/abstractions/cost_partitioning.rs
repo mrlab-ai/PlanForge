@@ -8,7 +8,7 @@ pub mod max;
 pub mod posthoc_optimization;
 pub mod saturated;
 
-use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::explicit_state::StateValues;
 
 use crate::evaluation::abstractions::component::AbstractionComponent;
 /// The goal distance that `component`, the `component_id`-th of a
@@ -18,7 +18,7 @@ use crate::evaluation::abstractions::component::AbstractionComponent;
 fn standalone_estimate(
     component: &AbstractionComponent<'_>,
     component_id: usize,
-    values: &ExplicitState,
+    values: StateValues<'_>,
 ) -> f64 {
     let value = component.standalone_value(values);
     assert!(

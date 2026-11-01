@@ -1,5 +1,6 @@
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::explicit_state::StateValues;
 
 use planforge_sas::numeric_conditions::ConditionValue;
 
@@ -501,10 +502,10 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
             } else {
                 ConditionValue::False
             };
-            let h = component.standalone_value(&ExplicitState {
+            let h = component.standalone_value(StateValues::from(&ExplicitState {
                 propositional: vec![ExplicitValueIndex::from_usize(goal_value.as_usize())],
                 numeric: [x, 1.0, 20.0].map(NumericValue::new).to_vec(),
-            });
+            }));
             assert_eq!(
                 h,
                 20.0 - x,

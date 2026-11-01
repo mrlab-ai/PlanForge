@@ -1,8 +1,9 @@
+use planforge_sas::explicit_state::StateValues;
 use std::sync::Arc;
 
 use anyhow::Result;
 use planforge_sas::numeric_conditions::ConditionValue;
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericValue};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact};
 use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
 use planforge_sas::utils::interval::Interval;
 
@@ -332,23 +333,20 @@ impl DomainAbstractionFunction {
 
     /// The abstract state of the task's initial state.
     pub(crate) fn initial_state(&self, task: &dyn AbstractNumericTask) -> usize {
-        self.abstract_state(
+        self.abstract_state(StateValues::new(
             task.initial_propositional_values(),
             task.initial_numeric_values(),
-        )
+        ))
     }
 
     /// The abstract state containing the concrete state with these values.
     /// Coordinates with an additive view are evaluated through it.
-    pub(crate) fn abstract_state(
-        &self,
-        propositions: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> usize {
+    pub(crate) fn abstract_state(&self, state: StateValues<'_>) -> usize {
+        let numeric = state.numeric();
         let domain_sizes = self.layout.domain_sizes();
         let numeric_domain_sizes = self.layout.numeric_domain_sizes();
         assert_eq!(
-            propositions.len(),
+            state.num_propositional(),
             domain_sizes.len(),
             "a concrete state has a value for every propositional variable"
         );
@@ -362,12 +360,13 @@ impl DomainAbstractionFunction {
         // A variable with one abstract value contributes nothing. A state of
         // the task has a value of its domain in every variable and a finite
         // value, which some partition contains, in every numeric variable.
-        let mut state: usize = 0;
-        for (var, &concrete_value) in propositions.iter().enumerate() {
-            if domain_sizes[var] == 1 {
+        let mut abstract_state: usize = 0;
+        for (var, &domain_size) in domain_sizes.iter().enumerate() {
+            if domain_size == 1 {
                 continue;
             }
-            state += multipliers[var] * self.domain_mapping[var][concrete_value.index()].index();
+            abstract_state += multipliers[var]
+                * self.domain_mapping[var][state.propositional(var).index()].index();
         }
 
         for num_var_id in (0..numeric_domain_sizes.len()).map(VariableIndex::from_usize) {
@@ -384,9 +383,9 @@ impl DomainAbstractionFunction {
                 .unwrap_or_else(|| {
                     panic!("numeric value {val} is in no partition of numeric var {num_var_id}")
                 });
-            state += multipliers[abs_var.index()] * part;
+            abstract_state += multipliers[abs_var.index()] * part;
         }
 
-        state
+        abstract_state
     }
 }
