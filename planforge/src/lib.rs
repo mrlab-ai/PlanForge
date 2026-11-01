@@ -29,9 +29,7 @@ use limits::{
     parse_time_limit,
 };
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::{
-    HeuristicEntry, ensure_heuristics_registered, register_heuristics,
-};
+use planforge_search::heuristic_factory::{HEURISTICS, HeuristicEntry};
 use planforge_search::search::{SearchConfig, SearchResult, solve_task};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_transformations::restriction::build_restricted_task;
@@ -86,7 +84,7 @@ pub fn init_logger(level: LevelFilter) {
 /// Registers PlanForge's heuristics unless they are registered already, for
 /// a program that uses the library rather than [`run_with_heuristics`].
 pub fn register_planforge_heuristics() {
-    ensure_heuristics_registered(planforge_heuristics::heuristics);
+    HEURISTICS.ensure_registered(planforge_heuristics::heuristics);
 }
 
 /// Run the standard PlanForge CLI, with extra heuristics registered next to
@@ -95,7 +93,9 @@ pub fn register_planforge_heuristics() {
 pub fn run_with_heuristics(extra: Vec<HeuristicEntry>) -> std::io::Result<()> {
     let mut heuristics = planforge_heuristics::heuristics();
     heuristics.extend(extra);
-    register_heuristics(heuristics).map_err(std::io::Error::other)?;
+    HEURISTICS
+        .register(heuristics)
+        .map_err(std::io::Error::other)?;
 
     let cli = PlannersCli::parse();
     init_logger(
@@ -252,7 +252,7 @@ pub fn run_command(
         PlanforgeCommand::Heuristics => {
             print!(
                 "{}",
-                planforge_search::heuristic_factory::heuristic_reference()
+                planforge_search::heuristic_factory::HEURISTICS.reference()
             );
             Ok(())
         }

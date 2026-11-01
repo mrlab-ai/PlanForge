@@ -4,9 +4,8 @@ use planforge_search::config::*;
 use planforge_search::search::*;
 
 fn register() {
-    planforge_search::heuristic_factory::ensure_heuristics_registered(
-        planforge_heuristics::heuristics,
-    );
+    planforge_search::heuristic_factory::HEURISTICS
+        .ensure_registered(planforge_heuristics::heuristics);
 }
 
 fn astar_heuristic(input: &str) -> ConfigCall {

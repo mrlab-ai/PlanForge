@@ -50,5 +50,5 @@ pub fn heuristics() -> Vec<HeuristicEntry> {
 /// Registers [`heuristics`] for a test process.
 #[cfg(test)]
 pub(crate) fn register_heuristics_for_tests() {
-    planforge_search::heuristic_factory::ensure_heuristics_registered(heuristics);
+    planforge_search::heuristic_factory::HEURISTICS.ensure_registered(heuristics);
 }

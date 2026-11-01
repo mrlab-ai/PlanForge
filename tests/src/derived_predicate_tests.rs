@@ -439,9 +439,8 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
         ),
     );
 
-    planforge_search::heuristic_factory::ensure_heuristics_registered(
-        planforge_heuristics::heuristics,
-    );
+    planforge_search::heuristic_factory::HEURISTICS
+        .ensure_registered(planforge_heuristics::heuristics);
     let task_ref: Arc<Task> = Arc::new(task.clone());
     let pdb = HeuristicConfig::from_spec(&parse_call("pdb(patterns=greedy())").unwrap())
         .unwrap()

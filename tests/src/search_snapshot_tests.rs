@@ -153,9 +153,8 @@ fn snapshot(instances: &[(String, String)]) -> String {
 #[test]
 #[ignore = "semantic gate; run with --release -- --ignored search_snapshot"]
 fn search_snapshot() {
-    planforge_search::heuristic_factory::ensure_heuristics_registered(
-        planforge_heuristics::heuristics,
-    );
+    planforge_search::heuristic_factory::HEURISTICS
+        .ensure_registered(planforge_heuristics::heuristics);
     let actual = snapshot(&instances());
     let path = snapshot_path();
     if std::env::var_os("PLANFORGE_BLESS").is_some() {
