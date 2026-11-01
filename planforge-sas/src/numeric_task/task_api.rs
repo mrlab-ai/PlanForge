@@ -1,161 +1,8 @@
 mod linear_normal_form;
 use super::*;
+use std::sync::Arc;
 
-/// A planning task the search can read.
-///
-/// The trait is read-only: a task's initial state is closed under its axioms
-/// once, when the task is built, so nothing needs to mutate it afterwards.
-/// That is what lets the trait require `Send + Sync`, which in turn makes
-/// [`TaskRef`] shareable across threads.
-pub trait AbstractNumericTask: Send + Sync {
-    fn variables(&self) -> &[ExplicitVariable];
-    fn numeric_variables(&self) -> &[NumericVariable];
-
-    /// The propositional variable `var`.
-    fn variable(&self, var: VariableIndex) -> &ExplicitVariable {
-        &self.variables()[var.index()]
-    }
-
-    /// The type of numeric variable `var`.
-    fn numeric_type(&self, var: VariableIndex) -> NumericType {
-        self.numeric_variables()[var.index()].numeric_type()
-    }
-
-    /// What determines the value of propositional variable `var`.
-    fn variable_kind(&self, var: VariableIndex) -> VariableKind {
-        if self.numeric_conditions().is_condition_var(var) {
-            VariableKind::Condition
-        } else if self.variable(var).axiom_layer().is_some() {
-            VariableKind::Derived
-        } else {
-            VariableKind::Regular
-        }
-    }
-    fn assignment_axioms(&self) -> &[AssignmentAxiom];
-    fn comparison_axioms(&self) -> &[ComparisonAxiom];
-    /// The task's numeric conditions, one per comparison axiom, built once
-    /// when the task is constructed. This is the only place the
-    /// "propositional variable -> comparison axiom" mapping lives.
-    ///
-    /// Returned behind an `Arc` so components that outlive the borrow —
-    /// abstraction factories, heuristics — can share the conditions instead
-    /// of rebuilding or deep-copying them. Method calls auto-deref, so
-    /// `task.numeric_conditions().for_var(v)` reads as usual.
-    fn numeric_conditions(&self) -> &Arc<NumericConditions>;
-    fn axioms(&self) -> &[PropositionalAxiom];
-    fn metric(&self) -> &Metric;
-
-    fn fact_name(&self, fact: &ExplicitFact) -> &str;
-
-    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool;
-
-    /// The mutex groups the translator found: within a group, at most one
-    /// fact holds in any reachable state. [`Self::are_facts_mutex`] answers
-    /// the pairwise question; a task derived from this one restricts the
-    /// groups to its own variables.
-    fn mutexes(&self) -> &[Vec<ExplicitFact>];
-
-    fn operators(&self) -> &[Operator];
-
-    fn goals(&self) -> &[ExplicitFact];
-
-    /// The initial values of the propositional variables, already closed
-    /// under the task's axioms.
-    fn initial_propositional_values(&self) -> &[ExplicitValueIndex];
-    /// The initial values of the numeric variables, already closed under the
-    /// task's axioms.
-    fn initial_numeric_values(&self) -> &[NumericValue];
-
-    /// The initial state closed under the task's axioms.
-    fn evaluate_initial_state_values(
-        &self,
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String>;
-
-    /// Effective operator costs in task order. Root tasks compute these once
-    /// when closing the initial state; views can expose the same stored table.
-    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
-        (0..self.operators().len())
-            .map(|id| self.operator_cost(OperatorIndex::from_usize(id)))
-            .collect()
-    }
-
-    /// What applying `operator_id` costs: its declared cost, or the metric
-    /// increase it causes in the initial state.
-    fn operator_cost(&self, operator_id: OperatorIndex) -> f64;
-}
-
-/// Derived task operations shared by every [`AbstractNumericTask`].
-///
-/// Keeping these methods in one blanket implementation prevents reference
-/// wrappers from accidentally inheriting a default instead of forwarding an
-/// implementor's projection or cost semantics.
-pub trait NumericTaskExt: AbstractNumericTask {
-    fn assignment_axiom_lookup(&self) -> Result<Vec<Option<AxiomIndex>>, NumericConditionError> {
-        assignment_axiom_lookup(self.numeric_variables().len(), self.assignment_axioms())
-    }
-
-    fn linearize_numeric_var(
-        &self,
-        numeric_var_id: VariableIndex,
-    ) -> Result<crate::utils::linear_effects::LinearExpression, LinearizationError> {
-        linearize_numeric_var(self, numeric_var_id)
-    }
-
-    fn linearized_assignment_effects(
-        &self,
-        operator_id: OperatorIndex,
-    ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
-        linearize_operator_assignment_effects(self, operator_id)
-    }
-
-    fn regular_numeric_variable_ids(&self) -> Vec<VariableIndex> {
-        self.numeric_variables()
-            .iter()
-            .enumerate()
-            .filter_map(|(numeric_var_id, numeric_var)| {
-                (numeric_var.numeric_type() == NumericType::Regular)
-                    .then_some(VariableIndex::from_usize(numeric_var_id))
-            })
-            .collect()
-    }
-
-    fn is_linear_cost_operator(&self, operator_id: OperatorIndex) -> bool {
-        linear_metric_operator_cost_expression(self, operator_id).is_some()
-    }
-
-    fn operator_cost_coefficients(&self, operator_id: OperatorIndex) -> Vec<f64> {
-        let regular_numeric_variable_ids = self.regular_numeric_variable_ids();
-        linear_metric_operator_cost_expression(self, operator_id)
-            .map(|expression| {
-                regular_numeric_variable_ids
-                    .iter()
-                    .map(|&numeric_var_id| expression.coefficients[numeric_var_id.index()])
-                    .collect()
-            })
-            .unwrap_or_else(|| {
-                todo!(
-                    "requested linear action-cost coefficients for non-linear-cost operator {operator_id}"
-                )
-            })
-    }
-
-    fn operator_cost_constant(&self, operator_id: OperatorIndex) -> f64 {
-        linear_metric_operator_cost_expression(self, operator_id)
-            .map(|expression| expression.constant)
-            .unwrap_or_else(|| {
-                todo!(
-                    "requested linear action-cost constant for non-linear-cost operator {operator_id}"
-                )
-            })
-    }
-}
-
-impl<T: AbstractNumericTask + ?Sized> NumericTaskExt for T {}
-
-pub fn evaluate_metric_from_values<T: AbstractNumericTask + ?Sized>(
-    task: &T,
-    numeric_values: &[NumericValue],
-) -> NumericValue {
+pub fn evaluate_metric_from_values(task: &Task, numeric_values: &[NumericValue]) -> NumericValue {
     let metric_var_id = task.metric().var_id();
     match metric_var_id {
         Some(var_id) => *numeric_values.get(var_id.index()).unwrap_or_else(|| {
@@ -169,8 +16,8 @@ pub fn evaluate_metric_from_values<T: AbstractNumericTask + ?Sized>(
     }
 }
 
-pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
-    task: &T,
+pub fn propagate_assignment_axiom_values(
+    task: &Task,
     numeric_values: &mut [NumericValue],
 ) -> Result<(), AssignmentAxiomError> {
     // Assignment axioms are stored in dependency-layer order, so each RHS is
@@ -191,7 +38,7 @@ pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
 /// as search charges it there: the effects apply simultaneously, conditional
 /// ones where their conditions hold, and the successor is closed under the
 /// axioms. Without a metric, every operator's own cost.
-pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
+pub fn metric_operator_costs(task: &Task) -> Vec<f64> {
     if !task.metric().use_metric() {
         return task
             .operators()
@@ -230,8 +77,8 @@ pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
         .collect()
 }
 
-fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
-    task: &T,
+fn linear_metric_operator_cost_expression(
+    task: &TaskData,
     operator_id: OperatorIndex,
 ) -> Option<crate::utils::linear_effects::LinearExpression> {
     if !task.metric().use_metric() {
@@ -296,89 +143,13 @@ fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
     linear_cost_expression
 }
 
-/// Shared-ownership handle to a task.
-///
-/// `'a` bounds the borrows the task may hold internally: root tasks are
-/// `'static` (`Arc<NumericRootTask>` coerces to `TaskRef<'static>`), while
-/// projected/abstracted tasks borrow their parent and instantiate at the
-/// parent's lifetime.
-pub type TaskRef<'a> = Arc<dyn AbstractNumericTask + 'a>;
-
-/// Delegation impl so a *borrowed* task can be wrapped into a [`TaskRef`]
-/// at sites that don't own the task: `Arc::new(task)` with
-/// `task: &'a dyn AbstractNumericTask` coerces to `TaskRef<'a>`.
-///
-/// Every required task hook forwards to the referent. Derived operations live
-/// in the single [`NumericTaskExt`] blanket implementation, so there are no
-/// default methods here that a reference wrapper can accidentally inherit.
-impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
-    fn variables(&self) -> &[ExplicitVariable] {
-        (**self).variables()
-    }
-    fn numeric_variables(&self) -> &[NumericVariable] {
-        (**self).numeric_variables()
-    }
-    fn assignment_axioms(&self) -> &[AssignmentAxiom] {
-        (**self).assignment_axioms()
-    }
-    fn comparison_axioms(&self) -> &[ComparisonAxiom] {
-        (**self).comparison_axioms()
-    }
-    fn numeric_conditions(&self) -> &Arc<NumericConditions> {
-        (**self).numeric_conditions()
-    }
-    fn axioms(&self) -> &[PropositionalAxiom] {
-        (**self).axioms()
-    }
-    fn metric(&self) -> &Metric {
-        (**self).metric()
-    }
-
-    fn fact_name(&self, fact: &ExplicitFact) -> &str {
-        (**self).fact_name(fact)
-    }
-    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
-        (**self).are_facts_mutex(fact1, fact2)
-    }
-
-    fn mutexes(&self) -> &[Vec<ExplicitFact>] {
-        (**self).mutexes()
-    }
-    fn operators(&self) -> &[Operator] {
-        (**self).operators()
-    }
-
-    fn goals(&self) -> &[ExplicitFact] {
-        (**self).goals()
-    }
-
-    fn initial_propositional_values(&self) -> &[ExplicitValueIndex] {
-        (**self).initial_propositional_values()
-    }
-    fn initial_numeric_values(&self) -> &[NumericValue] {
-        (**self).initial_numeric_values()
-    }
-
-    fn evaluate_initial_state_values(
-        &self,
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        (**self).evaluate_initial_state_values()
-    }
-    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
-        (**self).effective_operator_costs()
-    }
-    fn operator_cost(&self, operator_id: OperatorIndex) -> f64 {
-        (**self).operator_cost(operator_id)
-    }
-}
-
 /// Panic unless every fact `task` exposes names the namespace the task's own
 /// numeric conditions put its variable in.
 ///
 /// A mistagged fact is invisible later: it still denotes a well-formed
 /// variable, just the wrong kind of one, so the search produces a wrong plan
 /// and no crash. That is why this is an assertion and not a diagnostic.
-pub fn assert_fact_namespaces(task: &dyn AbstractNumericTask) {
+pub fn assert_fact_namespaces(task: &Task) {
     let conditions = task.numeric_conditions();
     let check = |fact: &ExplicitFact, origin: &dyn fmt::Display| {
         assert_ne!(
@@ -433,18 +204,29 @@ pub fn assert_fact_namespaces(task: &dyn AbstractNumericTask) {
 /// [`assert_fact_namespaces`] in debug builds only. The check walks every fact
 /// of the task, which is linear in the task size and therefore too costly to
 /// pay for on every release run.
-pub fn debug_assert_fact_namespaces(task: &dyn AbstractNumericTask) {
+pub fn debug_assert_fact_namespaces(task: &Task) {
     if cfg!(debug_assertions) {
         assert_fact_namespaces(task);
     }
 }
 
+/// A planning task: its goal, and the goal-independent rest it shares with
+/// the tasks [`Task::with_goals`] derives from it.
+///
+/// A task is immutable once built. Everything but the goal sits behind one
+/// `Arc`, so cloning a task or giving it another goal copies no operator.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Task {
+    data: Arc<TaskData>,
+    goals: Arc<[ExplicitFact]>,
+}
+
+/// Everything of a [`Task`] but its goal.
 #[derive(Debug, PartialEq)]
-pub struct NumericRootTask {
+pub(crate) struct TaskData {
     metric: Metric,
     variables: Vec<ExplicitVariable>,
     numeric_variables: Vec<NumericVariable>,
-    goals: Vec<ExplicitFact>,
     mutexes: Vec<Vec<ExplicitFact>>,
     mutex_pairs: HashSet<(ExplicitFact, ExplicitFact)>,
     state: Vec<ExplicitValueIndex>,
@@ -458,8 +240,8 @@ pub struct NumericRootTask {
     global_constraint: Option<ExplicitFact>,
 }
 
-/// Everything a root task is built from, before the invariants [`
-/// NumericRootTask::new`] establishes over it.
+/// Everything a task is built from, before the invariants [`Task::new`]
+/// establishes over it.
 ///
 /// This is [`crate::sas_format::SasTaskParts`] after the two conversions the
 /// format needs -- variables carrying their axiom defaults, operators with
@@ -468,7 +250,7 @@ pub struct NumericRootTask {
 /// the task's own, so nothing here is derived: `new` computes the abstract
 /// variable ids, the numeric condition DAG, the fact namespaces and the axiom
 /// closure of the initial state, and none of those can be supplied.
-pub struct NumericRootTaskParts {
+pub struct TaskParts {
     pub metric: Metric,
     pub variables: Vec<ExplicitVariable>,
     pub numeric_variables: Vec<NumericVariable>,
@@ -487,13 +269,13 @@ pub struct NumericRootTaskParts {
     pub global_constraint: Option<ExplicitFact>,
 }
 
-impl NumericRootTask {
-    pub fn new(parts: NumericRootTaskParts) -> Self {
-        let NumericRootTaskParts {
+impl Task {
+    pub fn new(parts: TaskParts) -> Self {
+        let TaskParts {
             metric,
             variables,
             numeric_variables,
-            goals,
+            mut goals,
             mutexes,
             state,
             numeric_state,
@@ -503,11 +285,10 @@ impl NumericRootTask {
             assignment_axioms,
             global_constraint,
         } = parts;
-        let mut task = NumericRootTask {
+        let mut data = TaskData {
             metric,
             variables,
             numeric_variables,
-            goals,
             mutexes,
             mutex_pairs: HashSet::new(),
             state,
@@ -520,26 +301,25 @@ impl NumericRootTask {
             numeric_conditions: Arc::new(NumericConditions::default()),
             global_constraint,
         };
-        task.assert_invariants();
-        task.normalize_linear_comparisons();
-        task.numeric_conditions = Arc::new(
+        data.assert_invariants(&goals);
+        data.normalize_linear_comparisons();
+        data.numeric_conditions = Arc::new(
             NumericConditions::build(
-                task.variables.len(),
-                &task.numeric_variables,
-                &task.comparison_axioms,
-                &task.assignment_axioms,
+                data.variables.len(),
+                &data.numeric_variables,
+                &data.comparison_axioms,
+                &data.assignment_axioms,
             )
             .unwrap_or_else(|error| panic!("malformed numeric axioms in SAS task: {error}")),
         );
         narrow_condition_variables(
-            &task.numeric_conditions,
-            &mut task.variables,
-            &mut task.state,
+            &data.numeric_conditions,
+            &mut data.variables,
+            &mut data.state,
         );
-        task.assign_fact_namespaces();
-        task.assert_invariants();
-        task.close_initial_state_under_axioms();
-        for group in &task.mutexes {
+        data.assign_fact_namespaces(&mut goals);
+        data.assert_invariants(&goals);
+        for group in &data.mutexes {
             for (index, &left) in group.iter().enumerate() {
                 for &right in &group[index + 1..] {
                     let pair = if left <= right {
@@ -547,17 +327,364 @@ impl NumericRootTask {
                     } else {
                         (right, left)
                     };
-                    task.mutex_pairs.insert(pair);
+                    data.mutex_pairs.insert(pair);
                 }
             }
         }
-        task.operator_costs = metric_operator_costs(&task);
+        let mut task = Task {
+            data: Arc::new(data),
+            goals: goals.into(),
+        };
+        // The values a SAS file gives a derived variable are not its initial
+        // values but its axiom *defaults*; the real ones follow from the
+        // axioms. Closing the initial state once here means the initial values
+        // describe a state the search can use as it stands. The closure is a
+        // function of the non-derived variables alone, so it is idempotent,
+        // which makes it safe for a task built out of another task's initial
+        // state. The metric's operator costs are charged in the closed state.
+        let (propositional, numeric) =
+            task.evaluate_initial_state_values()
+                .unwrap_or_else(|error| {
+                    panic!("initial state does not satisfy the task's own axioms: {error}")
+                });
+        task.data_mut().state = propositional;
+        task.data_mut().numeric_state = numeric;
+        let operator_costs = metric_operator_costs(&task);
+        task.data_mut().operator_costs = operator_costs;
         debug_assert_fact_namespaces(&task);
         task
     }
 
+    /// Everything of the task but its goal, for the crate's helpers that do
+    /// not read the goal.
+    #[cfg(test)]
+    pub(crate) fn data(&self) -> &TaskData {
+        &self.data
+    }
+
+    /// The task data while the task is built and not yet shared.
+    fn data_mut(&mut self) -> &mut TaskData {
+        Arc::get_mut(&mut self.data).expect("a task is not shared before it is built")
+    }
+
+    /// This task with `goals` as its goal; everything else is shared.
+    ///
+    /// # Panics
+    /// Panics unless every goal is a fact of the task tagged with its
+    /// variable's namespace.
+    pub fn with_goals(&self, goals: Vec<ExplicitFact>) -> Self {
+        for goal in &goals {
+            self.data.assert_task_fact(goal, "goal");
+            assert_eq!(
+                goal.namespace(),
+                self.data.numeric_conditions.namespace_of(goal.var_index()),
+                "goal {goal:?} is tagged with another namespace than its variable's"
+            );
+        }
+        Self {
+            data: Arc::clone(&self.data),
+            goals: goals.into(),
+        }
+    }
+
+    /// The task with `operator_costs` charged instead of the costs its metric
+    /// implies, for a task derived from another that keeps the other's costs
+    /// while dropping the variables its metric reads.
+    ///
+    /// # Panics
+    /// Panics unless there is one finite, non-negative cost per operator, or
+    /// if the task is already shared.
+    pub fn with_operator_costs(mut self, operator_costs: Vec<f64>) -> Self {
+        assert_eq!(
+            operator_costs.len(),
+            self.data.operators.len(),
+            "one cost per operator"
+        );
+        for (operator_id, &cost) in operator_costs.iter().enumerate() {
+            assert!(
+                cost.is_finite() && cost >= 0.0,
+                "operator {operator_id} costs {cost}, not a finite non-negative cost"
+            );
+        }
+        self.data_mut().operator_costs = operator_costs;
+        self
+    }
+
+    pub fn from_file(file_name: impl AsRef<std::path::Path>) -> Self {
+        Self::try_from_file(file_name).expect("failed to read numeric SAS task")
+    }
+
+    pub fn try_from_file(file_name: impl AsRef<std::path::Path>) -> Result<Self, String> {
+        let path = file_name.as_ref();
+        let file_content = std::fs::read_to_string(path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        Self::try_from_str(&file_content)
+    }
+
+    /// Parse a task from the preprocessor's text format held in memory.
+    /// Equivalent to `try_from_file` minus the disk read; used by the
+    /// in-memory translate→preprocess→search pipeline so the binary
+    /// `output` file never has to materialize on disk.
+    pub fn try_from_str(content: &str) -> Result<Self, String> {
+        match parse_numeric_sas_output(content) {
+            Ok((_, task)) => Ok(task),
+            Err(err) => Err(format!("failed to parse numeric SAS output: {err}")),
+        }
+    }
+
+    pub fn variables(&self) -> &[ExplicitVariable] {
+        &self.data.variables
+    }
+
+    pub fn numeric_variables(&self) -> &[NumericVariable] {
+        &self.data.numeric_variables
+    }
+
+    /// The propositional variable `var`.
+    pub fn variable(&self, var: VariableIndex) -> &ExplicitVariable {
+        &self.data.variables[var.index()]
+    }
+
+    /// The type of numeric variable `var`.
+    pub fn numeric_type(&self, var: VariableIndex) -> NumericType {
+        self.data.numeric_variables[var.index()].numeric_type()
+    }
+
+    /// What determines the value of propositional variable `var`.
+    pub fn variable_kind(&self, var: VariableIndex) -> VariableKind {
+        if self.data.numeric_conditions.is_condition_var(var) {
+            VariableKind::Condition
+        } else if self.variable(var).axiom_layer().is_some() {
+            VariableKind::Derived
+        } else {
+            VariableKind::Regular
+        }
+    }
+
+    pub fn assignment_axioms(&self) -> &[AssignmentAxiom] {
+        &self.data.assignment_axioms
+    }
+
+    pub fn comparison_axioms(&self) -> &[ComparisonAxiom] {
+        &self.data.comparison_axioms
+    }
+
+    /// The task's numeric conditions, one per comparison axiom: the only
+    /// place the "propositional variable -> comparison axiom" mapping lives.
+    /// Behind an `Arc` so components that outlive a borrow of the task can
+    /// share them.
+    pub fn numeric_conditions(&self) -> &Arc<NumericConditions> {
+        &self.data.numeric_conditions
+    }
+
+    pub fn axioms(&self) -> &[PropositionalAxiom] {
+        &self.data.axioms
+    }
+
+    pub fn metric(&self) -> &Metric {
+        &self.data.metric
+    }
+
+    pub fn operators(&self) -> &[Operator] {
+        &self.data.operators
+    }
+
+    pub fn goals(&self) -> &[ExplicitFact] {
+        &self.goals
+    }
+
+    pub fn fact_name(&self, fact: &ExplicitFact) -> &str {
+        // Only facts on genuine propositional variables name a ground atom. A
+        // condition fact carries a numeric condition's truth value and a
+        // numeric-variable fact a partition index; both reuse the variable-id
+        // bits for their own id space, so indexing `variables` with them would
+        // return another variable's atom name.
+        if fact.namespace() != FactNamespace::Propositional {
+            return "";
+        }
+        let variable = self.data.variables.get(fact.var()).unwrap_or_else(|| {
+            panic!(
+                "propositional fact names variable {} but the task has {}",
+                fact.var(),
+                self.data.variables.len()
+            )
+        });
+        // A task assembled in memory rather than parsed may carry no names.
+        variable
+            .fact_names
+            .get(fact.value())
+            .map_or("", String::as_str)
+    }
+
+    /// The mutex groups the translator found: within a group, at most one
+    /// fact holds in any reachable state. [`Self::are_facts_mutex`] answers
+    /// the pairwise question; a task derived from this one restricts the
+    /// groups to its own variables.
+    pub fn mutexes(&self) -> &[Vec<ExplicitFact>] {
+        &self.data.mutexes
+    }
+
+    pub fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
+        if fact1.var() == fact2.var() {
+            return fact1.value() != fact2.value();
+        }
+        let pair = if fact1 <= fact2 {
+            (*fact1, *fact2)
+        } else {
+            (*fact2, *fact1)
+        };
+        self.data.mutex_pairs.contains(&pair)
+    }
+
+    /// The cost of every operator, in task order.
+    pub fn effective_operator_costs(&self) -> &[f64] {
+        &self.data.operator_costs
+    }
+
+    /// What applying `operator_id` costs: its declared cost, or the metric
+    /// increase it causes in the initial state.
+    pub fn operator_cost(&self, operator_id: OperatorIndex) -> f64 {
+        self.data.operator_costs[operator_id.index()]
+    }
+
+    /// The initial values of the propositional variables, closed under the
+    /// task's axioms.
+    pub fn initial_propositional_values(&self) -> &[ExplicitValueIndex] {
+        &self.data.state
+    }
+
+    /// The initial values of the numeric variables, closed under the task's
+    /// axioms.
+    pub fn initial_numeric_values(&self) -> &[NumericValue] {
+        &self.data.numeric_state
+    }
+
+    /// The fact that must hold in every reachable state.
+    ///
+    /// The translator injects a global constraint into every task it writes
+    /// (see `add_global_constraints`); for tasks without real global
+    /// constraints it is a derived atom that is unconditionally true. A task
+    /// derived from another, such as a projection, has none. The search
+    /// engines never consult it, so a verifier that does is strictly stronger
+    /// than they are.
+    pub fn global_constraint(&self) -> Option<&ExplicitFact> {
+        self.data.global_constraint.as_ref()
+    }
+
+    pub fn assignment_axiom_lookup(
+        &self,
+    ) -> Result<Vec<Option<AxiomIndex>>, NumericConditionError> {
+        self.data.assignment_axiom_lookup()
+    }
+
+    pub fn linearize_numeric_var(
+        &self,
+        numeric_var_id: VariableIndex,
+    ) -> Result<crate::utils::linear_effects::LinearExpression, LinearizationError> {
+        self.data.linearize_numeric_var(numeric_var_id)
+    }
+
+    pub fn linearized_assignment_effects(
+        &self,
+        operator_id: OperatorIndex,
+    ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
+        linearize_operator_assignment_effects(&self.data, operator_id)
+    }
+
+    pub fn regular_numeric_variable_ids(&self) -> Vec<VariableIndex> {
+        self.data
+            .numeric_variables
+            .iter()
+            .enumerate()
+            .filter_map(|(numeric_var_id, numeric_var)| {
+                (numeric_var.numeric_type() == NumericType::Regular)
+                    .then_some(VariableIndex::from_usize(numeric_var_id))
+            })
+            .collect()
+    }
+
+    pub fn is_linear_cost_operator(&self, operator_id: OperatorIndex) -> bool {
+        linear_metric_operator_cost_expression(&self.data, operator_id).is_some()
+    }
+
+    pub fn operator_cost_coefficients(&self, operator_id: OperatorIndex) -> Vec<f64> {
+        let regular_numeric_variable_ids = self.regular_numeric_variable_ids();
+        linear_metric_operator_cost_expression(&self.data, operator_id)
+            .map(|expression| {
+                regular_numeric_variable_ids
+                    .iter()
+                    .map(|&numeric_var_id| expression.coefficients[numeric_var_id.index()])
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                todo!(
+                    "requested linear action-cost coefficients for non-linear-cost operator {operator_id}"
+                )
+            })
+    }
+
+    pub fn operator_cost_constant(&self, operator_id: OperatorIndex) -> f64 {
+        linear_metric_operator_cost_expression(&self.data, operator_id)
+            .map(|expression| expression.constant)
+            .unwrap_or_else(|| {
+                todo!(
+                    "requested linear action-cost constant for non-linear-cost operator {operator_id}"
+                )
+            })
+    }
+
+    pub fn evaluate_initial_state_values(
+        &self,
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
+        // Initial values are canonical by construction, as are
+        // `ExplicitStateSpace::initial_state`.
+        let mut state = ExplicitState {
+            propositional: self.initial_propositional_values().to_vec(),
+            numeric: self.initial_numeric_values().to_vec(),
+        };
+        ExplicitStateSpace::new(self)
+            .close_under_axioms(&mut state)
+            .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
+        Ok((state.propositional, state.numeric))
+    }
+}
+
+impl TaskData {
+    pub(crate) fn numeric_variables(&self) -> &[NumericVariable] {
+        &self.numeric_variables
+    }
+
+    pub(crate) fn assignment_axioms(&self) -> &[AssignmentAxiom] {
+        &self.assignment_axioms
+    }
+
+    pub(crate) fn operators(&self) -> &[Operator] {
+        &self.operators
+    }
+
+    pub(crate) fn metric(&self) -> &Metric {
+        &self.metric
+    }
+
+    pub(crate) fn initial_numeric_values(&self) -> &[NumericValue] {
+        &self.numeric_state
+    }
+
+    pub(crate) fn assignment_axiom_lookup(
+        &self,
+    ) -> Result<Vec<Option<AxiomIndex>>, NumericConditionError> {
+        assignment_axiom_lookup(self.numeric_variables.len(), &self.assignment_axioms)
+    }
+
+    pub(crate) fn linearize_numeric_var(
+        &self,
+        numeric_var_id: VariableIndex,
+    ) -> Result<crate::utils::linear_effects::LinearExpression, LinearizationError> {
+        linearize_numeric_var(self, numeric_var_id)
+    }
+
     /// Assert the cross-field contracts every task consumer relies on.
-    fn assert_invariants(&self) {
+    fn assert_invariants(&self, goals: &[ExplicitFact]) {
         assert_eq!(
             self.state.len(),
             self.variables.len(),
@@ -632,30 +759,14 @@ impl NumericRootTask {
             );
         }
 
-        let assert_task_fact = |fact: &ExplicitFact, origin: &str| {
-            let variable = self.variables.get(fact.var()).unwrap_or_else(|| {
-                panic!(
-                    "{origin} fact names variable {}, past the task's {} propositional variables",
-                    fact.var(),
-                    self.variables.len()
-                )
-            });
-            assert!(
-                fact.value() < variable.domain_size(),
-                "{origin} fact value {} is outside variable {}'s domain of size {}",
-                fact.value(),
-                fact.var(),
-                variable.domain_size()
-            );
-        };
-        for goal in &self.goals {
-            assert_task_fact(goal, "goal");
+        for goal in goals {
+            self.assert_task_fact(goal, "goal");
         }
         for fact in self.mutexes.iter().flatten() {
-            assert_task_fact(fact, "mutex");
+            self.assert_task_fact(fact, "mutex");
         }
         if let Some(global_constraint) = &self.global_constraint {
-            assert_task_fact(global_constraint, "global constraint");
+            self.assert_task_fact(global_constraint, "global constraint");
         }
 
         if !self.comparison_axioms.is_empty() {
@@ -704,17 +815,17 @@ impl NumericRootTask {
     ///
     /// The parser cannot do this: which propositional variables carry numeric
     /// conditions only becomes known when `numeric_conditions` is built, which
-    /// happens in [`Self::new`]. So namespace assignment happens exactly once,
+    /// happens in [`Task::new`]. So namespace assignment happens exactly once,
     /// over the whole task at once, and no later consumer has to rediscover
     /// the "propositional variable -> comparison axiom" mapping to know what
     /// kind of variable a fact names.
-    fn assign_fact_namespaces(&mut self) {
+    fn assign_fact_namespaces(&mut self, goals: &mut [ExplicitFact]) {
         let conditions = Arc::clone(&self.numeric_conditions);
         let retag = |fact: &mut ExplicitFact| {
             *fact = fact.with_namespace(conditions.namespace_of(fact.var_index()));
         };
 
-        self.goals.iter_mut().for_each(retag);
+        goals.iter_mut().for_each(retag);
         self.mutexes.iter_mut().flatten().for_each(retag);
         for operator in &mut self.operators {
             operator.preconditions.iter_mut().for_each(retag);
@@ -731,195 +842,23 @@ impl NumericRootTask {
         self.global_constraint.iter_mut().for_each(retag);
     }
 
-    /// Replace the initial state by its axiom closure.
-    ///
-    /// The values a SAS file gives a derived variable are not its initial
-    /// values but its axiom *defaults*; the real ones follow from the axioms.
-    /// Running the closure once here means `initial_propositional_values`
-    /// and `initial_numeric_values` describe a state the search can
-    /// use as it stands, instead of one every consumer has to finish for
-    /// itself.
-    ///
-    /// The closure is a function of the non-derived variables alone, so it is
-    /// idempotent: applying it to an already-closed state is a no-op, which is
-    /// what makes it safe for a task built out of another task's initial state.
-    fn close_initial_state_under_axioms(&mut self) {
-        let (propositional, numeric) =
-            self.evaluate_initial_state_values()
-                .unwrap_or_else(|error| {
-                    panic!("initial state does not satisfy the task's own axioms: {error}")
-                });
-        self.state = propositional;
-        self.numeric_state = numeric;
-    }
-
-    /// The fact that must hold in every reachable state.
-    ///
-    /// The translator injects a global constraint into every task it writes
-    /// (see `add_global_constraints`); for tasks without real global
-    /// constraints it is a derived atom that is unconditionally true. A task
-    /// derived from another, such as a projection, has none. The search
-    /// engines never consult it, so a verifier that does is strictly stronger
-    /// than they are.
-    pub fn global_constraint(&self) -> Option<&ExplicitFact> {
-        self.global_constraint.as_ref()
-    }
-
-    /// The task with `operator_costs` charged instead of the costs its metric
-    /// implies, for a task derived from another that keeps the other's costs
-    /// while dropping the variables its metric reads.
-    ///
-    /// # Panics
-    /// Panics unless there is one finite, non-negative cost per operator.
-    pub fn with_operator_costs(mut self, operator_costs: Vec<f64>) -> Self {
-        assert_eq!(
-            operator_costs.len(),
-            self.operators.len(),
-            "one cost per operator"
-        );
-        for (operator_id, &cost) in operator_costs.iter().enumerate() {
-            assert!(
-                cost.is_finite() && cost >= 0.0,
-                "operator {operator_id} costs {cost}, not a finite non-negative cost"
-            );
-        }
-        self.operator_costs = operator_costs;
-        self
-    }
-
-    pub fn from_file(file_name: impl AsRef<std::path::Path>) -> Self {
-        Self::try_from_file(file_name).expect("failed to read numeric SAS task")
-    }
-
-    pub fn try_from_file(file_name: impl AsRef<std::path::Path>) -> Result<Self, String> {
-        let path = file_name.as_ref();
-        let file_content = std::fs::read_to_string(path)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-        Self::try_from_str(&file_content)
-    }
-
-    /// Parse a `NumericRootTask` from the preprocessor's text format held in
-    /// memory. Equivalent to `try_from_file` minus the disk read; used by the
-    /// in-memory translate→preprocess→search pipeline so the binary
-    /// `output` file never has to materialize on disk.
-    pub fn try_from_str(content: &str) -> Result<Self, String> {
-        match parse_numeric_sas_output(content) {
-            Ok((_, task)) => Ok(task),
-            Err(err) => Err(format!("failed to parse numeric SAS output: {err}")),
-        }
-    }
-
-    /// Returns a reference to the metric configuration
-    pub fn metric(&self) -> &Metric {
-        &self.metric
-    }
-}
-
-impl AbstractNumericTask for NumericRootTask {
-    fn variables(&self) -> &[ExplicitVariable] {
-        &self.variables
-    }
-
-    fn numeric_variables(&self) -> &[NumericVariable] {
-        &self.numeric_variables
-    }
-
-    fn assignment_axioms(&self) -> &[AssignmentAxiom] {
-        &self.assignment_axioms
-    }
-
-    fn comparison_axioms(&self) -> &[ComparisonAxiom] {
-        &self.comparison_axioms
-    }
-
-    fn numeric_conditions(&self) -> &Arc<NumericConditions> {
-        &self.numeric_conditions
-    }
-
-    fn operators(&self) -> &[Operator] {
-        &self.operators
-    }
-
-    fn goals(&self) -> &[ExplicitFact] {
-        &self.goals
-    }
-
-    fn axioms(&self) -> &[PropositionalAxiom] {
-        &self.axioms
-    }
-
-    fn metric(&self) -> &Metric {
-        &self.metric
-    }
-
-    fn fact_name(&self, fact: &ExplicitFact) -> &str {
-        // Only facts on genuine propositional variables name a ground atom. A
-        // condition fact carries a numeric condition's truth value and a
-        // numeric-variable fact a partition index; both reuse the variable-id
-        // bits for their own id space, so indexing `variables` with them would
-        // return another variable's atom name.
-        if fact.namespace() != FactNamespace::Propositional {
-            return "";
-        }
+    /// Panic unless `fact` names a variable of the task and a value of its
+    /// domain.
+    fn assert_task_fact(&self, fact: &ExplicitFact, origin: &str) {
         let variable = self.variables.get(fact.var()).unwrap_or_else(|| {
             panic!(
-                "propositional fact names variable {} but the task has {}",
+                "{origin} fact names variable {}, past the task's {} propositional variables",
                 fact.var(),
                 self.variables.len()
             )
         });
-        // A task assembled in memory rather than parsed may carry no names.
-        variable
-            .fact_names
-            .get(fact.value())
-            .map_or("", String::as_str)
-    }
-
-    fn mutexes(&self) -> &[Vec<ExplicitFact>] {
-        &self.mutexes
-    }
-
-    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
-        if fact1.var() == fact2.var() {
-            return fact1.value() != fact2.value();
-        }
-        let pair = if fact1 <= fact2 {
-            (*fact1, *fact2)
-        } else {
-            (*fact2, *fact1)
-        };
-        self.mutex_pairs.contains(&pair)
-    }
-
-    fn effective_operator_costs(&self) -> std::borrow::Cow<'_, [f64]> {
-        std::borrow::Cow::Borrowed(&self.operator_costs)
-    }
-
-    fn operator_cost(&self, operator_id: OperatorIndex) -> f64 {
-        self.operator_costs[operator_id.index()]
-    }
-
-    fn initial_propositional_values(&self) -> &[ExplicitValueIndex] {
-        &self.state
-    }
-
-    fn initial_numeric_values(&self) -> &[NumericValue] {
-        &self.numeric_state
-    }
-
-    fn evaluate_initial_state_values(
-        &self,
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        // Initial values are canonical by construction, as are
-        // `ExplicitStateSpace::initial_state`.
-        let mut state = ExplicitState {
-            propositional: self.initial_propositional_values().to_vec(),
-            numeric: self.initial_numeric_values().to_vec(),
-        };
-        ExplicitStateSpace::new(self)
-            .close_under_axioms(&mut state)
-            .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
-        Ok((state.propositional, state.numeric))
+        assert!(
+            fact.value() < variable.domain_size(),
+            "{origin} fact value {} is outside variable {}'s domain of size {}",
+            fact.value(),
+            fact.var(),
+            variable.domain_size()
+        );
     }
 }
 
@@ -931,7 +870,7 @@ impl AbstractNumericTask for NumericRootTask {
 /// the variable's axiom default. It was never a value a state could
 /// hold: the comparison axioms write a verdict for every condition variable
 /// before anything reads one, so the placeholder is overwritten by the closure
-/// [`NumericRootTask::new`] runs a few lines later. Dropping it here is what
+/// [`Task::new`] runs a few lines later. Dropping it here is what
 /// makes the domain two everywhere — packed states, abstract states and the
 /// per-variable domain mappings the abstractions build on top of them.
 fn narrow_condition_variables(
@@ -986,7 +925,7 @@ mod namespace_assertion {
     #[should_panic(expected = "names a domain abstraction's private numeric id space")]
     fn a_task_fact_may_not_name_the_abstraction_id_space() {
         let mut task = crate::tests::get_root_task();
-        task.goals[0] = ExplicitFact::numeric_variable(1, 5);
+        task.goals = vec![ExplicitFact::numeric_variable(1, 5)].into();
         assert_fact_namespaces(&task);
     }
 
@@ -994,7 +933,7 @@ mod namespace_assertion {
     #[should_panic(expected = "past the task's 3 propositional variables")]
     fn a_task_fact_may_not_name_a_variable_the_task_does_not_have() {
         let mut task = crate::tests::get_root_task();
-        task.goals[0] = ExplicitFact::propositional(3, 0);
+        task.goals = vec![ExplicitFact::propositional(3, 0)].into();
         assert_fact_namespaces(&task);
     }
 }
@@ -1004,8 +943,8 @@ mod root_task_invariants {
     use super::*;
     use crate::axioms::CalOperator;
 
-    fn valid_parts() -> NumericRootTaskParts {
-        NumericRootTaskParts {
+    fn valid_parts() -> TaskParts {
+        TaskParts {
             metric: Metric::new(true, Some(VariableIndex::new(0))),
             variables: vec![ExplicitVariable::new(
                 2,
@@ -1040,7 +979,7 @@ mod root_task_invariants {
         assert_eq!(off_lattice, NumericValue::new(0.3));
         let mut parts = valid_parts();
         parts.numeric_state = vec![off_lattice];
-        let task = NumericRootTask::new(parts);
+        let task = Task::new(parts);
         assert_eq!(
             task.initial_numeric_values()[0].to_bits(),
             off_lattice.to_bits()
@@ -1052,7 +991,7 @@ mod root_task_invariants {
     fn rejects_short_propositional_initial_state() {
         let mut parts = valid_parts();
         parts.state.clear();
-        NumericRootTask::new(parts);
+        Task::new(parts);
     }
 
     #[test]
@@ -1060,7 +999,7 @@ mod root_task_invariants {
     fn rejects_short_numeric_initial_state() {
         let mut parts = valid_parts();
         parts.numeric_state.clear();
-        NumericRootTask::new(parts);
+        Task::new(parts);
     }
 
     #[test]
@@ -1068,7 +1007,7 @@ mod root_task_invariants {
     fn rejects_out_of_range_metric_variable() {
         let mut parts = valid_parts();
         parts.metric = Metric::new(true, Some(VariableIndex::new(1)));
-        NumericRootTask::new(parts);
+        Task::new(parts);
     }
 
     #[test]
@@ -1077,7 +1016,7 @@ mod root_task_invariants {
         let mut parts = valid_parts();
         parts.numeric_variables[0] =
             NumericVariable::new("fuel".to_string(), NumericType::Regular, None);
-        NumericRootTask::new(parts);
+        Task::new(parts);
     }
 
     #[test]
@@ -1085,7 +1024,7 @@ mod root_task_invariants {
     fn rejects_out_of_range_goal_value() {
         let mut parts = valid_parts();
         parts.goals[0] = ExplicitFact::propositional(0, 2);
-        NumericRootTask::new(parts);
+        Task::new(parts);
     }
 
     #[test]
@@ -1093,7 +1032,7 @@ mod root_task_invariants {
     fn rejects_out_of_range_mutex_value() {
         let mut parts = valid_parts();
         parts.mutexes[0][0] = ExplicitFact::propositional(0, 2);
-        NumericRootTask::new(parts);
+        Task::new(parts);
     }
 
     #[test]
@@ -1103,7 +1042,7 @@ mod root_task_invariants {
     fn rejects_out_of_range_global_constraint_value() {
         let mut parts = valid_parts();
         parts.global_constraint = Some(ExplicitFact::propositional(0, 2));
-        NumericRootTask::new(parts);
+        Task::new(parts);
     }
 
     #[test]
@@ -1145,6 +1084,6 @@ mod root_task_invariants {
             VariableIndex::new(0),
             crate::axioms::ComparisonOperator::GreaterThan,
         )];
-        NumericRootTask::new(parts);
+        Task::new(parts);
     }
 }

@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE,
-    NumericRootTask, NumericType, NumericValue, VariableIndex, ZERO_VALUE,
+    ExplicitFact, ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericType, NumericValue, Task,
+    VariableIndex, ZERO_VALUE,
 };
 use planforge_translate::translate_to_sas_to_path_fast;
 
@@ -28,7 +28,6 @@ use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_transformations::restriction::build_restricted_task;
-use crate::task_transformations::single_goal::SingleGoalTask;
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::utils::interval::Interval;
 
@@ -164,7 +163,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
 }
 
 fn initial_cartesian_scp_value(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     abstractions: Vec<CartesianAbstraction>,
     partitioning: bool,
 ) -> f64 {
@@ -198,7 +197,7 @@ fn initial_cartesian_scp_value(
             .map(AbstractionComponent::from)
             .collect(),
         config,
-        std::sync::Arc::new(task),
+        std::sync::Arc::new(task.clone()),
         Default::default(),
     )
     .expect("failed to construct oracle SCP heuristic");
@@ -221,7 +220,7 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
 
     let mut abstractions = Vec::new();
     for (index, spec) in specs.iter().enumerate() {
-        let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal);
+        let single_goal_task = transformed_task.with_goals(vec![spec.goal]);
         let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
             .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
         abstraction.metadata_mut().abstraction_use = AbstractionUse::CollectionMember {
@@ -263,7 +262,7 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
             .map(AbstractionComponent::from)
             .collect(),
         config,
-        std::sync::Arc::new(transformed_task),
+        std::sync::Arc::new(transformed_task.clone()),
         Default::default(),
     )
     .expect("failed to construct SCP heuristic");
@@ -333,7 +332,7 @@ struct NumericSeed {
     include_in_lower: bool,
 }
 
-fn handcrafted_full_task_specs(task: &dyn AbstractNumericTask) -> Vec<HandcraftedSpec> {
+fn handcrafted_full_task_specs(task: &Task) -> Vec<HandcraftedSpec> {
     [
         ("p1-u", "p1", ViewKind::Sum),
         ("p1-v", "p1", ViewKind::Difference),
@@ -358,7 +357,7 @@ fn handcrafted_full_task_specs(task: &dyn AbstractNumericTask) -> Vec<Handcrafte
 }
 
 fn build_handcrafted_abstraction(
-    transformed_task: &dyn AbstractNumericTask,
+    transformed_task: &Task,
     spec: &HandcraftedSpec,
 ) -> anyhow::Result<DomainAbstraction> {
     let mut partitions = NumericPartitions::trivial(transformed_task);
@@ -437,8 +436,8 @@ fn build_handcrafted_abstraction(
 }
 
 fn initial_abstract_state_ids(
-    heuristic: &SaturatedCostPartitioningHeuristic<'_>,
-    task: &dyn AbstractNumericTask,
+    heuristic: &SaturatedCostPartitioningHeuristic,
+    task: &Task,
 ) -> Vec<Option<usize>> {
     let values = ExplicitState {
         propositional: task.initial_propositional_values().to_vec(),
@@ -457,12 +456,7 @@ enum ViewKind {
     Difference,
 }
 
-fn find_sailing_view(
-    task: &dyn AbstractNumericTask,
-    boat: &str,
-    person: &str,
-    view_kind: ViewKind,
-) -> usize {
+fn find_sailing_view(task: &Task, boat: &str, person: &str, view_kind: ViewKind) -> usize {
     let tuple = format!("({boat}, {boat}, {person})");
     let candidates = task
         .numeric_variables()
@@ -488,7 +482,7 @@ fn find_sailing_view(
     candidates[0]
 }
 
-fn find_saved_goal_fact(task: &dyn AbstractNumericTask, person: &str) -> ExplicitFact {
+fn find_saved_goal_fact(task: &Task, person: &str) -> ExplicitFact {
     let suffix = format!(" {person}");
     let mut candidates = task
         .operators()
@@ -509,7 +503,7 @@ fn find_saved_goal_fact(task: &dyn AbstractNumericTask, person: &str) -> Explici
     candidates[0]
 }
 
-fn route_seed_splits(task: &dyn AbstractNumericTask, view_ids: &[usize]) -> Vec<NumericSeed> {
+fn route_seed_splits(task: &Task, view_ids: &[usize]) -> Vec<NumericSeed> {
     let initial = task.initial_numeric_values();
     let mut seeds = Vec::new();
     for &view_id in view_ids {
@@ -573,11 +567,7 @@ fn add_split(
     });
 }
 
-fn partition_report(
-    task: &dyn AbstractNumericTask,
-    abstraction: &DomainAbstraction,
-    view_ids: &[usize],
-) -> String {
+fn partition_report(task: &Task, abstraction: &DomainAbstraction, view_ids: &[usize]) -> String {
     view_ids
         .iter()
         .map(|&view_id| {
@@ -602,7 +592,7 @@ fn seed_description(seed: &NumericSeed) -> String {
     )
 }
 
-fn translated_sailing_2_2_task() -> NumericRootTask {
+fn translated_sailing_2_2_task() -> Task {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let domain = root.join("others/sailing/domain.pddl");
     let problem = root.join("others/sailing/prob_2_2_1229.pddl");
@@ -617,7 +607,7 @@ fn translated_sailing_2_2_task() -> NumericRootTask {
         &preprocessed,
     )
     .expect("sailing translation failed");
-    NumericRootTask::from_file(&preprocessed)
+    Task::from_file(&preprocessed)
 }
 
 fn unique_temp_dir(prefix: &str) -> std::io::Result<PathBuf> {

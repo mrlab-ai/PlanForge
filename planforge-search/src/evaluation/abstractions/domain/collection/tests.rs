@@ -23,8 +23,8 @@ use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::VariableIndex;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, OperatorIndex,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    OperatorIndex, Task, TaskParts,
 };
 
 use crate::evaluation::abstractions::cartesian::{
@@ -50,7 +50,7 @@ fn standard_collection_defaults() {
 
 #[test]
 fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -416,8 +416,8 @@ fn comparison_axiom(
 }
 
 /// Goals `x >= 2` and `y >= 3` over two independent counters.
-fn two_counter_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn two_counter_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-two"),
@@ -453,8 +453,8 @@ fn two_counter_task() -> NumericRootTask {
 
 /// One counter `x` with goals `x >= first` and `x >= second`, or, with
 /// `upper_second`, `x <= second`.
-fn one_counter_task(first: f64, second: f64, upper_second: bool) -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn one_counter_task(first: f64, second: f64, upper_second: bool) -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![comparison_variable("first"), comparison_variable("second")],
         numeric_variables: vec![
@@ -512,10 +512,7 @@ fn domain_goal_focused_config(
 /// every member, in collection order.
 type MemberSummary = (Option<GoalFocusedMember>, f64, Option<Vec<OperatorIndex>>);
 
-fn domain_members(
-    task: &NumericRootTask,
-    config: DomainAbstractionCollectionConfig,
-) -> Vec<MemberSummary> {
+fn domain_members(task: &Task, config: DomainAbstractionCollectionConfig) -> Vec<MemberSummary> {
     DomainAbstractionCollectionGenerator::new(config)
         .unwrap()
         .generate(task)
@@ -531,7 +528,7 @@ fn domain_members(
 }
 
 fn cartesian_members(
-    task: &NumericRootTask,
+    task: &Task,
     variants_per_goal: usize,
     progress_states: bool,
 ) -> Vec<MemberSummary> {
@@ -559,7 +556,7 @@ fn cartesian_members(
 }
 
 fn cartesian_members_with(
-    task: &NumericRootTask,
+    task: &Task,
     config: CartesianAbstractionCollectionConfig,
 ) -> Vec<MemberSummary> {
     CartesianAbstractionCollectionGenerator::new(config)

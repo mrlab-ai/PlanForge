@@ -4,8 +4,8 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
-    Operator, OperatorCost, VariableIndex,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost, Task, TaskParts,
+    VariableIndex,
 };
 
 use std::time::Duration;
@@ -31,11 +31,11 @@ enum Bound {
 
 /// A counter `x`, starting at 0, with one `increment` operator and one goal
 /// per bound.
-fn counter_task(bounds: &[Bound]) -> NumericRootTask {
-    NumericRootTask::new(counter_task_parts(bounds))
+fn counter_task(bounds: &[Bound]) -> Task {
+    Task::new(counter_task_parts(bounds))
 }
 
-fn counter_task_parts(bounds: &[Bound]) -> NumericRootTaskParts {
+fn counter_task_parts(bounds: &[Bound]) -> TaskParts {
     let variables = bounds
         .iter()
         .enumerate()
@@ -75,7 +75,7 @@ fn counter_task_parts(bounds: &[Bound]) -> NumericRootTaskParts {
         ));
         state.push(ExplicitValueIndex::from_usize(usize::from(!holds)));
     }
-    NumericRootTaskParts {
+    TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -182,7 +182,7 @@ impl GoalFocusedBackend for ScriptedBackend {
 
     fn build(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         root: Option<&ExplicitState>,
         construction: &MemberConstruction,
     ) -> Result<Member> {
@@ -393,7 +393,7 @@ fn per_goal_variants_vary_only_the_seed() {
 
 #[test]
 fn a_goal_free_task_gets_one_full_task_member() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         goals: Vec::new(),
         ..counter_task_parts(&[Bound::AtLeast(1.0)])
     });
@@ -516,7 +516,7 @@ fn a_rebuild_after_a_dead_progress_state_gets_the_time_left() {
         const NAME: &'static str = "slow";
         fn build(
             &self,
-            task: &dyn AbstractNumericTask,
+            task: &Task,
             root: Option<&ExplicitState>,
             construction: &MemberConstruction,
         ) -> Result<Member> {
@@ -616,7 +616,7 @@ fn an_invalid_concrete_plan_is_an_error() {
         const NAME: &'static str = "short";
         fn build(
             &self,
-            task: &dyn AbstractNumericTask,
+            task: &Task,
             root: Option<&ExplicitState>,
             construction: &MemberConstruction,
         ) -> Result<Member> {

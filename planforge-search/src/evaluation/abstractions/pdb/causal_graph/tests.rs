@@ -1,8 +1,8 @@
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
-    Operator, OperatorCost, VariableIndex,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost, Task, TaskParts,
+    VariableIndex,
 };
 
 use super::*;
@@ -19,7 +19,7 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
 
 #[test]
 fn causal_graph_collects_operator_and_axiom_dependencies() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             simple_var("pre", None),
@@ -105,7 +105,7 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
 
 #[test]
 fn restricted_causal_graph_tracks_numeric_effect_sources() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("p", None)],
         numeric_variables: vec![

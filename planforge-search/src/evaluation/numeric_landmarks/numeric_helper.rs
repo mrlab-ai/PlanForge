@@ -1,7 +1,8 @@
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex,
-    NumericTaskExt, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType,
+    NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::{LinearExpression, LinearNumericEffect};
 use std::collections::{BTreeMap, BTreeSet};
@@ -171,7 +172,7 @@ impl NumericTaskHelper {
     /// they get an action model each, after the task's own axioms, so that a
     /// caller can index both by one axiom offset.
     pub(crate) fn new_lmcut(
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         default_value_axioms: &[PropositionalAxiom],
         precision: f64,
         default_epsilon: f64,
@@ -195,7 +196,7 @@ impl NumericTaskHelper {
     /// quadratic condition-dominance table. Avoiding those unused structures
     /// is essential on tasks with thousands of numeric comparisons.
     pub(crate) fn new_potentials(
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         precision: f64,
         default_epsilon: f64,
         build_bound_metadata: bool,
@@ -226,7 +227,7 @@ impl NumericTaskHelper {
     }
 
     fn new_with_options(
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         default_value_axioms: &[PropositionalAxiom],
         precision: f64,
         default_epsilon: f64,
@@ -850,7 +851,7 @@ impl NumericTaskHelper {
 
     fn build_actions(
         &mut self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         default_value_axioms: &[PropositionalAxiom],
         precision: f64,
         separate_constant_assignment: bool,
@@ -872,7 +873,7 @@ impl NumericTaskHelper {
         }
     }
 
-    fn build_propositions(&mut self, task: &dyn AbstractNumericTask) {
+    fn build_propositions(&mut self, task: &Task) {
         self.proposition_ids_by_var_value.clear();
         self.proposition_facts.clear();
         self.proposition_var_ids.clear();
@@ -897,7 +898,7 @@ impl NumericTaskHelper {
 
     fn build_action(
         &mut self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         operator: &Operator,
         operator_id: OperatorIndex,
         precision: f64,
@@ -1020,7 +1021,7 @@ impl NumericTaskHelper {
 
     fn classify_assignment_effect_into_action(
         &mut self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         base_preconditions: &[ExplicitFact],
         classified: ClassifiedAssignmentEffect<'_>,
         precision: f64,
@@ -1102,12 +1103,7 @@ impl NumericTaskHelper {
         });
     }
 
-    fn calculates_bounds_numeric_variables(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-        precision: f64,
-        infinity: f64,
-    ) {
+    fn calculates_bounds_numeric_variables(&mut self, task: &Task, precision: f64, infinity: f64) {
         let initial_numeric_values = task.initial_numeric_values();
         self.numeric_variable_lower_bounds = self
             .numeric_variable_ids
@@ -1220,7 +1216,7 @@ impl NumericTaskHelper {
         }
     }
 
-    fn build_numeric_conditions(&mut self, task: &dyn AbstractNumericTask) {
+    fn build_numeric_conditions(&mut self, task: &Task) {
         for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
             let affected_var_id = comparison_axiom.get_affected_var_id();
             self.comparison_axiom_by_var
@@ -1250,7 +1246,7 @@ impl NumericTaskHelper {
         }
     }
 
-    fn build_numeric_goals(&mut self, task: &dyn AbstractNumericTask, precision: f64) {
+    fn build_numeric_goals(&mut self, task: &Task, precision: f64) {
         self.goal_models = vec![HelperPreconditionLists::default(); task.goals().len()];
         let mut axiom_table: BTreeMap<VariableIndex, Vec<VariableIndex>> = BTreeMap::new();
         let mut fact_table: BTreeMap<VariableIndex, Vec<ExplicitFact>> = BTreeMap::new();
@@ -1401,7 +1397,7 @@ impl NumericTaskHelper {
 
     fn build_conditions_for_fact_value(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         comparison_axiom: &ComparisonAxiom,
         affected_var_id: VariableIndex,
         fact_value: ExplicitValueIndex,
@@ -1446,7 +1442,7 @@ impl NumericTaskHelper {
 
     fn build_condition(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         positive_var_id: VariableIndex,
         negative_var_id: VariableIndex,
         is_strictly_greater: bool,
@@ -1541,7 +1537,7 @@ fn is_simple_numeric_effect(linear_effect: &LinearNumericEffect) -> bool {
 }
 
 fn is_constant_assignment_like_effect(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     linear_effect: &LinearNumericEffect,
     final_expression: &LinearExpression,
     precision: f64,

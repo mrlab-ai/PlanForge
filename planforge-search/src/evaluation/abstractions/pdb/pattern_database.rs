@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericRootTask, NumericValue,
-    OperatorIndex, TaskRef, VariableIndex, VariableKind,
+    ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex, Task, VariableIndex,
+    VariableKind,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
@@ -96,9 +96,9 @@ pub struct PdbBuildConfig {
 /// but did not expand lies on the frontier, and takes the frontier heuristic,
 /// at least the cheapest operator cost, as its distance. The goal distances
 /// then follow by backward Dijkstra from the goal and frontier states.
-pub struct PatternDatabase<'task> {
+pub struct PatternDatabase {
     task: Arc<ProjectedTask>,
-    states: AbstractStates<'task>,
+    states: AbstractStates,
     /// The goal distance of every abstract state, by id; infinite for a
     /// state from which neither a goal nor the frontier is reachable.
     distances: Vec<f64>,
@@ -107,12 +107,12 @@ pub struct PatternDatabase<'task> {
     exhausted: bool,
     min_operator_cost: f64,
     relevant_operator_ids: Vec<OperatorIndex>,
-    failed_lookup: FailedLookupHeuristic<'task>,
+    failed_lookup: FailedLookupHeuristic,
     transitions: Option<AbstractTransitions>,
     scratch: RefCell<LookupScratch>,
 }
 
-impl<'task> PatternDatabase<'task> {
+impl PatternDatabase {
     /// The pattern database over `task` with blind inner heuristics, keeping
     /// its transitions.
     pub fn new(task: ProjectedTask, max_states: usize) -> Result<Self, String> {
@@ -128,7 +128,7 @@ impl<'task> PatternDatabase<'task> {
 
     pub fn build(task: ProjectedTask, config: PdbBuildConfig) -> Result<Self, String> {
         let task = Arc::new(task);
-        let task_ref: TaskRef<'task> = task.task().clone();
+        let task_ref: Arc<Task> = task.task().clone();
         let mut registry = StateRegistry::for_task(task_ref.clone());
         let mut inner = InnerHeuristics {
             lmcut: config
@@ -283,7 +283,7 @@ impl<'task> PatternDatabase<'task> {
     /// Projects the state into `scratch` and looks it up in `registry`.
     fn find_state_id(
         &self,
-        registry: &StateRegistry<'task>,
+        registry: &StateRegistry,
         state: StateValues<'_>,
         scratch: &mut LookupScratch,
     ) -> Option<usize> {
@@ -380,10 +380,10 @@ impl<'task> PatternDatabase<'task> {
 
 /// The abstract states a pattern database explored, and how a projected
 /// state finds its id among them.
-enum AbstractStates<'task> {
+enum AbstractStates {
     Dense(DenseStates),
     /// The registry the exploration registered the states in.
-    Registry(Box<StateRegistry<'task>>),
+    Registry(Box<StateRegistry>),
 }
 
 /// The states of an exhausted projection without numeric input variables,
@@ -415,7 +415,7 @@ impl DenseStates {
     /// The dense table of the states in `registry`, or `None` when the
     /// projection has numeric input variables or too many value combinations
     /// for its reached states.
-    fn new(task: &ProjectedTask, registry: &StateRegistry<'_>) -> Option<Self> {
+    fn new(task: &ProjectedTask, registry: &StateRegistry) -> Option<Self> {
         if task.has_regular_numeric_variables() {
             return None;
         }
@@ -592,11 +592,11 @@ struct OpenEntry {
 /// state is pushed again whenever it is generated while not yet expanded, and
 /// a blind exploration orders by `g` alone.
 fn explore(
-    task: &NumericRootTask,
-    registry: &mut StateRegistry<'_>,
+    task: &Task,
+    registry: &mut StateRegistry,
     max_new_states: usize,
     heuristic: PdbInternalHeuristic,
-    inner: &mut InnerHeuristics<'_>,
+    inner: &mut InnerHeuristics,
 ) -> Result<Exploration, String> {
     let mut expander = RegistryExpander::new(task);
     let operators = task.operators();
@@ -690,21 +690,21 @@ fn explore(
 
 /// The inner heuristics a pattern database is built with, memoised per
 /// abstract state.
-struct InnerHeuristics<'task> {
-    lmcut: Option<ProjectedLmcut<'task>>,
+struct InnerHeuristics {
+    lmcut: Option<ProjectedLmcut>,
     /// The LM-cut estimate of each abstract state, `Some(None)` for a dead
     /// end.
     cache: Vec<Option<Option<f64>>>,
 }
 
-impl InnerHeuristics<'_> {
+impl InnerHeuristics {
     /// The estimate of `heuristic` for the abstract state `state_id`; `None`
     /// for a dead end.
     fn estimate(
         &mut self,
         heuristic: PdbInternalHeuristic,
         state_id: usize,
-        registry: &StateRegistry<'_>,
+        registry: &StateRegistry,
     ) -> Option<f64> {
         match heuristic {
             PdbInternalHeuristic::Zero | PdbInternalHeuristic::Blind => Some(0.0),
@@ -728,21 +728,21 @@ impl InnerHeuristics<'_> {
 }
 
 /// The failed-lookup heuristic of a built pattern database.
-enum FailedLookupHeuristic<'task> {
+enum FailedLookupHeuristic {
     Zero,
     Blind,
-    Lmcut(Box<RefCell<ProjectedLmcut<'task>>>),
+    Lmcut(Box<RefCell<ProjectedLmcut>>),
 }
 
 /// LM-cut on the projection of a pattern database.
-struct ProjectedLmcut<'task> {
-    landmarks: LandmarkCutLandmarks<'task>,
+struct ProjectedLmcut {
+    landmarks: LandmarkCutLandmarks,
     propositional: Vec<ExplicitValueIndex>,
     numeric: Vec<NumericValue>,
 }
 
-impl<'task> ProjectedLmcut<'task> {
-    fn new(task: TaskRef<'task>) -> Self {
+impl ProjectedLmcut {
+    fn new(task: Arc<Task>) -> Self {
         Self {
             landmarks: LandmarkCutLandmarks::new(task, LmCutNumericConfig::default()),
             propositional: Vec::new(),
@@ -759,11 +759,7 @@ impl<'task> ProjectedLmcut<'task> {
         lmcut_estimate(&mut self.landmarks, propositional, numeric)
     }
 
-    fn estimate_registered(
-        &mut self,
-        registry: &StateRegistry<'_>,
-        state_id: usize,
-    ) -> Option<f64> {
+    fn estimate_registered(&mut self, registry: &StateRegistry, state_id: usize) -> Option<f64> {
         let state = ConcreteState::new(state_id);
         let view = registry.view(&state);
         view.fill_propositional(&mut self.propositional);
@@ -776,7 +772,7 @@ impl<'task> ProjectedLmcut<'task> {
 }
 
 fn lmcut_estimate(
-    landmarks: &mut LandmarkCutLandmarks<'_>,
+    landmarks: &mut LandmarkCutLandmarks,
     propositional: &[ExplicitValueIndex],
     numeric: &[NumericValue],
 ) -> Option<f64> {

@@ -2,7 +2,7 @@
 //! an action without a cost effect costs nothing; without a metric every
 //! action costs one.
 
-use planforge_sas::numeric_task::{AbstractNumericTask, metric_operator_costs};
+use planforge_sas::numeric_task::metric_operator_costs;
 
 const DOMAIN: &str = "(define (domain errands)
   (:requirements :strips :action-costs)

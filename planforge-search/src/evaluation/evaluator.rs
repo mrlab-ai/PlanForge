@@ -1,5 +1,6 @@
 use planforge_sas::explicit_state::{ExplicitState, StateValues};
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue};
+use planforge_sas::numeric_task::NumericValue;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::ConcreteState;
 use planforge_sas::state_registry::StateRegistry;
 use std::fmt;
@@ -27,8 +28,8 @@ impl std::error::Error for EvaluationError {}
 /// State and task context for a single heuristic evaluation.
 pub struct EvaluationState<'state, 'task> {
     backing_state: &'state ConcreteState,
-    task: &'task dyn AbstractNumericTask,
-    state_registry: &'state StateRegistry<'task>,
+    task: &'task Task,
+    state_registry: &'state StateRegistry,
     is_goal: bool,
 }
 
@@ -36,8 +37,8 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
     /// Create an evaluation state with its mandatory decoding context.
     pub fn new(
         state: &'state ConcreteState,
-        task: &'task dyn AbstractNumericTask,
-        state_registry: &'state StateRegistry<'task>,
+        task: &'task Task,
+        state_registry: &'state StateRegistry,
     ) -> Self {
         Self {
             backing_state: state,
@@ -53,12 +54,12 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
     }
 
     /// Task whose state is being evaluated.
-    pub fn task(&self) -> &'task dyn AbstractNumericTask {
+    pub fn task(&self) -> &'task Task {
         self.task
     }
 
     /// State registry used to decode the concrete state.
-    pub fn state_registry(&self) -> &'state StateRegistry<'task> {
+    pub fn state_registry(&self) -> &'state StateRegistry {
         self.state_registry
     }
 

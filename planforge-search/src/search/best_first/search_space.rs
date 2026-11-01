@@ -4,7 +4,8 @@
 mod tests;
 
 use crate::search::Plan;
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::StateID;
 
 /// Simple search node information for tracking parent relationships.
@@ -178,7 +179,7 @@ impl SearchSpace {
     }
 
     /// Trace back the path from goal state to initial state.
-    pub(super) fn extract_plan(&self, goal_state: StateID, task: &dyn AbstractNumericTask) -> Plan {
+    pub(super) fn extract_plan(&self, goal_state: StateID, task: &Task) -> Plan {
         let mut plan = Vec::new();
         let mut current_state = goal_state;
 

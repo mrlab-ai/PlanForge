@@ -3,11 +3,11 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::AbstractNumericTask;
 
 use super::config::DomainAbstractionConfig;
 use super::function::DomainAbstractionFunction;
@@ -44,7 +44,7 @@ pub(super) struct DomainRefinementOutcome {
 /// abstract plan is concrete or a limit is reached.
 pub(super) fn refine_domain_abstraction(
     config: &DomainAbstractionConfig,
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     refinement_root: Option<&ExplicitState>,
     scope: &RefinementScope,
 ) -> Result<DomainRefinementOutcome> {
@@ -116,7 +116,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
     /// is the initial state of `task`.
     fn generate_from_root(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         refinement_root: Option<&ExplicitState>,
         scope: &RefinementScope,
     ) -> Result<DomainAbstraction> {

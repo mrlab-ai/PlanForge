@@ -1,5 +1,6 @@
 use anyhow::Result;
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
+use planforge_sas::numeric_task::Task;
 
 use super::state_encoding::MatchTree;
 use super::{DISTANCE_TABLE, DomainAbstractionFunction, TRANSITION_SYSTEM};
@@ -28,7 +29,7 @@ impl DomainAbstractionFunction {
     /// `combine_labels`, and its goal states.
     pub(crate) fn transitions(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         combine_labels: bool,
         deadline: Deadline,
     ) -> Result<DomainTransitions> {

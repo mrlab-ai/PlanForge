@@ -1,6 +1,7 @@
 //! The intervals numeric conditions are evaluated over in an abstract state.
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex, ZERO_VALUE};
+use planforge_sas::numeric_task::Task;
+use planforge_sas::numeric_task::{NumericType, VariableIndex, ZERO_VALUE};
 
 use super::layout::StateLayout;
 use super::partitions::NumericPartitions;
@@ -37,7 +38,7 @@ pub fn fill_derived_numeric_intervals_from_comparison_trees(
 /// trees then narrow the view to nothing.
 #[must_use]
 pub(super) fn fill_condition_intervals(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     refined: impl Fn(VariableIndex) -> Option<Interval>,
     out: &mut Vec<Interval>,
 ) -> bool {
@@ -74,7 +75,7 @@ pub(super) fn fill_condition_intervals(
 /// [`fill_condition_intervals`].
 #[must_use]
 pub(super) fn fill_state_intervals(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     partitions: &NumericPartitions,
     layout: &StateLayout,
     state: usize,

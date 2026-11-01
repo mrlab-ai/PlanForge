@@ -21,8 +21,8 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_conditions::{ConditionNode, ConditionValue, NumericCondition};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts,
-    NumericType, NumericValue, NumericVariable, Operator, OperatorCost, OperatorIndex,
+    ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE, NumericType, NumericValue, NumericVariable,
+    Operator, OperatorCost, OperatorIndex, Task, TaskParts,
 };
 
 /// The propositional variable a comparison axiom writes, on axiom layer 0.
@@ -42,7 +42,7 @@ fn condition_variable(name: &str) -> ExplicitVariable {
 /// rejects out-of-range references before a task is ever constructed.
 fn constant_leaf_values(
     condition: &NumericCondition,
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     initial_numeric_values: &[NumericValue],
 ) -> Vec<NumericValue> {
     let numeric_variables = task.numeric_variables();
@@ -80,7 +80,7 @@ fn partitions_from_cutpoints(cutpoints: &[NumericValue]) -> Vec<Interval> {
     out
 }
 
-fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<NumericPartitions> {
+fn cutpoint_partitions_for_task(task: &Task) -> Result<NumericPartitions> {
     let initial_numeric_values = task.initial_numeric_values();
     let num_numeric_vars = task.numeric_variables().len();
 
@@ -127,7 +127,7 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
     ))
 }
 
-fn identity_cutpoint_function(task: &dyn AbstractNumericTask) -> Result<DomainAbstractionFunction> {
+fn identity_cutpoint_function(task: &Task) -> Result<DomainAbstractionFunction> {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task);
     let partitions = cutpoint_partitions_for_task(task)?;
     DomainAbstractionFunction::new(
@@ -188,7 +188,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
             OperatorCost::new(1),
         ),
     ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -259,7 +259,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -346,7 +346,7 @@ fn function_splits_regular_var_at_constants_in_comparison_trees() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -389,7 +389,7 @@ impl DomainAbstractionFunction {
     /// costs.
     fn build_distance_table_for_test(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         combine_labels: bool,
     ) -> Result<TestDistances> {
         let (distances, _) = self
@@ -411,7 +411,7 @@ struct TestDistances {
 /// The concrete operators the first step of the optimal abstract plan from
 /// the initial state may execute, as CEGAR's progression replay sees them.
 fn first_plan_step(
-    task: &NumericRootTask,
+    task: &Task,
     combine_labels: bool,
     use_wildcard_plans: bool,
 ) -> Vec<OperatorIndex> {
@@ -480,7 +480,7 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -536,7 +536,7 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -589,7 +589,7 @@ fn singleton_plan_is_produced_when_wildcards_are_disabled() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -623,7 +623,7 @@ fn initial_state_hash_is_unique() {
         ComparisonOperator::LessThan,
     )];
     let op = Operator::new("noop".into(), vec![], vec![], vec![], OperatorCost::new(1));
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -676,7 +676,7 @@ fn abstract_goals_drop_collapsed_variables() {
             ExplicitValueIndex::new(0),
         ),
     ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -731,7 +731,7 @@ fn function_numeric_context_keeps_consistent_additive_derived_partition() {
         VariableIndex::new(1),
         ComparisonOperator::GreaterThan,
     )];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -809,7 +809,7 @@ fn function_numeric_context_keeps_consistent_additive_derived_partition() {
     );
 }
 
-fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFunction) {
+fn additive_numeric_source_set_task() -> (Task, DomainAbstractionFunction) {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -834,7 +834,7 @@ fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFunc
         )],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -869,7 +869,7 @@ fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFunc
 
 fn additive_numeric_source_set_task_with_partitions(
     x_partitions: Vec<Interval>,
-) -> (NumericRootTask, DomainAbstractionFunction) {
+) -> (Task, DomainAbstractionFunction) {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -894,7 +894,7 @@ fn additive_numeric_source_set_task_with_partitions(
         )],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -1071,7 +1071,7 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -1148,7 +1148,7 @@ fn abstract_source_set_allows_one_finite_changed_source() {
         ],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -1268,7 +1268,7 @@ fn source_set_one_finite_dim_suffices() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -1378,7 +1378,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
         ],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -1515,7 +1515,7 @@ fn singleton_preimage_is_preserved_exactly() {
 /// twice.
 #[test]
 fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,

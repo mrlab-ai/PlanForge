@@ -6,8 +6,8 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
 use crate::evaluation::abstractions::common::cegar::{CegarStopReason, SplitKind};
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, Operator, OperatorCost, OperatorIndex, VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, Operator, OperatorCost,
+    OperatorIndex, Task, TaskParts, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
 
@@ -38,8 +38,8 @@ fn simple_var(name: &str) -> ExplicitVariable {
     )
 }
 
-fn simple_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn simple_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("p"), simple_var("q")],
         numeric_variables: vec![],
@@ -83,7 +83,7 @@ fn simple_task() -> NumericRootTask {
     })
 }
 
-fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstraction {
+fn make_abstraction(task: &Task, distances: Vec<f64>) -> DomainAbstraction {
     let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
         vec![
@@ -129,12 +129,12 @@ fn computes_max_additive_subsets_from_relevant_operators() {
 }
 
 /// The canonical heuristic over the given additive subsets of `components`.
-fn with_explicit_subsets<'task>(
+fn with_explicit_subsets(
     name: Option<String>,
-    task: &dyn AbstractNumericTask,
-    components: Vec<AbstractionComponent<'task>>,
+    task: &Task,
+    components: Vec<AbstractionComponent>,
     max_additive_subsets: Vec<Vec<usize>>,
-) -> Result<CanonicalAbstractionHeuristic<'task>, String> {
+) -> Result<CanonicalAbstractionHeuristic, String> {
     if components.is_empty() {
         return Err("canonical abstraction heuristic requires at least one component".to_string());
     }
@@ -201,7 +201,7 @@ fn validate_additive_subsets(
 #[test]
 fn canonical_domain_abstraction_uses_explicit_subsets() {
     let task = simple_task();
-    let mut registry = StateRegistry::for_task(std::sync::Arc::new(&task));
+    let mut registry = StateRegistry::for_task(std::sync::Arc::new(task.clone()));
     let initial_state = registry.get_initial_state();
     let mut da0 = make_abstraction(&task, vec![2.0, 0.0, 0.0, 0.0]);
     da0.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
@@ -228,7 +228,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     assert_eq!(value, 5.0);
 }
 
-fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionComponent<'task>> {
+fn mixed_components(task: &Task) -> Vec<AbstractionComponent> {
     let mut domain = make_abstraction(task, vec![2.0, 0.0, 2.0, 0.0]);
     domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
 
@@ -260,7 +260,7 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
 #[test]
 fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
     let task = simple_task();
-    let mut registry = StateRegistry::for_task(std::sync::Arc::new(&task));
+    let mut registry = StateRegistry::for_task(std::sync::Arc::new(task.clone()));
     let initial_state = registry.get_initial_state();
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
 

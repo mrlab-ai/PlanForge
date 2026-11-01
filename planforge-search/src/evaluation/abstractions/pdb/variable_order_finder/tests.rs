@@ -1,7 +1,7 @@
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericValue, NumericVariable, VariableIndex,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericType, NumericValue,
+    NumericVariable, Task, TaskParts, VariableIndex,
 };
 
 use super::*;
@@ -26,7 +26,7 @@ fn default_matches_fd_default() {
 
 #[test]
 fn goal_cg_level_prefers_goal_numeric_variables() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("cmp", Some(0))],
         numeric_variables: vec![

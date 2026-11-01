@@ -1,6 +1,7 @@
 use super::*;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use planforge_sas::numeric_task::Task;
 
 /// A goal on a derived variable is refused, by name.
 ///
@@ -40,7 +41,7 @@ fn a_derived_goal_is_refused_by_name() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],

@@ -1,7 +1,7 @@
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType,
-    NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorCost, OperatorIndex, VariableIndex,
+    ExplicitVariable, Metric, NEG_INF_VALUE, NumericType, NumericValue, NumericVariable, ONE_VALUE,
+    Operator, OperatorCost, OperatorIndex, Task, TaskParts, VariableIndex,
 };
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
@@ -43,7 +43,7 @@ fn icaps_numeric_splits_preserve_integer_lattices_without_dropping_continuous_va
 
 #[test]
 fn icaps_prevail_conditions_fix_the_post_value() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -140,7 +140,7 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
             OperatorCost::new(1),
         ),
     ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -363,7 +363,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
 
 #[test]
 fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             4,
@@ -614,8 +614,8 @@ fn numeric_goal_task(
     operators: Vec<Operator>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
-) -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+) -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,

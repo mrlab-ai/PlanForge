@@ -1,14 +1,13 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
 use std::sync::Arc;
 
 use anyhow::{Result, ensure};
 use planforge_sas::numeric_conditions::NumericConditions;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, OperatorIndex, VariableIndex,
-};
+use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorIndex, VariableIndex};
 
 use super::abstract_operators::{AbstractOperator, DomainMapping, build_abstract_operators};
 use super::abstraction_numeric_var;
@@ -201,11 +200,7 @@ impl DomainAbstractionFunction {
     /// Refine with `split` in every abstract state: a propositional split
     /// gives the wanted values of the witness's abstract value a new abstract
     /// value, a numeric split divides the partition the boundary lies in.
-    pub(super) fn apply_split(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-        split: &Split,
-    ) -> Result<()> {
+    pub(super) fn apply_split(&mut self, task: &Task, split: &Split) -> Result<()> {
         let mut domain_sizes = self.layout.domain_sizes().to_vec();
         match split {
             Split::Propositional {
@@ -290,7 +285,7 @@ impl DomainAbstractionFunction {
     /// `combine_labels`.
     pub fn abstract_operators(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         combine_labels: bool,
         deadline: Deadline,
     ) -> Result<Vec<AbstractOperator>> {

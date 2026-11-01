@@ -5,8 +5,8 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, ONE_VALUE, Operator, OperatorCost, VariableIndex, ZERO_VALUE,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, ONE_VALUE, Operator,
+    OperatorCost, Task, TaskParts, VariableIndex, ZERO_VALUE,
 };
 
 const TRUE: usize = ConditionValue::True.as_usize();
@@ -53,8 +53,8 @@ fn compare(var: usize, left: usize, right: usize, op: ComparisonOperator) -> Com
 /// `x` starts at 0 and the goal is `x >= 3`. `jump` (cost 1) requires
 /// `x >= 1` and increments `x`; `inc` (cost 2) increments it
 /// unconditionally. Numeric variables: `x`, `one`, `three`.
-pub(crate) fn jump_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+pub(crate) fn jump_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-three"),
@@ -99,8 +99,8 @@ pub(crate) fn jump_task() -> NumericRootTask {
 /// the goal is the flag and `x + y >= 1`, so `h* = 2`. No finite
 /// partition of the original variables separates `x + y <= 0` from
 /// `x + y >= 1`; the coordinate `sum = x + y` does.
-pub(crate) fn linear_goal_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+pub(crate) fn linear_goal_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("sum-at-most-zero"),
@@ -165,8 +165,8 @@ pub(crate) fn linear_goal_task() -> NumericRootTask {
 /// `y <= 0`, from `(0, 0)`. The goal regressed through `o` contradicts
 /// its precondition on `y` and leaves `x >= 1`, which the initial state
 /// violates. Numeric variables: `x`, `y`, `zero`, `one`, `two`.
-pub(crate) fn blocked_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+pub(crate) fn blocked_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("y-at-least-one"),
@@ -221,7 +221,7 @@ pub(crate) fn blocked_task() -> NumericRootTask {
 /// variables drops `x = y` and misses the flaw of `<move_right>`; the
 /// coordinate `d = x - y` keeps it. Numeric variables: `x`, `y`, `d`,
 /// `zero`, `one`.
-pub(crate) fn diagonal_task() -> NumericRootTask {
+pub(crate) fn diagonal_task() -> Task {
     let subtract = |var: usize| {
         AssignmentEffect::new(
             VariableIndex::from_usize(var),
@@ -231,7 +231,7 @@ pub(crate) fn diagonal_task() -> NumericRootTask {
             vec![],
         )
     };
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-equals-y"),

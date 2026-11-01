@@ -2,7 +2,8 @@
 //! [module documentation](super).
 
 use anyhow::{Context, Result};
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
+use planforge_sas::numeric_task::Task;
 use tracing::info;
 
 use super::progress::{ProgressStates, VariantProgress};
@@ -157,10 +158,7 @@ pub(super) struct CollectionState<'task> {
 }
 
 impl<'task> CollectionState<'task> {
-    pub(super) fn new(
-        task: &'task dyn AbstractNumericTask,
-        schedule: &GoalFocusedSchedule,
-    ) -> Result<Self> {
+    pub(super) fn new(task: &'task Task, schedule: &GoalFocusedSchedule) -> Result<Self> {
         let goal_count = task.goals().len();
         assert!(goal_count > 0, "a goal-free task has a single member");
         let variants_per_goal = schedule.variants_per_goal;

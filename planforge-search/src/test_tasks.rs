@@ -3,14 +3,14 @@
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, Operator, OperatorCost, TaskRef, VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, Operator, OperatorCost,
+    Task, TaskParts, VariableIndex,
 };
 
 /// One variable `location` in {start, goal}, starting at `start` with the
 /// goal `goal`, and one unit-cost operator `finish` from `start` to `goal`.
-pub(crate) fn one_step_task() -> TaskRef<'static> {
-    Arc::new(NumericRootTask::new(NumericRootTaskParts {
+pub(crate) fn one_step_task() -> Arc<Task> {
+    Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,

@@ -1,15 +1,14 @@
 //! Domain abstractions the tests build by hand.
 
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, VariableIndex};
+use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
 
 use super::abstract_operators::DomainMapping;
 
 /// The abstraction that keeps every propositional value apart, except on
 /// condition variables, which are derived from the numeric partitions.
-pub(crate) fn identity_domain_mapping_and_sizes(
-    task: &dyn AbstractNumericTask,
-) -> (DomainMapping, Vec<usize>) {
+pub(crate) fn identity_domain_mapping_and_sizes(task: &Task) -> (DomainMapping, Vec<usize>) {
     let num_vars = task.variables().len();
     let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
     let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);

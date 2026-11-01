@@ -2,13 +2,14 @@
 //! semantics, operator costs, coordinate value lattices, the constants
 //! wanted splits split at, and how splits are chosen.
 
+use planforge_sas::numeric_task::Task;
 use planforge_sas::utils::value_lattice::ValueLattice;
 use std::cell::RefCell;
 use std::sync::Arc;
 
 use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitStateSpace;
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, NumericValue, OperatorIndex};
+use planforge_sas::numeric_task::{NumericType, NumericValue, OperatorIndex};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -50,10 +51,7 @@ impl<'task> CegarSemantics<'task> {
     /// The semantics a CEGAR run with `options` refines abstractions of
     /// `task` under. Fails if the run regresses and `task` is not
     /// regressable.
-    pub(crate) fn for_options(
-        task: &'task dyn AbstractNumericTask,
-        options: &CegarOptions,
-    ) -> Result<Self> {
+    pub(crate) fn for_options(task: &'task Task, options: &CegarOptions) -> Result<Self> {
         let semantics = Self::new(
             task,
             SplitOptions {
@@ -69,10 +67,7 @@ impl<'task> CegarSemantics<'task> {
         Ok(semantics)
     }
 
-    pub(crate) fn new(
-        task: &'task dyn AbstractNumericTask,
-        split_options: SplitOptions,
-    ) -> Result<Self> {
+    pub(crate) fn new(task: &'task Task, split_options: SplitOptions) -> Result<Self> {
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
         for (op_id, op) in task.operators().iter().enumerate() {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
@@ -119,7 +114,7 @@ impl<'task> CegarSemantics<'task> {
         })
     }
 
-    pub(crate) fn task(&self) -> &'task dyn AbstractNumericTask {
+    pub(crate) fn task(&self) -> &'task Task {
         self.regions.task()
     }
 

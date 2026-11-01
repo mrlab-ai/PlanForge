@@ -5,6 +5,7 @@
 
 use super::*;
 use planforge_sas::numeric_task::Operator;
+use planforge_sas::numeric_task::Task;
 
 /// A concrete state, closed under the task's axioms, with propositional values
 /// packed by [`StatePacker::propositional`].
@@ -14,12 +15,12 @@ pub(super) struct ConcreteState {
     pub(super) numeric: Vec<NumericValue>,
 }
 
-pub(super) fn make_prop_state_packer(task: &dyn AbstractNumericTask) -> StatePacker {
+pub(super) fn make_prop_state_packer(task: &Task) -> StatePacker {
     StatePacker::propositional(task)
 }
 
 pub(super) fn get_initial_state(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     state_packer: &StatePacker,
     axiom_evaluator: &AxiomEvaluator,
 ) -> Result<(Vec<u64>, Vec<NumericValue>)> {

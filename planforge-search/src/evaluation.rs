@@ -1,5 +1,6 @@
 //! State evaluation and heuristic implementations.
 
+use planforge_sas::numeric_task::Task;
 pub mod abstractions;
 pub mod check_admissible;
 pub mod evaluator;
@@ -14,8 +15,6 @@ pub mod seed;
 pub(crate) mod state_value_cache;
 pub use evaluator::{EvaluationError, EvaluationState};
 pub use heuristic::Heuristic;
-
-use planforge_sas::numeric_task::AbstractNumericTask;
 
 /// Rejects a task whose goal an abstraction cannot express, naming the variable
 /// that makes it one.
@@ -39,9 +38,7 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 /// quantified or nested goal. Every non-abstraction configuration — blind, `ff`,
 /// `lmcutnumeric` — still solves both, since it tests the goal fact in a state the
 /// axiom evaluator has closed.
-pub fn validate_abstractable_goal(
-    task: &dyn AbstractNumericTask,
-) -> std::result::Result<(), String> {
+pub fn validate_abstractable_goal(task: &Task) -> std::result::Result<(), String> {
     for fact in task.goals() {
         if fact.is_condition() {
             continue;

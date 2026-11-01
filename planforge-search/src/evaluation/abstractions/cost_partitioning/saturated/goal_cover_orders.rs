@@ -14,11 +14,11 @@ pub(super) struct GoalCoverOrderVariant {
     pub(super) compact: bool,
 }
 
-impl<'task> ScpBuilder<'task> {
+impl ScpBuilder {
     pub(super) fn goal_cover_order(
         &self,
         base_order: &[usize],
-        components: &[AbstractionComponent<'_>],
+        components: &[AbstractionComponent],
         abstraction_h: &[f64],
         require_pure_goal_focused_collection: bool,
     ) -> Option<Vec<usize>> {
@@ -34,7 +34,7 @@ impl<'task> ScpBuilder<'task> {
     pub(super) fn compact_goal_cover_orders(
         &self,
         base_order: &[usize],
-        components: &[AbstractionComponent<'_>],
+        components: &[AbstractionComponent],
         abstraction_h: &[f64],
     ) -> Vec<(usize, Vec<usize>)> {
         let mut variants_by_goal = HashMap::<usize, usize>::new();
@@ -94,7 +94,7 @@ impl<'task> ScpBuilder<'task> {
     pub(super) fn goal_cover_goal_of_order(
         &self,
         order: &[usize],
-        components: &[AbstractionComponent<'_>],
+        components: &[AbstractionComponent],
     ) -> Option<usize> {
         if order.len() != components.len()
             || !order
@@ -116,7 +116,7 @@ impl<'task> ScpBuilder<'task> {
     pub(super) fn prefixed_goal_cover_order(
         &self,
         base_order: &[usize],
-        components: &[AbstractionComponent<'_>],
+        components: &[AbstractionComponent],
         abstraction_h: &[f64],
     ) -> Option<Vec<usize>> {
         goal_cover_order(
@@ -182,7 +182,7 @@ pub(super) fn compact_goal_cover_variants(
 /// a goal-focused collection.
 pub(super) fn goal_cover_order(
     base_order: &[usize],
-    components: &[AbstractionComponent<'_>],
+    components: &[AbstractionComponent],
     abstraction_h: &[f64],
     require_pure_goal_focused_collection: bool,
     variant: GoalCoverOrderVariant,
@@ -300,12 +300,12 @@ struct Anchors {
 
 /// What goal-cover orders rank components by: their estimates at the
 /// evaluated state and their goal-focused membership.
-struct GoalCoverRanking<'a, 'task> {
-    components: &'a [AbstractionComponent<'task>],
+struct GoalCoverRanking<'a> {
+    components: &'a [AbstractionComponent],
     abstraction_h: &'a [f64],
 }
 
-impl GoalCoverRanking<'_, '_> {
+impl GoalCoverRanking<'_> {
     fn h(&self, component_id: usize) -> f64 {
         self.abstraction_h[component_id]
     }

@@ -1,15 +1,14 @@
 use super::*;
 use planforge_sas::{
     numeric_task::{
-        AbstractNumericTask, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-        NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
-        OperatorIndex,
+        Effect, ExplicitFact, ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable,
+        Operator, OperatorCost, OperatorIndex, Task, TaskParts,
     },
     state_registry::StateRegistry,
 };
 use std::sync::Arc;
 
-fn get_root_task() -> NumericRootTask {
+fn get_root_task() -> Task {
     let metric = Metric::new(true, Some(VariableIndex::from_usize(1)));
     let variables = vec![
         ExplicitVariable::new(
@@ -58,7 +57,7 @@ fn get_root_task() -> NumericRootTask {
     let comparison_axioms = Vec::new();
     let assignment_axioms = Vec::new();
     let global_constraint = ExplicitFact::propositional(0, 0);
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric,
         variables,
         numeric_variables,
@@ -78,7 +77,7 @@ fn get_root_task() -> NumericRootTask {
 /// ascending in operator id: one variable, and three operators whose ids straddle
 /// the branch's shared immediate list — `0` needs `v=0`, `1` needs nothing, `2`
 /// needs `v=1`.
-fn immediate_list_straddling_task() -> NumericRootTask {
+fn immediate_list_straddling_task() -> Task {
     let variables = vec![ExplicitVariable::new(
         2,
         String::from("v"),
@@ -100,7 +99,7 @@ fn immediate_list_straddling_task() -> NumericRootTask {
             OperatorCost::new(1),
         )
     };
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables,
         numeric_variables: vec![NumericVariable::new(
@@ -176,7 +175,7 @@ fn applicable_operators_leave_the_caller_s_prefix_alone() {
 fn the_successor_tree_lists_the_applicable_operators() {
     let task = get_root_task();
 
-    let mut state_registry = StateRegistry::for_task(Arc::new(&task));
+    let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
 
     let state = state_registry.get_initial_state();
     let state_values = state.get_state(&state_registry);
@@ -197,7 +196,7 @@ fn the_successor_tree_lists_the_applicable_operators() {
 #[test]
 fn test_generate_immediate_successor_of_init_state() {
     let task = get_root_task();
-    let mut state_registry = StateRegistry::for_task(Arc::new(&task));
+    let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
@@ -220,7 +219,7 @@ fn test_generate_immediate_successor_of_init_state() {
 #[test]
 fn test_duplicate_successor_should_not_generate_new_id() {
     let task = get_root_task();
-    let mut state_registry = StateRegistry::for_task(Arc::new(&task));
+    let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
@@ -262,8 +261,8 @@ fn test_duplicate_successor_should_not_generate_new_id() {
 #[test]
 fn registry_expander_matches_registry_successors() {
     let task = get_root_task();
-    let mut registry = StateRegistry::for_task(Arc::new(&task));
-    let mut reference = StateRegistry::for_task(Arc::new(&task));
+    let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
+    let mut reference = StateRegistry::for_task(Arc::new(task.clone()));
     let initial = registry.get_initial_state();
     let reference_initial = reference.get_initial_state();
     let mut expander = RegistryExpander::new(&task);
@@ -300,7 +299,7 @@ fn registry_expander_matches_registry_successors() {
 
 /// `n` binary variables and one operator per variable, operator `i` needing
 /// `v_i = 1`: the root's default chain passes through all `n` variables.
-fn one_condition_per_variable_task(n: usize) -> NumericRootTask {
+fn one_condition_per_variable_task(n: usize) -> Task {
     let variables = (0..n)
         .map(|i| {
             ExplicitVariable::new(
@@ -328,7 +327,7 @@ fn one_condition_per_variable_task(n: usize) -> NumericRootTask {
             )
         })
         .collect();
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables,
         numeric_variables: vec![NumericVariable::new(

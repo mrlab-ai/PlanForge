@@ -42,9 +42,9 @@ mod tests;
 use anyhow::{Context, Result, ensure};
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::explicit_state::StateValues;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
-    VariableIndex,
+    ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -117,10 +117,7 @@ pub(crate) struct InitialState<'a> {
 /// Rejects a task whose preconditions or goal mention a propositional
 /// variable that axioms derive, or a comparison that is not over exactly one
 /// coordinate: regression over coordinates cannot express either.
-pub(crate) fn ensure_regressable(
-    task: &dyn AbstractNumericTask,
-    coordinates: &Coordinates<'_>,
-) -> Result<()> {
+pub(crate) fn ensure_regressable(task: &Task, coordinates: &Coordinates<'_>) -> Result<()> {
     let mut derived = vec![false; task.variables().len()];
     for axiom in task.axioms() {
         derived[axiom.var_id().index()] = true;
@@ -162,7 +159,7 @@ struct PartialState {
 }
 
 impl PartialState {
-    fn unconstrained(task: &dyn AbstractNumericTask) -> Self {
+    fn unconstrained(task: &Task) -> Self {
         Self {
             propositions: vec![None; task.variables().len()],
             numeric: vec![Interval::unbounded(); task.numeric_variables().len()],
@@ -208,7 +205,7 @@ impl PartialState {
 /// a plan from `init`. Every abstract state is the Cartesian set of states it
 /// represents.
 pub(crate) fn find_regression_flaws(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     coordinates: &Coordinates<'_>,
     states: &[CartesianSet],
     operators: &[OperatorIndex],
@@ -268,7 +265,7 @@ pub(crate) fn find_regression_flaws(
 /// The regression of a trace: the flaws found so far, and the buffers every
 /// step reuses.
 struct Regression<'a> {
-    task: &'a dyn AbstractNumericTask,
+    task: &'a Task,
     coordinates: &'a Coordinates<'a>,
     flaws: Flaws,
     /// The preconditions of the operator regressed through.

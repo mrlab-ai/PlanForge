@@ -18,7 +18,8 @@
 #[cfg(test)]
 mod tests;
 
-use crate::numeric_task::{AbstractNumericTask, ExplicitFact, NumericValue, Operator};
+use crate::numeric_task::Task;
+use crate::numeric_task::{ExplicitFact, NumericValue, Operator};
 use crate::state_registry::{ConcreteState, StateRegistry};
 use crate::utils::errors::StateInsertError;
 
@@ -89,8 +90,8 @@ impl Replay {
 }
 
 /// Goal facts that do not hold in `state`.
-fn unsatisfied_goals<T: AbstractNumericTask + ?Sized>(
-    task: &T,
+fn unsatisfied_goals(
+    task: &Task,
     state: crate::state_registry::ConcreteStateView<'_>,
 ) -> Vec<ExplicitFact> {
     state.unsatisfied(task.goals()).copied().collect()
@@ -105,9 +106,9 @@ fn unsatisfied_goals<T: AbstractNumericTask + ?Sized>(
 /// Errors are reserved for genuine failures of the state machinery (numeric
 /// evaluation, axiom evaluation); an invalid *plan* is a `Rejected` outcome,
 /// not an `Err`.
-pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
-    task: &T,
-    registry: &mut StateRegistry<'_>,
+pub fn replay_plan(
+    task: &Task,
+    registry: &mut StateRegistry,
     global_constraint: Option<&ExplicitFact>,
     operators: &[&Operator],
 ) -> Result<Replay, StateInsertError> {

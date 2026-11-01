@@ -12,9 +12,7 @@ use std::sync::Arc;
 
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_conditions::ConditionValue;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericRootTask, NumericType, VariableIndex,
-};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericType, Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
@@ -124,7 +122,7 @@ fn pinned_benchmarks() -> Vec<(&'static str, Solution, PathBuf)> {
 }
 
 /// The benchmarks that are translated by the tests below, with their tasks.
-fn translated_benchmarks() -> Vec<(&'static str, Solution, NumericRootTask)> {
+fn translated_benchmarks() -> Vec<(&'static str, Solution, Task)> {
     pinned_benchmarks()
         .into_iter()
         .filter(|(name, _, _)| !TOO_SLOW_TO_TRANSLATE_IN_TEST_BUILDS.contains(name))
@@ -231,7 +229,7 @@ fn translated_tasks_satisfy_the_axiom_layering_contract() {
     }
 }
 
-pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask) {
+pub fn assert_axiom_layering_contract(name: &str, task: &Task) {
     let layer_of = |var: usize| -> Option<usize> {
         task.variable(VariableIndex::from_usize(var)).axiom_layer()
     };
@@ -412,7 +410,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
 /// abstraction goal maps, the projected-task goal expansion - keep one axiom per
 /// variable, so a refuting rule could win the slot and hand them the negation of
 /// the conditions they wanted.
-fn assert_every_axiom_proves_its_head(name: &str, task: &dyn AbstractNumericTask) {
+fn assert_every_axiom_proves_its_head(name: &str, task: &Task) {
     for (axiom_id, axiom) in task.axioms().iter().enumerate() {
         let head = axiom.var_id();
         let default = task.variable(head).axiom_default_value();
@@ -444,7 +442,7 @@ fn assert_every_axiom_proves_its_head(name: &str, task: &dyn AbstractNumericTask
 /// before the evidence is in.
 fn assert_negation_by_failure_reads_a_settled_layer(
     name: &str,
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     comparison_layers: &BTreeSet<usize>,
 ) {
     let derived_layer = |var: usize| -> Option<usize> {
@@ -547,7 +545,7 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
 
     let blind_plan = {
         let result = AStarSearch::new(
-            Arc::new(&task),
+            Arc::new(task.clone()),
             SearchParams::new(Box::new(BlindHeuristic::for_task(&task))),
         )
         .run()
@@ -563,9 +561,10 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     // The initial state and every state along the optimal blind plan must have
     // a finite, admissible LM-cut value. A zero-cost plateau used to make some
     // of them look like dead ends.
-    let mut registry = StateRegistry::for_task(Arc::new(&task));
+    let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
     let mut state = registry.get_initial_state();
-    let mut landmarks = LandmarkCutLandmarks::new(Arc::new(&task), LmCutNumericConfig::default());
+    let mut landmarks =
+        LandmarkCutLandmarks::new(Arc::new(task.clone()), LmCutNumericConfig::default());
     let mut values = ExplicitState::default();
 
     for (step, operator) in std::iter::once(None)
@@ -609,14 +608,15 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     }
 
     // The full search with the heuristic must still return the optimum.
-    let heuristic = LandmarkCutNumericHeuristic::from_config(
-        &task as &dyn AbstractNumericTask,
-        LmCutNumericConfig::default(),
+    let heuristic =
+        LandmarkCutNumericHeuristic::from_config(&task as &Task, LmCutNumericConfig::default())
+            .expect("default lmcutnumeric config should be supported");
+    let result = AStarSearch::new(
+        Arc::new(task.clone()),
+        SearchParams::new(Box::new(heuristic)),
     )
-    .expect("default lmcutnumeric config should be supported");
-    let result = AStarSearch::new(Arc::new(&task), SearchParams::new(Box::new(heuristic)))
-        .run()
-        .expect("LM-cut A* search failed");
+    .run()
+    .expect("LM-cut A* search failed");
 
     let SearchOutcome::Solved {
         plan,
@@ -656,7 +656,7 @@ fn lmcutnumeric_counts_numeric_goal_conditions() {
     for (domain, expected_initial_h) in [("farmland", 77.2), ("counters-sym", 5.0)] {
         let dir = benchmarks_root().join(domain);
         let task = translate_in_memory(&dir.join("domain.pddl"), &problem_file(&dir));
-        let mut registry = StateRegistry::for_task(Arc::new(&task));
+        let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
         let state = registry.get_initial_state();
         let mut values = ExplicitState::default();
         registry
@@ -664,7 +664,7 @@ fn lmcutnumeric_counts_numeric_goal_conditions() {
             .fill_explicit(&mut values)
             .unwrap_or_else(|e| panic!("failed to unpack the {domain} initial state: {e:?}"));
         let (dead_end, initial_h) =
-            LandmarkCutLandmarks::new(Arc::new(&task), LmCutNumericConfig::default())
+            LandmarkCutLandmarks::new(Arc::new(task.clone()), LmCutNumericConfig::default())
                 .compute_landmark_cost(&values.propositional, &values.numeric)
                 .unwrap_or_else(|e| panic!("LM-cut evaluation failed on {domain}: {e}"));
         assert!(!dead_end, "the {domain} initial state is not a dead end");

@@ -2,11 +2,12 @@
 //! it.
 
 use planforge_sas::explicit_state::StateValues;
+use planforge_sas::numeric_task::Task;
 use std::borrow::Cow;
 use std::cell::RefCell;
 
 use anyhow::{Context, Result};
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 use rustc_hash::FxHashMap;
 
 use super::config::DomainAbstractionConfig;
@@ -116,7 +117,7 @@ impl AbstractionView for DomainView<'_> {
 /// abstract state, so every iteration rebuilds the abstract operators and the
 /// goal distances.
 pub(super) struct DomainRefinement<'a> {
-    pub(super) task: &'a dyn AbstractNumericTask,
+    pub(super) task: &'a Task,
     pub(super) function: DomainAbstractionFunction,
     pub(super) limits: RefinementLimits<'a>,
     pub(super) combine_labels: bool,
@@ -149,7 +150,7 @@ impl DomainBuild {
 
 impl<'a> DomainRefinement<'a> {
     pub(super) fn new(
-        task: &'a dyn AbstractNumericTask,
+        task: &'a Task,
         function: DomainAbstractionFunction,
         limits: RefinementLimits<'a>,
         config: &DomainAbstractionConfig,

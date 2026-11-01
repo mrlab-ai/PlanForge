@@ -31,11 +31,11 @@ mod schedule;
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::{debug, info};
 
 pub(crate) use self::schedule::GoalFocusedSchedule;
@@ -44,7 +44,6 @@ use super::budget::{CollectionBudget, CollectionStopReason};
 use super::member::{CollectionMember, MemberConstruction};
 use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CollectionMembership;
-use crate::task_transformations::single_goal::SingleGoalTask;
 
 /// A goal-focused collection stops once fewer states than this are left: a
 /// member with fewer is the trivial abstraction, which tells search nothing.
@@ -65,7 +64,7 @@ pub(crate) trait GoalFocusedBackend {
     /// [`BuiltReport::root_is_dead_end`](super::member::BuiltReport::root_is_dead_end).
     fn build(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         root: Option<&ExplicitState>,
         construction: &MemberConstruction,
     ) -> Result<Self::Member>;
@@ -77,7 +76,7 @@ pub(crate) const FULL_TASK_PROGRESS_STATES_ERROR: &str = "`progress_states=true`
 
 /// Build the goal-focused collection of `task` with `backend`.
 pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     schedule: &GoalFocusedSchedule,
     backend: &B,
 ) -> Result<Vec<B::Member>> {
@@ -167,7 +166,7 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
 /// The one member of a goal-free task: an abstraction of the full task from
 /// its initial state.
 fn build_goal_free_member<B: GoalFocusedBackend>(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     schedule: &GoalFocusedSchedule,
     backend: &B,
     mut budget: CollectionBudget,
@@ -213,7 +212,7 @@ struct BuiltMember<M> {
 /// `budget`, and tag the result as build `iteration` so collection
 /// heuristics can tell members apart.
 fn build_member<B: GoalFocusedBackend>(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     backend: &B,
     schedule: &GoalFocusedSchedule,
     budget: &CollectionBudget,
@@ -223,10 +222,8 @@ fn build_member<B: GoalFocusedBackend>(
 ) -> Result<BuiltMember<B::Member>> {
     let full_task = !schedule.single_goal_tasks;
     let construction = schedule.construction(member, budget);
-    let goal_task = (!full_task).then(|| SingleGoalTask::new(task, task.goals()[member.goal_id]));
-    let member_task = goal_task
-        .as_ref()
-        .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
+    let goal_task = (!full_task).then(|| task.with_goals(vec![task.goals()[member.goal_id]]));
+    let member_task = goal_task.as_ref().unwrap_or(task);
     debug!(
         "{} collection: building abstraction {iteration}, goal={}, kind={:?}, split_kind={}, tie_rank={:?}, max_states={}, seed={:?}",
         B::NAME,

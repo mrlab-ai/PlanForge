@@ -1,8 +1,8 @@
 use super::*;
 use crate::axioms::PropositionalAxiom;
 use crate::numeric_task::{
-    Effect, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-    OperatorCost, VariableIndex,
+    Effect, ExplicitValueIndex, ExplicitVariable, Metric, OperatorCost, Task, TaskParts,
+    VariableIndex,
 };
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use std::sync::Arc;
 ///
 /// Operators: `move_ab` (0→1), `move_bc` (1→2), `reset` (2→0). `reset`
 /// exists so a sequence can be padded past the goal.
-fn chain_task() -> NumericRootTask {
+fn chain_task() -> Task {
     chain_task_with(
         ExplicitFact::propositional(0, 0),
         ExplicitValueIndex::new(0),
@@ -23,10 +23,7 @@ fn chain_task() -> NumericRootTask {
 
 /// `chain_task`, parameterized by the global constraint and the initial
 /// position, so tests can vary exactly one thing.
-fn chain_task_with(
-    global_constraint: ExplicitFact,
-    initial_position: ExplicitValueIndex,
-) -> NumericRootTask {
+fn chain_task_with(global_constraint: ExplicitFact, initial_position: ExplicitValueIndex) -> Task {
     let variables = vec![
         ExplicitVariable::new(
             2,
@@ -85,7 +82,7 @@ fn chain_task_with(
             OperatorCost::new(1),
         ),
     ];
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         // No metric variable, so every transition costs 1.0.
         metric: Metric::new(true, None),
         variables,
@@ -109,8 +106,8 @@ fn chain_task_with(
 }
 
 /// Replay `names` against a fresh registry over `task`.
-fn replay(task: NumericRootTask, names: &[&str]) -> Replay {
-    let arc: Arc<NumericRootTask> = Arc::new(task);
+fn replay(task: Task, names: &[&str]) -> Replay {
+    let arc: Arc<Task> = Arc::new(task);
     let mut registry = StateRegistry::for_task(arc.clone());
     let operators: Vec<&Operator> = names
         .iter()
@@ -121,7 +118,7 @@ fn replay(task: NumericRootTask, names: &[&str]) -> Replay {
                 .unwrap_or_else(|| panic!("no operator named {name}"))
         })
         .collect();
-    replay_plan(&*arc, &mut registry, arc.global_constraint(), &operators)
+    replay_plan(&arc, &mut registry, arc.global_constraint(), &operators)
         .expect("replay machinery failed")
 }
 

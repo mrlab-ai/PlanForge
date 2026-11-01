@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use planforge_sas::explicit_state::{ExplicitState, StateValues};
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use rand::SeedableRng;
@@ -106,13 +107,13 @@ impl fmt::Display for HillClimbingConfig {
 /// initial state is a dead end, or when `max_time` or `remaining` passes.
 /// Every pattern database explores up to `config.max_pdb_states` states with
 /// `heuristics`.
-pub fn generate_hill_climbing_pdbs<'task>(
-    task: &'task dyn AbstractNumericTask,
+pub fn generate_hill_climbing_pdbs(
+    task: &Task,
     config: HillClimbingConfig,
     heuristics: PdbHeuristicConfig,
     retain_transitions: bool,
     remaining: Option<Duration>,
-) -> Result<Vec<PatternDatabase<'task>>, String> {
+) -> Result<Vec<PatternDatabase>, String> {
     let pdb_config = PdbBuildConfig {
         max_states: config.max_pdb_states,
         heuristics,
@@ -142,7 +143,7 @@ pub fn generate_hill_climbing_pdbs<'task>(
 }
 
 struct HillClimbing<'task> {
-    task: &'task dyn AbstractNumericTask,
+    task: &'task Task,
     config: HillClimbingConfig,
     pdb_config: PdbBuildConfig,
     causal_graph: CausalGraph,
@@ -170,11 +171,11 @@ enum Stop {
 
 impl<'task> HillClimbing<'task> {
     fn new(
-        task: &'task dyn AbstractNumericTask,
+        task: &'task Task,
         config: HillClimbingConfig,
         pdb_config: PdbBuildConfig,
     ) -> Result<Self, String> {
-        let mut registry = StateRegistry::for_task(Arc::new(task));
+        let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
         let mut initial_state = ExplicitState::default();
         let initial = registry.get_initial_state();
         registry
@@ -193,25 +194,21 @@ impl<'task> HillClimbing<'task> {
         })
     }
 
-    fn build(&self, pattern: &Pattern) -> Result<PatternDatabase<'task>, String> {
+    fn build(&self, pattern: &Pattern) -> Result<PatternDatabase, String> {
         let projected_task = ProjectedTask::new(self.task, pattern).map_err(|error| {
             format!("failed to project the task to pattern {pattern:?}: {error}")
         })?;
         PatternDatabase::build(projected_task, self.pdb_config)
     }
 
-    fn climb(
-        &mut self,
-        collection: &mut Collection<'task>,
-        deadline: Deadline,
-    ) -> Result<(), String> {
+    fn climb(&mut self, collection: &mut Collection, deadline: Deadline) -> Result<(), String> {
         let start = Instant::now();
         let mut new_patterns = Vec::new();
         for (pattern, pdb) in collection.patterns.iter().zip(&collection.pdbs) {
             self.extend(pattern, pdb.num_states(), &mut new_patterns);
         }
         let mut generated: BTreeSet<Pattern> = BTreeSet::new();
-        let mut candidates: Vec<Option<Candidate<'task>>> = Vec::new();
+        let mut candidates: Vec<Option<Candidate>> = Vec::new();
         let mut iterations = 0usize;
 
         let stop = 'climb: loop {
@@ -312,11 +309,11 @@ impl<'task> HillClimbing<'task> {
     /// restarts from the initial state. `None` when `deadline` passes.
     fn sample_states(
         &mut self,
-        collection: &Collection<'task>,
+        collection: &Collection,
         initial_h: f64,
         deadline: Deadline,
     ) -> Result<Option<Vec<ExplicitState>>, String> {
-        let mut sampler = RandomWalkSampler::new(Arc::new(self.task));
+        let mut sampler = RandomWalkSampler::new(Arc::new(self.task.clone()));
         let mut values = ExplicitState::default();
         let mut samples = Vec::with_capacity(self.config.num_samples);
         while samples.len() < self.config.num_samples {
@@ -342,8 +339,8 @@ impl<'task> HillClimbing<'task> {
     /// room for.
     fn select_candidate(
         &self,
-        collection: &Collection<'task>,
-        candidates: &mut [Option<Candidate<'task>>],
+        collection: &Collection,
+        candidates: &mut [Option<Candidate>],
         samples: &[ExplicitState],
         deadline: Deadline,
     ) -> Selection {
@@ -422,14 +419,14 @@ fn raises_canonical_value(
     })
 }
 
-struct Candidate<'task> {
+struct Candidate {
     pattern: Pattern,
-    pdb: PatternDatabase<'task>,
+    pdb: PatternDatabase,
     relevant_operators: BTreeSet<OperatorIndex>,
 }
 
-impl<'task> Candidate<'task> {
-    fn new(pattern: Pattern, pdb: PatternDatabase<'task>) -> Self {
+impl Candidate {
+    fn new(pattern: Pattern, pdb: PatternDatabase) -> Self {
         let relevant_operators = pdb.relevant_operator_ids().iter().copied().collect();
         Self {
             pattern,
@@ -442,17 +439,17 @@ impl<'task> Candidate<'task> {
 /// The pattern databases hill climbing selected, and their maximal additive
 /// subsets.
 #[derive(Default)]
-struct Collection<'task> {
+struct Collection {
     patterns: Vec<Pattern>,
-    pdbs: Vec<PatternDatabase<'task>>,
+    pdbs: Vec<PatternDatabase>,
     relevant_operators: Vec<BTreeSet<OperatorIndex>>,
     max_additive_subsets: Vec<Vec<usize>>,
     /// The abstract states of all pattern databases.
     size: usize,
 }
 
-impl<'task> Collection<'task> {
-    fn add(&mut self, pattern: Pattern, pdb: PatternDatabase<'task>) {
+impl Collection {
+    fn add(&mut self, pattern: Pattern, pdb: PatternDatabase) {
         self.size += pdb.num_states();
         self.relevant_operators
             .push(pdb.relevant_operator_ids().iter().copied().collect());
@@ -543,7 +540,7 @@ fn add_variable(pattern: &mut Pattern, variable: CausalGraphVariable) -> bool {
 }
 
 fn fill_values(
-    registry: &StateRegistry<'_>,
+    registry: &StateRegistry,
     state: &ConcreteState,
     values: &mut ExplicitState,
 ) -> Result<(), EvaluationError> {

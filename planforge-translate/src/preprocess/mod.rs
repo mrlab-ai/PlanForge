@@ -440,8 +440,8 @@ pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) -> std::io::
 /// `tests/src/task_equivalence_tests` holds both paths to that. The file itself
 /// is for interoperating with other planners and for reading by hand, not for
 /// getting a task from one part of this process to another.
-pub fn reordered_numeric_task(sas: SASTask) -> planforge_sas::numeric_task::NumericRootTask {
-    planforge_sas::numeric_task::NumericRootTask::from_sas_parts(sas_parts::build(&reorder(sas)))
+pub fn reordered_numeric_task(sas: SASTask) -> planforge_sas::numeric_task::Task {
+    planforge_sas::numeric_task::Task::from_sas_parts(sas_parts::build(&reorder(sas)))
 }
 
 /// Orders and prunes the variables of `sas` by its causal graph.

@@ -3,7 +3,7 @@
 //! Everything else in this crate is an implementation detail of the pipeline
 //! these four functions run.
 
-use planforge_sas::numeric_task::NumericRootTask;
+use planforge_sas::numeric_task::Task;
 
 use crate::grounding::GroundingLimits;
 use crate::options::LayerStrategy;
@@ -13,7 +13,7 @@ use crate::{normalize, pddl_parser::PddlTask};
 /// Translate the (domain, problem) PDDL pair into the task the search reads.
 ///
 /// The default way in: no SAS+ text is produced, and nothing is parsed.
-pub fn translate_to_task(domain: &str, problem: &str) -> anyhow::Result<NumericRootTask> {
+pub fn translate_to_task(domain: &str, problem: &str) -> anyhow::Result<Task> {
     translate_to_task_with_limits(domain, problem, GroundingLimits::default())
 }
 
@@ -22,7 +22,7 @@ pub fn translate_to_task_with_limits(
     domain: &str,
     problem: &str,
     limits: GroundingLimits,
-) -> anyhow::Result<NumericRootTask> {
+) -> anyhow::Result<Task> {
     let sas_task = translate_to_sas_task(domain, problem, false, LayerStrategy::default(), limits)?;
     Ok(crate::preprocess::reordered_numeric_task(sas_task))
 }

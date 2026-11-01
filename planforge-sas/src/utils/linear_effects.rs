@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod tests;
 
+use crate::numeric_task::TaskData;
 use std::fmt;
 
 use crate::axioms::{CalOperator, NumericExpression};
 use crate::numeric_conditions::NumericConditionError;
 use crate::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
-    NumericTaskExt, NumericType, NumericValue, OperatorIndex, VariableIndex,
+    AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact, NumericType, NumericValue,
+    OperatorIndex, VariableIndex,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -200,8 +201,8 @@ impl fmt::Display for LinearizationError {
     }
 }
 
-pub fn linearize_numeric_var<T: AbstractNumericTask + ?Sized>(
-    task: &T,
+pub(crate) fn linearize_numeric_var(
+    task: &TaskData,
     numeric_var_id: VariableIndex,
 ) -> Result<LinearExpression, LinearizationError> {
     let assignment_lookup = task
@@ -219,8 +220,8 @@ pub fn linearize_numeric_var<T: AbstractNumericTask + ?Sized>(
     )
 }
 
-pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
-    task: &T,
+pub(crate) fn linearize_operator_assignment_effects(
+    task: &TaskData,
     operator_id: OperatorIndex,
 ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
     let operators = task.operators();
@@ -278,8 +279,8 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
     Ok(effects)
 }
 
-fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
-    task: &T,
+fn linearize_numeric_var_with_lookup(
+    task: &TaskData,
     numeric_var_id: VariableIndex,
     assignment_lookup: &[Option<AxiomIndex>],
     initial_numeric_values: &[NumericValue],

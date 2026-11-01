@@ -4,8 +4,8 @@ use super::numeric_helper::{LinearNumericCondition as NumericCondition, NumericT
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue, Operator,
-    OperatorIndex, TaskRef, VariableIndex, ZERO_VALUE,
+    ExplicitFact, ExplicitValueIndex, NumericValue, Operator, OperatorIndex, Task, VariableIndex,
+    ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
 
@@ -250,8 +250,8 @@ impl OperatorRuntime {
     }
 }
 
-pub struct LandmarkCutLandmarks<'task> {
-    task: TaskRef<'task>,
+pub struct LandmarkCutLandmarks {
+    task: Arc<Task>,
     config: LmCutNumericConfig,
     propositions: Vec<RelaxedProposition>,
     proposition_runtime: Vec<PropositionRuntime>,
@@ -329,8 +329,8 @@ pub struct LandmarkCutLandmarks<'task> {
     initialized: bool,
 }
 
-impl<'task> LandmarkCutLandmarks<'task> {
-    pub fn new(task: TaskRef<'task>, config: LmCutNumericConfig) -> Self {
+impl LandmarkCutLandmarks {
+    pub fn new(task: Arc<Task>, config: LmCutNumericConfig) -> Self {
         assert!(
             config.precision >= 0.0,
             "LM-cut precision must be non-negative"
@@ -338,7 +338,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         assert!(config.epsilon >= 0.0, "LM-cut epsilon must be non-negative");
         let use_bounds = config.bound_iterations > 0;
         let default_value_axioms =
-            default_value_axioms(&*task, DefaultValueAxiomMode::ApproximateNegativeCycles);
+            default_value_axioms(&task, DefaultValueAxiomMode::ApproximateNegativeCycles);
         let relaxed_axioms: Arc<[PropositionalAxiom]> = task
             .axioms()
             .iter()
@@ -347,14 +347,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .collect();
         let bounds = use_bounds.then(|| {
             NumericBound::new(
-                &*task,
+                &task,
                 &default_value_axioms,
                 config.precision,
                 config.epsilon,
             )
         });
         let numeric_helper = NumericTaskHelper::new_lmcut(
-            &*task,
+            &task,
             &default_value_axioms,
             config.precision,
             config.epsilon,
@@ -3682,8 +3682,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.compute_landmarks_impl(propositional_values, numeric_values)
     }
 
-    pub fn task(&self) -> &dyn AbstractNumericTask {
-        &*self.task
+    pub fn task(&self) -> &Task {
+        &self.task
     }
 
     pub fn propositions(&self) -> &[RelaxedProposition] {

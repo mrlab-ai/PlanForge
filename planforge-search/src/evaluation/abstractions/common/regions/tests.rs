@@ -1,14 +1,14 @@
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, Operator, OperatorCost, OperatorIndex,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, Operator, OperatorCost,
+    OperatorIndex, Task, TaskParts,
 };
 
 use super::*;
 
 /// A position that is `left` or `right`, and an operator that requires
 /// `left` and changes nothing.
-fn prevail_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn prevail_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,

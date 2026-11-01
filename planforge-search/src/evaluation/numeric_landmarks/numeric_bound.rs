@@ -1,8 +1,8 @@
 use super::numeric_helper::NumericTaskHelper;
 use planforge_sas::axioms::PropositionalAxiom;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitValueIndex, NumericTaskExt, NumericValue,
-    OperatorIndex, VariableIndex,
+    AssignmentOperation, ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
 
@@ -101,7 +101,7 @@ impl<T> std::ops::IndexMut<(usize, usize)> for Table<T> {
 
 impl NumericBound {
     pub fn new(
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         default_value_axioms: &[PropositionalAxiom],
         precision: f64,
         epsilon: f64,
@@ -117,7 +117,7 @@ impl NumericBound {
     /// it has no numeric effect to widen an interval with.
     pub fn initialize(
         &mut self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         default_value_axioms: &[PropositionalAxiom],
         precision: f64,
         epsilon: f64,
@@ -794,7 +794,7 @@ impl NumericBound {
         ((has_ub, has_lb), (ub, lb))
     }
 
-    fn extract_operator_effects(&mut self, task: &dyn AbstractNumericTask) {
+    fn extract_operator_effects(&mut self, task: &Task) {
         for operator_id in 0..self.num_actions {
             let operator = task.operators().get(operator_id).unwrap_or_else(|| {
                 panic!("operator id {operator_id} is out of bounds for numeric bound effects")
@@ -881,11 +881,7 @@ impl NumericBound {
         true
     }
 
-    fn extract_operator_conditions(
-        &self,
-        task: &dyn AbstractNumericTask,
-        operator_id: usize,
-    ) -> Vec<BoundCondition> {
+    fn extract_operator_conditions(&self, task: &Task, operator_id: usize) -> Vec<BoundCondition> {
         let operator = task.operators().get(operator_id).unwrap_or_else(|| {
             panic!("operator id {operator_id} is out of bounds for numeric bound extraction")
         });

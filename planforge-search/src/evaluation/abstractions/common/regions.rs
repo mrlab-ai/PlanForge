@@ -12,14 +12,14 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericType, OperatorIndex,
-    VariableIndex,
+    ExplicitFact, ExplicitValueIndex, NumericType, OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -29,7 +29,7 @@ use super::transition_system::{AbstractOperatorSourceSets, LabelSourceSet};
 
 /// The interval of numeric variable `var_id` of `task` in the trivial
 /// abstraction: a constant at its value, every other variable unbounded.
-pub(crate) fn trivial_interval(task: &dyn AbstractNumericTask, var_id: VariableIndex) -> Interval {
+pub(crate) fn trivial_interval(task: &Task, var_id: VariableIndex) -> Interval {
     let variable = &task.numeric_variables()[var_id.index()];
     if variable.numeric_type() != NumericType::Constant {
         return Interval::unbounded();
@@ -49,7 +49,7 @@ pub(crate) const SOURCE_SETS: &str = "abstract source sets";
 /// What regions of the concrete state space admit, guarantee, and let an
 /// operator lead into.
 pub struct RegionSemantics<'task> {
-    task: &'task dyn AbstractNumericTask,
+    task: &'task Task,
     coordinates: Coordinates<'task>,
     /// The propositional axioms writing each propositional variable.
     axioms_by_var: Vec<Vec<usize>>,
@@ -63,7 +63,7 @@ pub struct RegionSemantics<'task> {
 }
 
 impl<'task> RegionSemantics<'task> {
-    pub(crate) fn new(task: &'task dyn AbstractNumericTask) -> Result<Self> {
+    pub(crate) fn new(task: &'task Task) -> Result<Self> {
         let mut axioms_by_var = vec![Vec::new(); task.variables().len()];
         for (axiom_id, axiom) in task.axioms().iter().enumerate() {
             let var_id = axiom.var_id();
@@ -129,7 +129,7 @@ impl<'task> RegionSemantics<'task> {
         })
     }
 
-    pub(crate) fn task(&self) -> &'task dyn AbstractNumericTask {
+    pub(crate) fn task(&self) -> &'task Task {
         self.task
     }
 

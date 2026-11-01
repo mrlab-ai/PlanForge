@@ -9,28 +9,28 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::{Context, Result, anyhow, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType,
-    NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact, ExplicitVariable, Metric,
+    NumericType, NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorIndex, Task,
+    TaskParts, VariableIndex, ZERO_VALUE,
 };
 use tracing::info;
 
 #[derive(Debug)]
 pub struct RestrictedTask {
-    task: NumericRootTask,
+    task: Task,
 }
 
 impl RestrictedTask {
-    pub fn task(&self) -> &NumericRootTask {
+    pub fn task(&self) -> &Task {
         &self.task
     }
 
-    pub fn into_task(self) -> NumericRootTask {
+    pub fn into_task(self) -> Task {
         self.task
     }
 }
 
-pub fn validate_restricted_task(task: &dyn AbstractNumericTask) -> std::result::Result<(), String> {
+pub fn validate_restricted_task(task: &Task) -> std::result::Result<(), String> {
     if let Some(variable) = task.metric().var_id()
         && task.numeric_type(variable) == NumericType::Derived
     {
@@ -191,7 +191,7 @@ impl AffineExpression {
     }
 }
 
-pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<RestrictedTask>> {
+pub fn build_restricted_task(task: &Task) -> Result<Option<RestrictedTask>> {
     let restriction_reason = match validate_restricted_task(task) {
         Ok(()) => {
             info!("restricted task: task already satisfies restricted-task invariants");
@@ -252,9 +252,7 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
 /// Builds the restricted representation consumed by the ICAPS 2026 Cartesian
 /// artifact: regular variables remain Cartesian dimensions and unary affine
 /// conditions become thresholds on those variables.
-pub fn build_icaps26_restricted_task(
-    task: &dyn AbstractNumericTask,
-) -> Result<Option<RestrictedTask>> {
+pub fn build_icaps26_restricted_task(task: &Task) -> Result<Option<RestrictedTask>> {
     if task.comparison_axioms().is_empty() {
         validate_restricted_task(task).map_err(anyhow::Error::msg)?;
         info!("ICAPS 2026 restricted task: no numeric conditions to normalize");
@@ -430,7 +428,7 @@ pub fn build_icaps26_restricted_task(
             .get(var_id.index())
             .and_then(|mapped| *mapped)
     });
-    let transformed_task = NumericRootTask::new(NumericRootTaskParts {
+    let transformed_task = Task::new(TaskParts {
         metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
@@ -465,7 +463,7 @@ fn reverse_comparison(operator: &ComparisonOperator) -> ComparisonOperator {
 }
 
 fn build_task(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     initial_numeric: &[NumericValue],
     root_exprs: &BTreeMap<VariableIndex, AffineExpression>,
     numeric_var_ids: &[VariableIndex],
@@ -554,7 +552,7 @@ fn build_task(
             .and_then(|mapped| *mapped)
     });
 
-    let transformed_task = NumericRootTask::new(NumericRootTaskParts {
+    let transformed_task = Task::new(TaskParts {
         metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
@@ -586,7 +584,7 @@ fn build_task(
 /// variable backed by this expression, whose effects are the metric's
 /// increments.
 fn derived_metric_expression(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     metric_var_id: VariableIndex,
 ) -> Result<Option<AffineExpression>> {
     if !matches!(task.numeric_type(metric_var_id), NumericType::Derived) {
@@ -597,10 +595,7 @@ fn derived_metric_expression(
         .map(Some)
 }
 
-fn ensure_operator_costs_unchanged(
-    source_task: &dyn AbstractNumericTask,
-    transformed_task: &dyn AbstractNumericTask,
-) -> Result<()> {
+fn ensure_operator_costs_unchanged(source_task: &Task, transformed_task: &Task) -> Result<()> {
     ensure!(
         source_task.operators().len() == transformed_task.operators().len(),
         "restricted task changed the operator count"
@@ -621,7 +616,7 @@ fn ensure_operator_costs_unchanged(
 }
 
 fn renumber_propositional_axiom_layers(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     comparison_axioms: &[ComparisonAxiom],
 ) -> Vec<ExplicitVariable> {
     if comparison_axioms.is_empty() {
@@ -671,7 +666,7 @@ enum EffectCoordinateMode {
 }
 
 fn transform_operator(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     operator: &Operator,
     initial_numeric: &[NumericValue],
     root_exprs: &BTreeMap<VariableIndex, AffineExpression>,
@@ -785,7 +780,7 @@ fn transform_operator(
 }
 
 fn transform_operator_with_assignment(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     operator: &Operator,
     initial_numeric: &[NumericValue],
     original_to_transformed: &[Option<VariableIndex>],
@@ -961,10 +956,7 @@ impl ConstantPool {
     }
 }
 
-fn affine_expression(
-    task: &dyn AbstractNumericTask,
-    variable: VariableIndex,
-) -> Result<AffineExpression> {
+fn affine_expression(task: &Task, variable: VariableIndex) -> Result<AffineExpression> {
     let expression = task
         .linearize_numeric_var(variable)
         .map_err(|error| anyhow!("{error}"))?;

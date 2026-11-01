@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::fmt;
 
-use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
 use super::numeric_size_estimator::NumericSizeEstimator;
@@ -47,10 +47,7 @@ impl fmt::Display for GreedyPatternGeneratorConfig {
     }
 }
 
-pub fn generate_greedy_pattern(
-    task: &dyn AbstractNumericTask,
-    config: GreedyPatternGeneratorConfig,
-) -> Pattern {
+pub fn generate_greedy_pattern(task: &Task, config: GreedyPatternGeneratorConfig) -> Pattern {
     let numeric_size_estimator = NumericSizeEstimator::new(task);
     let mut order = VariableOrderFinder::new(
         task,
@@ -96,7 +93,7 @@ pub fn generate_greedy_pattern(
     pattern
 }
 
-fn validate_and_normalize_pattern(task: &dyn AbstractNumericTask, pattern: &mut Pattern) {
+fn validate_and_normalize_pattern(task: &Task, pattern: &mut Pattern) {
     pattern.normalize_in_place();
 
     if let Some(&var_id) = pattern.regular.first() {

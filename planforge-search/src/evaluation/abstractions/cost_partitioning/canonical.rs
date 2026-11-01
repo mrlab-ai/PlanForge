@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::collections::BTreeSet;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 use tracing::{debug, info};
 
 use crate::config::ConfigError;
@@ -23,9 +24,9 @@ use planforge_sas::numeric_task::NumericValue;
 use super::standalone_estimate;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 
-pub struct CanonicalAbstractionHeuristic<'task> {
+pub struct CanonicalAbstractionHeuristic {
     name: String,
-    components: Vec<AbstractionComponent<'task>>,
+    components: Vec<AbstractionComponent>,
     max_additive_subsets: Vec<Vec<usize>>,
     /// The estimates of the components on the state under evaluation.
     component_values: Vec<Option<f64>>,
@@ -34,15 +35,15 @@ pub struct CanonicalAbstractionHeuristic<'task> {
     numeric_values: Vec<NumericValue>,
 }
 
-impl<'task> CanonicalAbstractionHeuristic<'task> {
+impl CanonicalAbstractionHeuristic {
     /// The canonical heuristic over the maximal additive subsets of
     /// `components`, which it reads only the goal distances and relevant
     /// operators of: components built for standalone use keep no
     /// transition data.
     pub fn new(
         name: Option<String>,
-        task: &dyn AbstractNumericTask,
-        components: Vec<AbstractionComponent<'task>>,
+        task: &Task,
+        components: Vec<AbstractionComponent>,
     ) -> Result<Self, String> {
         if components.is_empty() {
             return Err(
@@ -64,7 +65,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
 
     fn from_validated_parts(
         name: Option<String>,
-        components: Vec<AbstractionComponent<'task>>,
+        components: Vec<AbstractionComponent>,
         max_additive_subsets: Vec<Vec<usize>>,
         relevant_operator_ids: &[BTreeSet<OperatorIndex>],
     ) -> Self {
@@ -130,7 +131,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
     }
 }
 
-impl Heuristic for CanonicalAbstractionHeuristic<'_> {
+impl Heuristic for CanonicalAbstractionHeuristic {
     fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
         if let Some(value) = self.state_value_cache.get(state_id) {

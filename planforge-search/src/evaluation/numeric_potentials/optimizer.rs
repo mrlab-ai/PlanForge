@@ -1,12 +1,11 @@
+use planforge_sas::numeric_task::Task;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use planforge_cplex::{
     Constraint, Model, ObjectiveSense, SolveStatus, Variable, assert_unrestricted_license,
 };
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, VariableIndex,
-};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};
 use planforge_sas::state_registry::{ConcreteState, ConcreteStateView, StateRegistry};
 
 use super::{NumericPotentialConfig, NumericPotentialFunction, PotentialTask};
@@ -46,10 +45,7 @@ pub struct NumericPotentialOptimizer {
 }
 
 impl NumericPotentialOptimizer {
-    pub fn new(
-        task: &dyn AbstractNumericTask,
-        config: &NumericPotentialConfig,
-    ) -> Result<Self, String> {
+    pub fn new(task: &Task, config: &NumericPotentialConfig) -> Result<Self, String> {
         config.validate()?;
         assert_unrestricted_license()
             .map_err(|error| format!("numeric_potential requires unrestricted CPLEX: {error}"))?;
@@ -300,7 +296,7 @@ impl NumericPotentialOptimizer {
     pub fn optimize_for_samples(
         &mut self,
         states: &[ConcreteState],
-        registry: &StateRegistry<'_>,
+        registry: &StateRegistry,
     ) -> Result<OptimizationOutcome, String> {
         if states.is_empty() {
             return Err("numeric_potential cannot optimize for an empty sample set".to_string());

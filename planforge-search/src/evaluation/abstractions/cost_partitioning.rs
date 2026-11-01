@@ -16,7 +16,7 @@ use crate::evaluation::abstractions::component::AbstractionComponent;
 /// goal distances are non-negative, so another estimate is a broken
 /// invariant.
 fn standalone_estimate(
-    component: &AbstractionComponent<'_>,
+    component: &AbstractionComponent,
     component_id: usize,
     values: StateValues<'_>,
 ) -> f64 {

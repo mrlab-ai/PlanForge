@@ -13,7 +13,7 @@ fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
                 None,
                 vec![component],
                 scp_config(saturator, abstract_operator),
-                std::sync::Arc::new(&task),
+                std::sync::Arc::new(task.clone()),
                 Default::default(),
             )
             .unwrap();
@@ -32,7 +32,7 @@ fn offline_scp_releases_cartesian_construction_data_after_construction() {
         None,
         vec![component],
         config,
-        std::sync::Arc::new(&task),
+        std::sync::Arc::new(task.clone()),
         Default::default(),
     )
     .unwrap();
@@ -75,7 +75,7 @@ fn region_scp_combines_all_representations() {
         None,
         components,
         scp_config(Saturator::All, true),
-        std::sync::Arc::new(&task),
+        std::sync::Arc::new(task.clone()),
         Default::default(),
     )
     .unwrap();

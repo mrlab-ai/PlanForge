@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType,
-    VariableIndex, ZERO_VALUE,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType, VariableIndex, ZERO_VALUE,
 };
 
 use crate::task_transformations::restriction::validate_restricted_task;
@@ -39,7 +39,7 @@ pub struct CausalGraph {
 }
 
 impl CausalGraph {
-    pub fn new(task: &dyn AbstractNumericTask) -> Result<Self, String> {
+    pub fn new(task: &Task) -> Result<Self, String> {
         validate_restricted_task(task)?;
         let comparison_numeric_vars = task
             .comparison_axioms()
@@ -154,7 +154,7 @@ impl CausalGraph {
 
     fn precondition_sources(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         preconditions: &[ExplicitFact],
     ) -> Vec<CausalGraphVariable> {
         let mut sources = BTreeSet::new();
@@ -201,10 +201,7 @@ impl CausalGraph {
     }
 }
 
-fn numeric_effect_target(
-    task: &dyn AbstractNumericTask,
-    effect: &AssignmentEffect,
-) -> Option<CausalGraphVariable> {
+fn numeric_effect_target(task: &Task, effect: &AssignmentEffect) -> Option<CausalGraphVariable> {
     if task
         .numeric_variables()
         .get(effect.affected_var_id().index())
@@ -230,6 +227,6 @@ fn numeric_effect_target(
     Some(CausalGraphVariable::Numeric(effect.affected_var_id()))
 }
 
-fn is_regular_propositional_var(task: &dyn AbstractNumericTask, var_id: VariableIndex) -> bool {
+fn is_regular_propositional_var(task: &Task, var_id: VariableIndex) -> bool {
     task.variable_kind(var_id) == VariableKind::Regular
 }

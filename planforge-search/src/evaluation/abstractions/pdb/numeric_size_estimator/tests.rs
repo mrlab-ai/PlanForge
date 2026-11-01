@@ -1,14 +1,14 @@
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericValue, NumericVariable, Operator, OperatorCost, VariableIndex,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericValue, NumericVariable,
+    Operator, OperatorCost, Task, TaskParts, VariableIndex,
 };
 
 use super::*;
 
 #[test]
 fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             3,
@@ -60,7 +60,7 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
 #[test]
 #[should_panic(expected = "numeric PDB size estimation requires a restricted task")]
 fn rejects_unrestricted_numeric_conditions() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             3,

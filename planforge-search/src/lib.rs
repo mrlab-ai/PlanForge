@@ -1,7 +1,7 @@
 //! Search algorithms and heuristics over PlanForge SAS+ tasks.
 //!
 //! This crate is the final stage of the PDDL translation → SAS+ task → search
-//! pipeline. It consumes [`planforge_sas::numeric_task::AbstractNumericTask`]
+//! pipeline. It consumes [`planforge_sas::numeric_task::Task`]
 //! values and provides state-space search, heuristic evaluation, task
 //! restriction, and abstraction machinery.
 //!

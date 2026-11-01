@@ -23,9 +23,9 @@ use planforge_sas::axioms::{
     AssignmentAxiom, ComparisonAxiom, NumericExpression, PropositionalAxiom,
 };
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorIndex, VariableIndex,
+    AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric,
+    NumericType, NumericValue, NumericVariable, Operator, OperatorIndex, Task, TaskParts,
+    VariableIndex,
 };
 
 use crate::evaluation::validate_abstractable_goal;
@@ -167,7 +167,7 @@ impl std::error::Error for ProjectedTaskBuildError {}
 /// The projected task keeps the base task's operator costs, so its goal
 /// distances are those of the abstraction the pattern induces.
 pub struct ProjectedTask {
-    task: Arc<NumericRootTask>,
+    task: Arc<Task>,
     base_operator_ids: Vec<OperatorIndex>,
     projected_var_to_original: Vec<VariableIndex>,
     projected_num_var_to_original: Vec<VariableIndex>,
@@ -176,10 +176,7 @@ pub struct ProjectedTask {
 }
 
 impl ProjectedTask {
-    pub fn new(
-        base: &dyn AbstractNumericTask,
-        pattern: &Pattern,
-    ) -> Result<Self, ProjectedTaskBuildError> {
+    pub fn new(base: &Task, pattern: &Pattern) -> Result<Self, ProjectedTaskBuildError> {
         validate_restricted_task(base)
             .map_err(|reason| ProjectedTaskBuildError::UnrestrictedTask { reason })?;
         validate_abstractable_goal(base)
@@ -406,7 +403,7 @@ impl ProjectedTask {
         };
 
         let mutexes = projected_mutex_groups(base, &original_var_to_projected);
-        let task = NumericRootTask::new(NumericRootTaskParts {
+        let task = Task::new(TaskParts {
             metric: Metric::new(base.metric().is_min(), metric_var_id),
             variables,
             numeric_variables,
@@ -432,7 +429,7 @@ impl ProjectedTask {
     }
 
     /// The projected task.
-    pub fn task(&self) -> &Arc<NumericRootTask> {
+    pub fn task(&self) -> &Arc<Task> {
         &self.task
     }
 
@@ -531,7 +528,7 @@ impl ProjectedTask {
 /// renumbered into their ids; a group left with fewer than two facts says
 /// nothing and is dropped.
 fn projected_mutex_groups(
-    base: &dyn AbstractNumericTask,
+    base: &Task,
     original_var_to_projected: &[Option<usize>],
 ) -> Vec<Vec<ExplicitFact>> {
     base.mutexes()
@@ -558,7 +555,7 @@ fn push_unique_mapping(
 }
 
 fn include_restricted_comparison_operands(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     comparison_axiom_id: usize,
     projected_num_var_to_original: &mut Vec<VariableIndex>,
     original_num_var_to_projected: &mut [Option<usize>],
@@ -589,10 +586,7 @@ fn include_restricted_comparison_operands(
 /// pattern. Without the comparison variable the projection drops the
 /// precondition, and a numeric pattern variable no operator condition reads
 /// adds nothing to the heuristic.
-fn include_comparisons_over_projected_variables(
-    task: &dyn AbstractNumericTask,
-    projection: VariableProjection<'_>,
-) {
+fn include_comparisons_over_projected_variables(task: &Task, projection: VariableProjection<'_>) {
     let is_constant =
         |numeric_var_id: VariableIndex| task.numeric_type(numeric_var_id) == NumericType::Constant;
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
@@ -657,7 +651,7 @@ struct VariableProjection<'a> {
 /// deriving it and pull the body variables into the projection;
 /// `validate_abstractable_goal` refuses such a task instead.
 fn collect_restricted_projected_goals(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     pattern: &Pattern,
     projection: VariableProjection<'_>,
 ) -> Vec<ExplicitFact> {
@@ -810,7 +804,7 @@ fn project_propositional_axiom(
 }
 
 fn project_restricted_comparison_axiom(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     comparison_axiom_id: usize,
     var_map: &[Option<usize>],
     num_var_map: &[Option<usize>],

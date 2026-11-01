@@ -2,8 +2,8 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
-    Operator, OperatorCost, VariableIndex,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost, Task, TaskParts,
+    VariableIndex,
 };
 
 use super::*;
@@ -20,8 +20,8 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
     )
 }
 
-fn sample_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn sample_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             simple_var("p", None),
@@ -71,8 +71,8 @@ fn sample_task() -> NumericRootTask {
     })
 }
 
-fn operator_predecessor_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn operator_predecessor_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             simple_var("pre", None),
@@ -107,8 +107,8 @@ fn operator_predecessor_task() -> NumericRootTask {
     })
 }
 
-fn operator_comparison_predecessor_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn operator_comparison_predecessor_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             simple_var("goal", None),
@@ -163,8 +163,8 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
-fn numeric_goal_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn numeric_goal_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("cmp", Some(0))],
         numeric_variables: vec![
@@ -277,7 +277,7 @@ fn greedy_pattern_respects_estimated_numeric_domain_size_budget() {
 
 #[test]
 fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,

@@ -5,8 +5,8 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
-    Operator, OperatorCost, OperatorIndex, VariableIndex,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost, OperatorIndex,
+    Task, TaskParts, VariableIndex,
 };
 
 use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
@@ -24,13 +24,13 @@ const COST: VariableIndex = VariableIndex::new(4);
 /// A counter `x` from 0 with the goal `x >= bound` (or `x <= bound`), whose
 /// `increment` also doubles the metric variable `cost` from 1: its metric cost
 /// is 1 at the initial state but 2^k after k increments.
-fn doubling_cost_task(bound: f64, at_most: bool) -> NumericRootTask {
+fn doubling_cost_task(bound: f64, at_most: bool) -> Task {
     let (operator, holds) = if at_most {
         (ComparisonOperator::LessThanOrEqual, 0.0 <= bound)
     } else {
         (ComparisonOperator::GreaterThanOrEqual, 0.0 >= bound)
     };
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(true, Some(COST)),
         variables: vec![ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,
@@ -78,7 +78,7 @@ fn doubling_cost_task(bound: f64, at_most: bool) -> NumericRootTask {
     })
 }
 
-fn root_after(task: &NumericRootTask, increments: usize) -> ExplicitState {
+fn root_after(task: &Task, increments: usize) -> ExplicitState {
     let states = ExplicitStateSpace::new(task);
     states
         .replay(

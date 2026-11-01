@@ -9,13 +9,13 @@ use super::{OrderSelection, ScpBuilder};
 use crate::evaluation::evaluator::EvaluationError;
 use crate::resource_limits::Deadline;
 
-impl<'task> ScpBuilder<'task> {
+impl ScpBuilder {
     /// The cost partitionings diversification retains, starting from
     /// `initial_candidates`, whose first is the best order's at the
     /// evaluated state.
     pub(super) fn select_diverse_orders(
         &self,
-        collection: PartitionedCollection<'_, '_>,
+        collection: PartitionedCollection<'_>,
         state: &mut OrderSelection,
         initial_candidates: Vec<CostPartitioningHeuristic>,
         budget: Deadline,

@@ -1,3 +1,4 @@
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::info;
@@ -7,8 +8,8 @@ use planforge_sas::axioms::{CalOperator, ComparisonOperator, NumericExpression};
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericTaskExt,
-    NumericType, NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
+    AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType, NumericValue,
+    OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::state_registry::ConcreteStateView;
 use planforge_sas::utils::value_lattice::ValueLattice;
@@ -90,7 +91,7 @@ pub struct PotentialTask {
 
 impl PotentialTask {
     pub fn build(
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         precision: f64,
         epsilon: f64,
         ignore_numeric_variables: bool,
@@ -528,7 +529,7 @@ impl PotentialTask {
 /// operator that makes `g` true requires `c` and cannot lower it, and an
 /// operator that can lower `c` requires `g` false or makes it false.
 fn goal_implied_comparisons(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     helper: &NumericTaskHelper,
     propositional_goals: &[ExplicitFact],
 ) -> Result<Vec<VariableIndex>, String> {
@@ -638,7 +639,7 @@ struct ParsedNumericExpression {
 }
 
 fn build_cpp_numeric_features(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     implied_comparisons: &[VariableIndex],
 ) -> Result<Vec<NumericFeature>, String> {
     let mut features = Vec::new();
@@ -739,7 +740,7 @@ fn build_cpp_numeric_features(
 }
 
 fn parse_cpp_numeric_expression(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     numeric_var_id: VariableIndex,
     auxiliary_by_name: &mut BTreeMap<String, usize>,
     features: &mut Vec<NumericFeature>,
@@ -786,7 +787,7 @@ fn parse_cpp_numeric_expression(
 }
 
 fn insert_cpp_auxiliary_feature(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     source_numeric_var: VariableIndex,
     expression: ParsedNumericExpression,
     auxiliary_by_name: &mut BTreeMap<String, usize>,
@@ -819,7 +820,7 @@ struct AibrClosure {
     reachable_facts: Vec<Vec<bool>>,
 }
 
-fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, String> {
+fn compute_aibr_closure(task: &Task) -> Result<AibrClosure, String> {
     let (initial_props, initial_numeric) = task
         .evaluate_initial_state_values()
         .map_err(|error| format!("numeric bounds could not evaluate initial state: {error}"))?;

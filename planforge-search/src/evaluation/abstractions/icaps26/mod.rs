@@ -55,6 +55,7 @@ use distances::*;
 use finalize::*;
 use flaws::*;
 pub use generator::*;
+use planforge_sas::numeric_task::Task;
 use semantics::*;
 use split::*;
 use split_selection::*;
@@ -76,8 +77,8 @@ use anyhow::{Context, Result, bail, ensure};
 use ordered_float::NotNan;
 use planforge_sas::axioms::{AxiomEvaluator, ComparisonOperator};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType,
-    NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE, evaluate_metric_from_values,
+    AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType, NumericValue, Operator,
+    OperatorIndex, VariableIndex, ZERO_VALUE, evaluate_metric_from_values,
     propagate_assignment_axiom_values,
 };
 use planforge_sas::utils::float_tolerance;
@@ -111,10 +112,7 @@ fn fact_is_held(fact: &ExplicitFact, packer: &StatePacker, buffer: &[u64]) -> bo
 /// assignment effects applied to the initial values unconditionally, the
 /// last write to a variable winning. Kept verbatim so the frozen
 /// configurations reproduce their published results.
-fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>(
-    task: &T,
-    operator: &Operator,
-) -> NumericValue {
+fn metric_operator_cost_from_initial_values(task: &Task, operator: &Operator) -> NumericValue {
     if !task.metric().use_metric() {
         return NumericValue::new(operator.cost().value() as f64);
     }

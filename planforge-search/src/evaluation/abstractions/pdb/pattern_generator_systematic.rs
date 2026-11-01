@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, VariableIndex};
+use planforge_sas::numeric_task::{ExplicitFact, NumericType, VariableIndex};
 
 use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use super::pattern_collection::PatternCollection;
@@ -50,7 +51,7 @@ impl fmt::Display for SystematicPatternGeneratorConfig {
 }
 
 pub fn generate_systematic_patterns(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     config: SystematicPatternGeneratorConfig,
 ) -> PatternCollection {
     config
@@ -221,10 +222,7 @@ fn compute_connection_points(
 
 /// The variables the goal names: the propositional goal variables, then the
 /// numeric variable of every goal comparison.
-pub(super) fn goal_variables(
-    task: &dyn AbstractNumericTask,
-    causal_graph: &CausalGraph,
-) -> Vec<CausalGraphVariable> {
+pub(super) fn goal_variables(task: &Task, causal_graph: &CausalGraph) -> Vec<CausalGraphVariable> {
     let mut seed_variables = Vec::new();
     let mut seen = BTreeSet::new();
     let goal_var_ids: BTreeSet<VariableIndex> =
@@ -281,10 +279,7 @@ fn cpp_systematic_combined_size(pattern: &Pattern, candidate: &Pattern) -> usize
         + candidate.numeric.len()
 }
 
-fn is_pattern_numeric_candidate(
-    task: &dyn AbstractNumericTask,
-    numeric_var_id: VariableIndex,
-) -> bool {
+fn is_pattern_numeric_candidate(task: &Task, numeric_var_id: VariableIndex) -> bool {
     task.numeric_variables()
         .get(numeric_var_id.index())
         .map(|numeric_var| numeric_var.numeric_type() == NumericType::Regular)

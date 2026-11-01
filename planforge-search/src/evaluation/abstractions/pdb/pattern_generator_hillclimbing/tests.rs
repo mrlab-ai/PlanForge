@@ -1,6 +1,6 @@
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, Operator, OperatorCost, VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, Operator, OperatorCost,
+    Task, TaskParts, VariableIndex,
 };
 
 use super::*;
@@ -18,8 +18,8 @@ fn binary_var(name: &str) -> ExplicitVariable {
 }
 
 /// `open` sets the goal `door` and needs the `key`, which `fetch` gets.
-fn key_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn key_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![binary_var("key"), binary_var("door")],
         numeric_variables: vec![],
@@ -60,7 +60,7 @@ fn key_task() -> NumericRootTask {
     })
 }
 
-fn initial_h(task: &NumericRootTask, pdbs: &[PatternDatabase<'_>]) -> f64 {
+fn initial_h(task: &Task, pdbs: &[PatternDatabase]) -> f64 {
     let initial = [ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)];
     assert_eq!(task.variables().len(), initial.len());
     pdbs.iter()

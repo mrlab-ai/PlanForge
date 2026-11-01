@@ -50,9 +50,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, NumericRootTask, NumericType, VariableIndex,
-};
+use planforge_sas::numeric_task::{NumericType, Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::abstractions::cartesian::CartesianAbstraction;
 use planforge_search::evaluation::abstractions::cartesian::{
@@ -132,7 +130,7 @@ fn instances_root() -> PathBuf {
     corpus::assets().join("numeric-pddl-files/sailing-simple")
 }
 
-fn sailing_task(instance: &str) -> (NumericRootTask, Scratch) {
+fn sailing_task(instance: &str) -> (Task, Scratch) {
     let root = instances_root();
     let scratch = Scratch::new(&format!("sailing_simple_{instance}"));
     let task = translate_to_disk(
@@ -213,7 +211,7 @@ fn blind_astar_reproduces_every_costly_sailing_simple_optimum() {
 }
 
 fn assert_exact_single_abstraction_search<H>(
-    task: &NumericRootTask,
+    task: &Task,
     heuristic: H,
     expected_cost: f64,
     backend: &str,
@@ -224,9 +222,12 @@ fn assert_exact_single_abstraction_search<H>(
         heuristic.proves_initial_state_optimal(),
         "unrestricted {backend} CEGAR must finish with a concrete plan"
     );
-    let result = AStarSearch::new(Arc::new(task), SearchParams::new(Box::new(heuristic)))
-        .run()
-        .expect("single-abstraction A* search failed");
+    let result = AStarSearch::new(
+        Arc::new(task.clone()),
+        SearchParams::new(Box::new(heuristic)),
+    )
+    .run()
+    .expect("single-abstraction A* search failed");
 
     let SearchOutcome::Solved { cost, .. } = result.outcome else {
         panic!(
@@ -341,10 +342,7 @@ fn scp_initial_h_with_config(
     scp_initial_h_for_collection(&task, abstractions)
 }
 
-fn scp_initial_h_for_collection(
-    task: &NumericRootTask,
-    abstractions: Vec<DomainAbstraction>,
-) -> f64 {
+fn scp_initial_h_for_collection(task: &Task, abstractions: Vec<DomainAbstraction>) -> f64 {
     let config = ScpConfig {
         max_time: Some(Duration::from_secs(100)).into(),
         table_construction_max_time: Some(Duration::from_secs(100)).into(),
@@ -355,15 +353,14 @@ fn scp_initial_h_for_collection(
         None,
         components(abstractions, Vec::new()),
         config,
-        std::sync::Arc::new(task),
+        std::sync::Arc::new(task.clone()),
         Default::default(),
     )
     .expect("scp heuristic should construct");
 
-    let mut state_registry = StateRegistry::for_task(Arc::new(task));
+    let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
     let initial = state_registry.get_initial_state();
-    let mut eval =
-        EvaluationState::new(&initial, task as &dyn AbstractNumericTask, &state_registry);
+    let mut eval = EvaluationState::new(&initial, task as &Task, &state_registry);
     eval.set_is_goal(false);
     heuristic
         .evaluate(&eval)
@@ -397,13 +394,16 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         None,
         components(abstractions, Vec::new()),
         config,
-        std::sync::Arc::new(&task),
+        std::sync::Arc::new(task.clone()),
         Default::default(),
     )
     .expect("scp heuristic should construct");
-    let result = AStarSearch::new(Arc::new(&task), SearchParams::new(Box::new(heuristic)))
-        .run()
-        .expect("scp A* search failed");
+    let result = AStarSearch::new(
+        Arc::new(task.clone()),
+        SearchParams::new(Box::new(heuristic)),
+    )
+    .run()
+    .expect("scp A* search failed");
     match result.outcome {
         SearchOutcome::Solved { cost, .. } => Some(cost),
         _ => None,
@@ -450,7 +450,7 @@ fn sailing_simple_assignment_gap() {
 }
 
 /// The regular numeric variable whose name ends in `suffix`.
-fn regular_numeric_var_id(task: &NumericRootTask, suffix: &str) -> Option<usize> {
+fn regular_numeric_var_id(task: &Task, suffix: &str) -> Option<usize> {
     task.numeric_variables()
         .iter()
         .position(|var| var.numeric_type() == NumericType::Regular && var.name().ends_with(suffix))
@@ -575,10 +575,10 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
 
 /// The collection heuristics' components: the domain abstractions, then the
 /// Cartesian ones.
-fn components<'task>(
+fn components(
     domain: Vec<DomainAbstraction>,
     cartesian: Vec<CartesianAbstraction>,
-) -> Vec<AbstractionComponent<'task>> {
+) -> Vec<AbstractionComponent> {
     domain
         .into_iter()
         .map(AbstractionComponent::from)

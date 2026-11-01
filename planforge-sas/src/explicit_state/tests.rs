@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::numeric_task::TaskRef;
+use crate::numeric_task::Task;
 use crate::state_registry::StateRegistry;
 use crate::tests::get_root_task;
 
 /// The registry's values of the state its handle names.
 fn registry_values(
-    registry: &StateRegistry<'_>,
+    registry: &StateRegistry,
     state: &crate::state_registry::ConcreteState,
 ) -> ExplicitState {
     let mut values = ExplicitState::default();
@@ -20,8 +20,8 @@ fn registry_values(
 
 #[test]
 fn initial_state_and_successor_agree_with_the_registry() {
-    let task: TaskRef = Arc::new(get_root_task());
-    let space = ExplicitStateSpace::new(&*task);
+    let task: Arc<Task> = Arc::new(get_root_task());
+    let space = ExplicitStateSpace::new(&task);
     let mut registry = StateRegistry::for_task(task.clone());
     let registered_initial = registry.get_initial_state();
     let initial = space.initial_state().unwrap();

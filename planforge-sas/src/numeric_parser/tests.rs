@@ -1,6 +1,6 @@
 use super::*;
 use crate::numeric_conditions::ConditionValue;
-use crate::numeric_task::{AbstractNumericTask, OperatorCost};
+use crate::numeric_task::OperatorCost;
 
 /// One assignment effect guarded by a single condition: `if var5 == 1 then
 /// var3 += var2`. Threading the input incorrectly through the condition

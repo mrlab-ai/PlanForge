@@ -61,7 +61,7 @@ impl CostPartitioningHeuristic {
 /// `lookup_mask` selects; `numeric` is scratch for the state's numeric
 /// values.
 pub(super) fn abstract_state_ids_into(
-    components: &[AbstractionComponent<'_>],
+    components: &[AbstractionComponent],
     eval_state: &EvaluationState<'_, '_>,
     lookup_mask: Option<&[bool]>,
     numeric: &mut Vec<NumericValue>,

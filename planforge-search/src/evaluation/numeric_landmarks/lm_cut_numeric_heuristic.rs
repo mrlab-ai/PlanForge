@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::fmt;
 use std::sync::Arc;
 
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::AbstractNumericTask;
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -70,9 +70,9 @@ impl fmt::Display for LmCutNumericConfig {
 
 pub struct LandmarkCutNumericHeuristic<'task> {
     name: String,
-    task: &'task dyn AbstractNumericTask,
+    task: &'task Task,
     config: LmCutNumericConfig,
-    landmark_generator: LandmarkCutLandmarks<'task>,
+    landmark_generator: LandmarkCutLandmarks,
     state_scratch: ExplicitState,
     /// Estimates by the state ids of the search's registry.
     state_value_cache: StateValueCache,
@@ -93,16 +93,13 @@ impl LmCutNumericConfig {
 }
 
 impl<'task> LandmarkCutNumericHeuristic<'task> {
-    pub fn from_config(
-        task: &'task dyn AbstractNumericTask,
-        config: LmCutNumericConfig,
-    ) -> Result<Self, String> {
+    pub fn from_config(task: &'task Task, config: LmCutNumericConfig) -> Result<Self, String> {
         config.validate().map_err(|error| error.to_string())?;
         Ok(Self {
             name: "lmcutnumeric".to_string(),
             task,
             config,
-            landmark_generator: LandmarkCutLandmarks::new(Arc::new(task), config),
+            landmark_generator: LandmarkCutLandmarks::new(Arc::new(task.clone()), config),
             state_scratch: ExplicitState::default(),
             state_value_cache: StateValueCache::default(),
         })
@@ -162,7 +159,7 @@ impl crate::heuristic_factory::HeuristicFeature for LmCutNumericFeature {
         config: &Self::Config,
         context: &crate::heuristic_factory::BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
-        let heuristic = LandmarkCutNumericHeuristic::from_config(&**context.task, *config)
+        let heuristic = LandmarkCutNumericHeuristic::from_config(context.task, *config)
             .map_err(|error| format!("failed to build lmcutnumeric heuristic: {error}"))?;
         Ok(Box::new(heuristic))
     }

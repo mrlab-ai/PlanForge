@@ -62,7 +62,7 @@ type SourcesByOperator<'a> = Vec<(usize, Vec<&'a CartesianSet>)>;
 /// the excess. The sum runs over component pairs and then operators in
 /// increasing order, so it is the same in every run.
 pub(super) fn region_stolen_costs(
-    components: &[AbstractionComponent<'_>],
+    components: &[AbstractionComponent],
     saturated_by_component: &[Vec<f64>],
     operator_costs: &[f64],
 ) -> Result<Vec<Option<f64>>, EvaluationError> {

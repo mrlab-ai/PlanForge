@@ -1,16 +1,13 @@
 //! Debug output of domain-abstraction CEGAR.
 
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableIndex;
 use tracing::info;
 
 use super::function::DomainAbstractionFunction;
 
 /// The partitions a finished CEGAR run left, at `info` level.
-pub(crate) fn log_final_abstraction(
-    task: &dyn AbstractNumericTask,
-    function: &DomainAbstractionFunction,
-) {
+pub(crate) fn log_final_abstraction(task: &Task, function: &DomainAbstractionFunction) {
     info!("domain abstraction final domains:");
     for (numeric_var_id, &size) in function
         .numeric_domain_sizes()

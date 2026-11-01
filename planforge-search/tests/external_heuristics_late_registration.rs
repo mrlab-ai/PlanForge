@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
+use planforge_sas::numeric_task::Task;
 use planforge_search::config::parse_call;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
@@ -12,7 +12,7 @@ use planforge_search::heuristic_factory::{
 #[test]
 fn external_registration_after_heuristic_construction_is_rejected() {
     let spec = parse_call("blind()").unwrap();
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(concat!(
+    let task: Arc<Task> = Arc::new(Task::from_file(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../tests/assets/numeric_sas/example2.sas"
     )));
@@ -36,6 +36,6 @@ impl HeuristicFeature for TooLate {
         _: &Self::Config,
         context: &BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        Ok(Box::new(BlindHeuristic::for_task(&**context.task)))
+        Ok(Box::new(BlindHeuristic::for_task(context.task)))
     }
 }

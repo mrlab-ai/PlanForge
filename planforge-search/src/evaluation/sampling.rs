@@ -2,28 +2,29 @@
 //! diversification of saturated cost partitioning (Seipp et al. 2020) sample
 //! states with.
 
-use planforge_sas::numeric_task::{OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use rand::Rng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
+use std::sync::Arc;
 
 use crate::evaluation::evaluator::EvaluationError;
 use crate::resource_limits::Deadline;
 use crate::successor_generator::RegistryExpander;
 
 /// Samples states as the ends of random walks from the initial state.
-pub(crate) struct RandomWalkSampler<'task> {
-    task: TaskRef<'task>,
-    registry: StateRegistry<'task>,
+pub(crate) struct RandomWalkSampler {
+    task: Arc<Task>,
+    registry: StateRegistry,
     expander: RegistryExpander,
     initial_state: ConcreteState,
     average_operator_cost: f64,
 }
 
-impl<'task> RandomWalkSampler<'task> {
-    pub(crate) fn new(task: TaskRef<'task>) -> Self {
+impl RandomWalkSampler {
+    pub(crate) fn new(task: Arc<Task>) -> Self {
         let mut registry = StateRegistry::for_task(task.clone());
         let initial_state = registry.get_initial_state();
         let num_operators = task.operators().len();
@@ -36,7 +37,7 @@ impl<'task> RandomWalkSampler<'task> {
                 / num_operators as f64
         };
         Self {
-            expander: RegistryExpander::new(&*task),
+            expander: RegistryExpander::new(&task),
             task,
             registry,
             initial_state,
@@ -45,7 +46,7 @@ impl<'task> RandomWalkSampler<'task> {
     }
 
     /// The registry every sampled state lives in.
-    pub(crate) fn registry(&self) -> &StateRegistry<'task> {
+    pub(crate) fn registry(&self) -> &StateRegistry {
         &self.registry
     }
 
@@ -63,10 +64,7 @@ impl<'task> RandomWalkSampler<'task> {
         initial_h: f64,
         rng: &mut SmallRng,
         deadline: Deadline,
-        mut is_dead_end: impl FnMut(
-            &StateRegistry<'task>,
-            &ConcreteState,
-        ) -> Result<bool, EvaluationError>,
+        mut is_dead_end: impl FnMut(&StateRegistry, &ConcreteState) -> Result<bool, EvaluationError>,
     ) -> Result<Option<ConcreteState>, EvaluationError> {
         let length = random_walk_length(initial_h, self.average_operator_cost, rng)?;
         let mut current = self.initial_state.clone();

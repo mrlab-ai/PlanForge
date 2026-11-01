@@ -1,8 +1,7 @@
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, ONE_VALUE,
-    Operator, OperatorCost,
+    Metric, NumericType, NumericVariable, ONE_VALUE, Operator, OperatorCost, Task, TaskParts,
 };
 use planforge_sas::utils::value_lattice::ValueLattice;
 
@@ -18,13 +17,13 @@ fn global_constraint_variable() -> ExplicitVariable {
     )
 }
 
-fn affine_sum_task(operation: AssignmentOperation) -> NumericRootTask {
+fn affine_sum_task(operation: AssignmentOperation) -> Task {
     affine_sum_task_with_step(operation, 1.0)
 }
 
 /// `x`, `y` and the derived `x + y`; one operator changes `x` by `step`.
-fn affine_sum_task_with_step(operation: AssignmentOperation, step: f64) -> NumericRootTask {
-    NumericRootTask::new(derived_parts(
+fn affine_sum_task_with_step(operation: AssignmentOperation, step: f64) -> Task {
+    Task::new(derived_parts(
         operation,
         step,
         CalOperator::Sum,
@@ -39,7 +38,7 @@ fn derived_parts(
     step: f64,
     definition: CalOperator,
     right: VariableIndex,
-) -> NumericRootTaskParts {
+) -> TaskParts {
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
@@ -59,7 +58,7 @@ fn derived_parts(
         )],
         OperatorCost::new(1),
     );
-    NumericRootTaskParts {
+    TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             global_constraint_variable(),
@@ -134,7 +133,7 @@ fn cost_dependent_expression_is_not_an_additive_view() {
         NumericVariable::new("accumulated-cost".into(), NumericType::Cost, None),
         NumericVariable::new("x-plus-cost".into(), NumericType::Derived, None),
     ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::from_usize(1))),
         variables: vec![global_constraint_variable()],
         numeric_variables,
@@ -183,7 +182,7 @@ fn a_coordinate_preimage_lies_on_the_canonical_lattice() {
 #[test]
 fn a_one_variable_expression_is_refined_along_its_variable() {
     // `x - one` is an image of `x` alone.
-    let task = NumericRootTask::new(derived_parts(
+    let task = Task::new(derived_parts(
         AssignmentOperation::Plus,
         1.0,
         CalOperator::Difference,
@@ -245,7 +244,7 @@ fn multiplicative_and_large_effects_use_the_full_grid() {
     }
 }
 
-fn guarded_increment_task(limit: f64) -> NumericRootTask {
+fn guarded_increment_task(limit: f64) -> Task {
     let mut parts = derived_parts(
         AssignmentOperation::Plus,
         0.1,
@@ -280,7 +279,7 @@ fn guarded_increment_task(limit: f64) -> NumericRootTask {
         operator.assignment_effects().clone(),
         operator.cost(),
     ));
-    NumericRootTask::new(parts)
+    Task::new(parts)
 }
 
 #[test]
@@ -349,7 +348,7 @@ fn a_resource_invariant_certifies_a_decimal_affine_coordinate() {
         ],
         OperatorCost::new(1),
     )];
-    let task = NumericRootTask::new(parts);
+    let task = Task::new(parts);
     let coordinate = task.comparison_axioms()[0].get_left_var_id().index();
     assert_eq!(
         Coordinates::new(&task).value_lattices()[coordinate]
@@ -386,7 +385,7 @@ fn an_unbounded_decimal_linear_part_does_not_claim_constant_floating_deltas() {
         )],
         OperatorCost::new(1),
     )];
-    let task = NumericRootTask::new(parts);
+    let task = Task::new(parts);
     let coordinate = task.comparison_axioms()[0].get_left_var_id();
     let coordinates = Coordinates::new(&task);
     assert_eq!(
@@ -444,7 +443,7 @@ fn unbounded_sailing_views_cannot_assume_integer_correlations() {
             OperatorCost::new(1),
         ));
     }
-    let task = NumericRootTask::new(parts);
+    let task = Task::new(parts);
     let coordinate = task.comparison_axioms()[0].get_left_var_id().index();
     assert_eq!(
         Coordinates::new(&task).value_lattices()[coordinate].step(),

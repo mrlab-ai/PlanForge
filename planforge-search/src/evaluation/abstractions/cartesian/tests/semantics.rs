@@ -1,6 +1,7 @@
 use super::*;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use planforge_sas::numeric_task::Task;
 
 /// A goal on a comparison variable is refined until the comparison holds.
 ///
@@ -35,7 +36,7 @@ fn refines_through_a_comparison_goal() {
         )],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -270,8 +271,8 @@ fn supports_multiplicative_numeric_effects() {
     assert_solved_with_h(&task, 2.0);
 }
 
-fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             1,

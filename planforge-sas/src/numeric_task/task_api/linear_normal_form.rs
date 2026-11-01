@@ -2,7 +2,7 @@ use super::*;
 use crate::axioms::{ComparisonOperator, NumericExpression};
 use crate::utils::linear_effects::LinearizationError;
 
-impl NumericRootTask {
+impl TaskData {
     /// Hoffmann's linear normal form, established before any task consumer.
     /// PDDL arithmetic is real arithmetic. We approximate the algebraically
     /// equivalent comparison in f64: canonical coefficients and threshold,
@@ -186,7 +186,7 @@ impl NumericRootTask {
             .expect("unique arithmetic definitions");
         fn fold(
             variable: VariableIndex,
-            task: &mut NumericRootTask,
+            task: &mut TaskData,
             definitions: &[Option<AxiomIndex>],
             visiting: &mut [bool],
         ) -> bool {

@@ -9,8 +9,8 @@ use std::sync::Arc;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, TaskRef, VariableIndex,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    Task, TaskParts, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
 
@@ -103,12 +103,12 @@ fn every_cpp_numeric_potential_option_parses() {
     );
 }
 
-fn optimize_initial(task: NumericRootTask) -> (f64, f64) {
-    let task: TaskRef<'static> = Arc::new(task);
+fn optimize_initial(task: Task) -> (f64, f64) {
+    let task: Arc<Task> = Arc::new(task);
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let mut optimizer =
-        NumericPotentialOptimizer::new(&*task, &NumericPotentialConfig::default()).unwrap();
+        NumericPotentialOptimizer::new(&task, &NumericPotentialConfig::default()).unwrap();
     let columns = optimizer.num_columns() as f64;
     let OptimizationOutcome::Optimal { value, function } = optimizer
         .optimize_for_state(registry.view(&initial))
@@ -134,7 +134,7 @@ fn optimize_initial(task: NumericRootTask) -> (f64, f64) {
 
 #[test]
 fn one_step_classical_potential_equals_optimal_cost() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -171,7 +171,7 @@ fn one_step_classical_potential_equals_optimal_cost() {
 
 #[test]
 fn additive_numeric_potential_equals_two_required_increments() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -265,7 +265,7 @@ fn thirty_deterministic_random_duality_instances() {
             ));
             expected_ratio = expected_ratio.min(cost as f64 / delta);
         }
-        let task = NumericRootTask::new(NumericRootTaskParts {
+        let task = Task::new(TaskParts {
             metric: Metric::new(false, None),
             variables: vec![ExplicitVariable::new(
                 2,
@@ -303,7 +303,7 @@ fn thirty_deterministic_random_duality_instances() {
 /// A goal of two comparisons keeps both as separate goal conditions: the
 /// potential needs `x >= 2` and `y >= 3`, five unit increments.
 fn a_conjunctive_numeric_goal_keeps_its_comparisons_separate() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -422,7 +422,7 @@ fn a_multivariate_goal_comparison_is_a_feature() {
             OperatorCost::new(1),
         )
     };
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -479,7 +479,7 @@ fn a_multivariate_goal_comparison_is_a_feature() {
 
 #[test]
 fn classical_only_mode_ignores_numeric_action_conditions() {
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -534,7 +534,7 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
     config.ignore_numeric_variables = true;
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
-    let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
+    let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     assert!(!optimizer.task().features.is_empty());
     assert!(optimizer.conditionable_goals().is_empty());
     let OptimizationOutcome::Optimal { value, .. } = optimizer
@@ -548,7 +548,7 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
 
 #[test]
 fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -622,7 +622,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let mut optimizer =
-        NumericPotentialOptimizer::new(&*task, &NumericPotentialConfig::default()).unwrap();
+        NumericPotentialOptimizer::new(&task, &NumericPotentialConfig::default()).unwrap();
     let goal = (VariableIndex::new(1), ExplicitValueIndex::new(0));
     assert_eq!(optimizer.conditionable_goals(), [goal]);
     assert_eq!(optimizer.goal_achievers(goal.0, goal.1), [1]);
@@ -657,7 +657,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
         NumericPotentialHeuristic::from_config(task.clone(), online_config).unwrap();
     let mut online_registry = StateRegistry::for_task(task.clone());
     let online_initial = online_registry.get_initial_state();
-    let eval_state = EvaluationState::new(&online_initial, &*task, &online_registry);
+    let eval_state = EvaluationState::new(&online_initial, &task, &online_registry);
     assert!(
         (heuristic.evaluate(&eval_state).unwrap() - 3.0).abs() < 1e-7,
         "online reoptimization must not conflict with evaluation scratch borrows"
@@ -671,7 +671,7 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
         BoundsProvider::Aibr,
         BoundsProvider::All,
     ] {
-        let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        let task: Arc<Task> = Arc::new(Task::new(TaskParts {
             metric: Metric::new(false, None),
             variables: vec![ExplicitVariable::new(
                 2,
@@ -720,7 +720,7 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
         let initial = registry.get_initial_state();
         let mut config = NumericPotentialConfig::default();
         config.bounds = bounds;
-        let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
+        let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
         let OptimizationOutcome::Optimal { value, .. } = optimizer
             .optimize_for_state(registry.view(&initial))
             .unwrap()
@@ -733,7 +733,7 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
 
 #[test]
 fn exact_ray_certifies_numeric_dead_end() {
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -781,7 +781,7 @@ fn exact_ray_certifies_numeric_dead_end() {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let config = NumericPotentialConfig::default();
-    let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
+    let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     let mut generator = RayGenerator::new(&optimizer, config.ray_epsilon).unwrap();
     let ray = generator
         .try_certify(&mut optimizer, registry.view(&initial))
@@ -802,7 +802,7 @@ fn exact_ray_certifies_numeric_dead_end() {
 
 #[test]
 fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -863,7 +863,7 @@ fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
 
 #[test]
 fn impossible_reachable_bounds_skip_the_ordinary_lp() {
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -914,7 +914,7 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
     };
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
-    let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
+    let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     assert_eq!(optimizer.num_columns(), 0);
     assert_eq!(optimizer.num_rows(), 0);
     assert!(matches!(
@@ -930,7 +930,7 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
 /// two arithmetic axioms into one linear part, whose bounds follow from the
 /// effects: only increases, from `-2` in the initial state.
 fn an_affine_comparison_is_one_linear_feature() {
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -1049,7 +1049,7 @@ fn an_affine_comparison_is_one_linear_feature() {
         global_constraint: Some(ExplicitFact::propositional(1, 0)),
     }));
     let potential_task =
-        PotentialTask::build(&*task, 1e-6, 0.0, false, BoundsProvider::All, false, true).unwrap();
+        PotentialTask::build(&task, 1e-6, 0.0, false, BoundsProvider::All, false, true).unwrap();
     assert_eq!(
         potential_task
             .features
@@ -1077,7 +1077,7 @@ fn an_affine_comparison_is_one_linear_feature() {
 
     let mut config = NumericPotentialConfig::default();
     config.bounds = BoundsProvider::All;
-    let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
+    let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     assert_eq!(optimizer.num_columns(), 15);
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
@@ -1098,7 +1098,7 @@ fn an_affine_comparison_is_one_linear_feature() {
 /// The paper's example: goal `g`, reached only by a unit-cost action that
 /// needs `x >= 5`, while a unit-cost action increments `x` -- and, with
 /// `decrement`, another one lowers it.
-fn threshold_achiever_task(decrement: bool) -> NumericRootTask {
+fn threshold_achiever_task(decrement: bool) -> Task {
     let change = |name: &str, operation| {
         Operator::new(
             name.into(),
@@ -1135,7 +1135,7 @@ fn threshold_achiever_task(decrement: bool) -> NumericRootTask {
     if decrement {
         operators.push(change("decrement", AssignmentOperation::Minus));
     }
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -1187,12 +1187,12 @@ fn a_goal_implies_the_monotone_precondition_of_its_only_achiever() {
 
 #[test]
 fn goal_strengthening_can_be_switched_off() {
-    let task: TaskRef<'static> = Arc::new(threshold_achiever_task(false));
+    let task: Arc<Task> = Arc::new(threshold_achiever_task(false));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let mut config = NumericPotentialConfig::default();
     config.goal_strengthening = false;
-    let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
+    let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     let OptimizationOutcome::Optimal { value, .. } = optimizer
         .optimize_for_state(registry.view(&initial))
         .unwrap()

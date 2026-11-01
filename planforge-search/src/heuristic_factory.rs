@@ -12,7 +12,7 @@ use crate::evaluation::abstractions::domain::config::DomainAbstractionCollection
 use crate::evaluation::abstractions::icaps26::Icaps26CartesianConfig;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use crate::evaluation::abstractions::sources::{AbstractionSource, PdbSourceConfig};
-use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use planforge_sas::numeric_task::Task;
 use std::fmt::{self, Debug};
 use std::sync::{Arc, OnceLock};
 #[cfg(test)]
@@ -59,10 +59,7 @@ impl TaskRequirements {
     /// A task that is not restricted is a usage error, since `--restrict-task`
     /// would restrict it; a goal no abstraction can express is a task the
     /// heuristic does not support.
-    pub(crate) fn validate(
-        self,
-        task: &dyn AbstractNumericTask,
-    ) -> Result<(), HeuristicBuildError> {
+    pub(crate) fn validate(self, task: &Task) -> Result<(), HeuristicBuildError> {
         if self.restricted {
             validate_restricted_task(task).map_err(HeuristicBuildError::Failure)?;
         }
@@ -77,11 +74,11 @@ impl TaskRequirements {
 /// What a feature builds its heuristic for: the task, and the name the
 /// heuristic reports itself under.
 pub struct BuildContext<'a> {
-    pub task: &'a TaskRef<'a>,
+    pub task: &'a Arc<Task>,
     pub name: String,
 }
 impl<'a> BuildContext<'a> {
-    pub fn new(task: &'a TaskRef<'a>) -> Self {
+    pub fn new(task: &'a Arc<Task>) -> Self {
         Self {
             task,
             name: String::new(),
@@ -212,7 +209,7 @@ impl HeuristicConfig {
         let _ = external_heuristics();
         check_backend(self.required_backend())
             .map_err(|error| HeuristicBuildError::Failure(error.to_string()))?;
-        self.requirements().validate(&**context.task)?;
+        self.requirements().validate(context.task)?;
         self.0.build(context)
     }
 }

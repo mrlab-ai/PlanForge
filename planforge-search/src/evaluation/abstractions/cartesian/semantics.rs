@@ -3,7 +3,8 @@
 //! change, which lets a split update only the transitions it affects.
 
 use anyhow::{Result, ensure};
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, OperatorIndex, VariableIndex};
+use planforge_sas::numeric_task::Task;
+use planforge_sas::numeric_task::{NumericType, OperatorIndex, VariableIndex};
 use planforge_sas::utils::float_tolerance;
 
 use super::config::CartesianAbstractionConfig;
@@ -29,7 +30,7 @@ pub(super) struct CartesianSemantics<'task> {
 /// The dimensions of `var_id`; see the `variable_dimensions` of
 /// [`CartesianSemantics`].
 fn variable_dimensions(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     var_id: VariableIndex,
     regions: &RegionSemantics<'_>,
     memo: &mut [Option<Box<[SplitDimension]>>],
@@ -81,7 +82,7 @@ impl<'task> CartesianSemantics<'task> {
         &self.cegar
     }
 
-    pub(super) fn task(&self) -> &'task dyn AbstractNumericTask {
+    pub(super) fn task(&self) -> &'task Task {
         self.cegar.task()
     }
 
@@ -89,10 +90,7 @@ impl<'task> CartesianSemantics<'task> {
         self.cegar.regions()
     }
 
-    pub(super) fn new(
-        task: &'task dyn AbstractNumericTask,
-        config: &CartesianAbstractionConfig,
-    ) -> Result<Self> {
+    pub(super) fn new(task: &'task Task, config: &CartesianAbstractionConfig) -> Result<Self> {
         let cegar = CegarSemantics::for_options(task, &config.cegar)?;
         let regions = cegar.regions();
         let additive_numeric_views = cegar.coordinates().views();

@@ -9,14 +9,14 @@ use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::sampling::RandomWalkSampler;
 use crate::resource_limits::Deadline;
 
-impl<'task> ScpBuilder<'task> {
+impl ScpBuilder {
     /// The abstract states in every component of the initial state and of
     /// the ends of random walks from it (Seipp et al. 2020), until there are
     /// `samples` or `deadline` passes. A walk restarts at a dead end of
     /// `dead_end_cp`, as Scorpion's does.
     pub(super) fn sample_states(
         &self,
-        components: &[AbstractionComponent<'_>],
+        components: &[AbstractionComponent],
         state: &mut OrderSelection,
         dead_end_cp: &CostPartitioningHeuristic,
         initial_h: f64,
@@ -79,13 +79,13 @@ impl<'task> ScpBuilder<'task> {
 
     fn abstract_state_ids_of_sample(
         &self,
-        components: &[AbstractionComponent<'_>],
+        components: &[AbstractionComponent],
         concrete_state: &ConcreteState,
-        registry: &StateRegistry<'task>,
+        registry: &StateRegistry,
         numeric: &mut Vec<NumericValue>,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        let eval_state = EvaluationState::new(concrete_state, &*self.task, registry);
+        let eval_state = EvaluationState::new(concrete_state, &self.task, registry);
         abstract_state_ids_into(components, &eval_state, None, numeric, ids)
     }
 }

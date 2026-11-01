@@ -1,7 +1,6 @@
 use super::*;
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, Task, TaskParts,
 };
 
 fn simple_var(name: &str, values: &[&str], axiom_layer: Option<usize>) -> ExplicitVariable {
@@ -30,7 +29,7 @@ fn lmcutnumeric_config_defaults_match_fd_parser_defaults() {
 
 #[test]
 fn from_config_accepts_second_order_simple_flag() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -56,7 +55,7 @@ fn from_config_accepts_second_order_simple_flag() {
 
 #[test]
 fn from_config_accepts_irmax() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -83,7 +82,7 @@ fn from_config_accepts_irmax() {
 
 #[test]
 fn from_config_accepts_disable_ma() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -110,7 +109,7 @@ fn from_config_accepts_disable_ma() {
 
 #[test]
 fn from_config_accepts_constant_assignment() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -137,7 +136,7 @@ fn from_config_accepts_constant_assignment() {
 
 #[test]
 fn from_config_accepts_bound_iterations() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],

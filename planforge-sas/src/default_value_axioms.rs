@@ -32,11 +32,12 @@
 //! therefore its expansion count, depends on the order of its relaxed
 //! operators.
 
+use crate::numeric_task::Task;
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::axioms::PropositionalAxiom;
 use crate::numeric_task::{
-    AbstractNumericTask, AxiomIndex, ExplicitFact, ExplicitValueIndex, VariableIndex, VariableKind,
+    AxiomIndex, ExplicitFact, ExplicitValueIndex, VariableIndex, VariableKind,
 };
 use crate::utils::scc::Scc;
 
@@ -67,7 +68,7 @@ struct DerivedVariables {
 }
 
 impl DerivedVariables {
-    fn of(task: &dyn AbstractNumericTask) -> Self {
+    fn of(task: &Task) -> Self {
         let num_variables = task.variables().len();
         let mut is_derived = Vec::with_capacity(num_variables);
         let mut default_value = Vec::with_capacity(num_variables);
@@ -117,7 +118,7 @@ struct Dependencies {
 }
 
 impl Dependencies {
-    fn of(task: &dyn AbstractNumericTask, derived: &DerivedVariables) -> Self {
+    fn of(task: &Task, derived: &DerivedVariables) -> Self {
         let num_variables = task.variables().len();
         let mut dependencies = Dependencies {
             nondefault: vec![Vec::new(); num_variables],
@@ -166,10 +167,7 @@ impl Dependencies {
 ///
 /// Empty when the task has no axioms, and — because of the relevance analysis —
 /// also when no consumer can observe a derived variable at its default value.
-pub fn default_value_axioms(
-    task: &dyn AbstractNumericTask,
-    mode: DefaultValueAxiomMode,
-) -> Vec<PropositionalAxiom> {
+pub fn default_value_axioms(task: &Task, mode: DefaultValueAxiomMode) -> Vec<PropositionalAxiom> {
     if task.axioms().is_empty() {
         return Vec::new();
     }
@@ -246,12 +244,12 @@ fn refuted_unconditionally(
 ///
 /// The translator's global-constraint atom is deliberately not a seed. It is not
 /// a goal and not an operator precondition — the search engines never consult it
-/// (see `NumericRootTask::global_constraint`), only the plan verifier does, and
+/// (see `Task::global_constraint`), only the plan verifier does, and
 /// the verifier checks it against a real state rather than against a relaxation.
 /// A task whose only axiom is that atom therefore needs no rules at all, which
 /// is what keeps a heuristic on such a task byte-for-byte what it was.
 fn relevant_default_values(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     derived: &DerivedVariables,
     dependencies: &Dependencies,
     refuted_unconditionally: &[bool],
@@ -331,10 +329,7 @@ fn relevant_default_values(
 /// hit, so there are no bodies at all — nothing refutes a variable that always
 /// holds. A variable with no proving rule contributes no clause, so the empty
 /// hitting set survives and its default holds in every state.
-fn refuting_bodies(
-    task: &dyn AbstractNumericTask,
-    proving_axioms: &[AxiomIndex],
-) -> BTreeSet<BTreeSet<ExplicitFact>> {
+fn refuting_bodies(task: &Task, proving_axioms: &[AxiomIndex]) -> BTreeSet<BTreeSet<ExplicitFact>> {
     let conditions = task.numeric_conditions();
     let clauses: Vec<BTreeSet<ExplicitFact>> = proving_axioms
         .iter()

@@ -14,9 +14,8 @@ mod numeric;
 mod propositional;
 
 use anyhow::Result;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, OperatorIndex,
-};
+use planforge_sas::numeric_task::Task;
+use planforge_sas::numeric_task::{ExplicitFact, ExplicitValueIndex, OperatorIndex};
 
 use super::function::DomainAbstractionFunction;
 use super::layout::StateLayout;
@@ -166,7 +165,7 @@ fn transition_vars_match(pre_pairs: &[ExplicitFact], eff_pairs: &[ExplicitFact])
 /// labels combined if `combine_labels`.
 pub(super) fn build_abstract_operators(
     function: &DomainAbstractionFunction,
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     combine_labels: bool,
     deadline: Deadline,
 ) -> Result<Vec<AbstractOperator>> {

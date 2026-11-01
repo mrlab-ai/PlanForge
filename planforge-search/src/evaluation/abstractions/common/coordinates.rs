@@ -1,6 +1,7 @@
 mod lattices;
 mod preimage;
 
+use planforge_sas::numeric_task::Task;
 use preimage::scalar_preimage;
 
 #[cfg(test)]
@@ -11,9 +12,8 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_conditions::{CompOp, ConditionNode, ConditionValue, NumericCondition};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
-    INF_VALUE, NEG_INF_VALUE, NumericTaskExt, NumericType, NumericValue, Operator, OperatorIndex,
-    VariableIndex, ZERO_VALUE,
+    AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact, INF_VALUE, NEG_INF_VALUE,
+    NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -58,7 +58,7 @@ pub(crate) fn coordinate_value(
 /// A normalized linear part is an additive view when every operator changes
 /// it by a constant. Unary comparisons already name their regular variable.
 fn analyze_additive_numeric_view(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     definitions: &[Option<AxiomIndex>],
     numeric_var_id: VariableIndex,
 ) -> Option<AdditiveNumericView> {
@@ -113,7 +113,7 @@ pub(crate) fn active_comparison_dimensions(
 }
 
 fn additive_view_delta_for_operator(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     terms: &[(VariableIndex, NumericValue)],
     operator: &Operator,
 ) -> Option<NumericValue> {
@@ -131,7 +131,7 @@ fn additive_view_delta_for_operator(
 }
 
 fn regular_additive_delta_for_operator(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     numeric_var_id: VariableIndex,
     operator: &Operator,
 ) -> Option<NumericValue> {
@@ -148,10 +148,7 @@ fn regular_additive_delta_for_operator(
     constant_effect_delta(task, effect)
 }
 
-fn constant_effect_delta(
-    task: &dyn AbstractNumericTask,
-    effect: &AssignmentEffect,
-) -> Option<NumericValue> {
+fn constant_effect_delta(task: &Task, effect: &AssignmentEffect) -> Option<NumericValue> {
     if task.numeric_type(effect.var_id()) != NumericType::Constant {
         return None;
     }
@@ -173,7 +170,7 @@ fn constant_effect_delta(
 /// Abstractions split coordinates, and a condition over one coordinate is an
 /// interval of it, so regression over coordinates is exact.
 pub(crate) struct Coordinates<'task> {
-    task: &'task dyn AbstractNumericTask,
+    task: &'task Task,
     views: Arc<[Option<AdditiveNumericView>]>,
     /// Per numeric condition, its requirement on the one coordinate it
     /// constrains when it holds and when it does not, if it constrains one;
@@ -189,7 +186,7 @@ pub(crate) struct CoordinateRequirement {
 }
 
 impl<'task> Coordinates<'task> {
-    pub(crate) fn new(task: &'task dyn AbstractNumericTask) -> Self {
+    pub(crate) fn new(task: &'task Task) -> Self {
         let definitions = task
             .assignment_axiom_lookup()
             .expect("a task defines every numeric variable by at most one assignment axiom");
@@ -324,7 +321,7 @@ impl<'task> Coordinates<'task> {
 /// derived coordinate, else the operator's effects on it applied in order,
 /// canonicalized after every step as concrete states are.
 pub(crate) fn coordinate_image(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     views: &[Option<AdditiveNumericView>],
     source: Interval,
     op_id: OperatorIndex,
@@ -349,7 +346,7 @@ pub(crate) fn coordinate_image(
 }
 
 fn is_coordinate(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     views: &[Option<AdditiveNumericView>],
     var_id: VariableIndex,
 ) -> bool {
@@ -363,7 +360,7 @@ fn is_coordinate(
 /// The requirement of `tree` on its one coordinate where its comparison has
 /// `truth`, if it constrains exactly one coordinate.
 fn condition_requirement(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     tree: &NumericCondition,
     truth: ConditionValue,
     is_coordinate: &impl Fn(VariableIndex) -> bool,

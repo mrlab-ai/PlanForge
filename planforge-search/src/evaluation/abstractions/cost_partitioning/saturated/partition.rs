@@ -23,8 +23,8 @@ use crate::resource_limits::Deadline;
 /// state being expanded, which is `PartitionedCollection { abstract_state_ids,
 /// abstraction_h, ..collection }`.
 #[derive(Clone, Copy)]
-pub(super) struct PartitionedCollection<'a, 'task> {
-    pub(super) components: &'a [AbstractionComponent<'task>],
+pub(super) struct PartitionedCollection<'a> {
+    pub(super) components: &'a [AbstractionComponent],
     pub(super) abstract_state_ids: &'a [Option<usize>],
     pub(super) abstraction_h: &'a [f64],
     pub(super) original_costs: &'a [f64],
@@ -57,7 +57,7 @@ impl SaturatedCosts {
 /// sets, so it saturates labels under either method; SCP logs that once when
 /// it is built.
 fn saturate_component(
-    component: &AbstractionComponent<'_>,
+    component: &AbstractionComponent,
     remaining: &RemainingCosts,
     method: CostPartitioningMethod,
     perimeter_state: Option<usize>,
@@ -82,7 +82,7 @@ fn saturate_component(
 
 /// Label saturation of `component` under `operator_costs`.
 pub(super) fn saturate_component_labels(
-    component: &AbstractionComponent<'_>,
+    component: &AbstractionComponent,
     operator_costs: &[f64],
     perimeter_state: Option<usize>,
     deadline: Deadline,
@@ -108,12 +108,12 @@ pub(super) enum Completion {
     Truncated,
 }
 
-impl<'task> ScpBuilder<'task> {
+impl ScpBuilder {
     /// The cost partitioning of `order`: every component in turn saturates
     /// what the ones before it left, until the order or `deadline` ends.
     pub(super) fn build_cp(
         &self,
-        collection: PartitionedCollection<'_, '_>,
+        collection: PartitionedCollection<'_>,
         order: &[usize],
         deadline: Deadline,
     ) -> Result<(CostPartitioningHeuristic, Completion), EvaluationError> {
@@ -150,7 +150,7 @@ impl<'task> ScpBuilder<'task> {
         &self,
         cp: &mut CostPartitioningHeuristic,
         remaining: &mut RemainingCosts,
-        collection: PartitionedCollection<'_, '_>,
+        collection: PartitionedCollection<'_>,
         component_id: usize,
         deadline: Deadline,
     ) -> Result<ControlFlow<()>, EvaluationError> {

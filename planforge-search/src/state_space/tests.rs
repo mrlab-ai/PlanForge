@@ -1,12 +1,12 @@
 use super::*;
-use planforge_sas::numeric_task::NumericRootTask;
+use planforge_sas::numeric_task::Task;
 use std::sync::Arc;
 
-fn pddl_task(directory: &str, problem: &str) -> TaskRef<'static> {
+fn pddl_task(directory: &str, problem: &str) -> Arc<Task> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../tests/assets")
         .join(directory);
-    let task: NumericRootTask = planforge_translate::translate_to_task(
+    let task: Task = planforge_translate::translate_to_task(
         root.join("domain.pddl").to_str().unwrap(),
         root.join(problem).to_str().unwrap(),
     )

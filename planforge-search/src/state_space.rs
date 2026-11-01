@@ -5,11 +5,12 @@ mod tests;
 
 use std::cell::Cell;
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result as AnyResult, bail};
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, Task};
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::evaluation::abstractions::common::transition_system::{
@@ -222,7 +223,7 @@ fn check_time_limit(
 }
 
 pub fn enumerate_state_space(
-    task: TaskRef<'_>,
+    task: Arc<Task>,
     limits: EnumerationLimits,
 ) -> Result<OwnedStateSpace, StateSpaceEnumerationError> {
     let limits = limits.validate()?;
@@ -230,7 +231,7 @@ pub fn enumerate_state_space(
         .map_err(|error| StateSpaceEnumerationError::InvalidLimit(format!("max_time: {error}")))?;
     check_time_limit(deadline, limits.max_time, 0, 0)?;
 
-    let mut expander = RegistryExpander::new(&*task);
+    let mut expander = RegistryExpander::new(&task);
     let operators = task.operators();
     let num_propositional_variables = task.variables().len();
     let num_numeric_variables = task.numeric_variables().len();

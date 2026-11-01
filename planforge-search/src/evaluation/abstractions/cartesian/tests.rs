@@ -13,8 +13,8 @@ use planforge_sas::axioms::{
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, ONE_VALUE, Operator, OperatorCost, OperatorIndex, VariableIndex,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, ONE_VALUE, Operator,
+    OperatorCost, OperatorIndex, Task, TaskParts, VariableIndex,
 };
 
 use super::distances::ShortestPaths;
@@ -62,8 +62,8 @@ fn numeric_goal_task(
     operators: Vec<Operator>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
-) -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+) -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -79,7 +79,7 @@ fn numeric_goal_task(
     })
 }
 
-fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
+fn assert_solved_with_h(task: &Task, expected_h: f64) {
     for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
         let mut abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             cegar: CegarOptions {

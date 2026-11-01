@@ -320,7 +320,7 @@ impl ExplicitFact {
     }
 
     /// The same fact re-tagged. Used by the one pass that owns namespace
-    /// assignment, `NumericRootTask::assign_fact_namespaces`.
+    /// assignment, `Task::assign_fact_namespaces`.
     #[inline]
     #[must_use]
     pub fn with_namespace(self, namespace: FactNamespace) -> Self {

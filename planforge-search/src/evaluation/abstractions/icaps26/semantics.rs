@@ -3,13 +3,14 @@
 //! configuration. The child modules test regions and transitions against it.
 
 use super::*;
+use planforge_sas::numeric_task::Task;
 
 mod regions;
 mod split_choice;
 mod transitions;
 
 pub(super) struct CartesianSemantics<'task> {
-    pub(super) task: &'task dyn AbstractNumericTask,
+    pub(super) task: &'task Task,
     pub(super) propositional_axioms_by_prop_var: Vec<Vec<usize>>,
     pub(super) operator_costs: Vec<NumericValue>,
     pub(super) prop_split_dependent_operators: Vec<OperatorBitSet>,
@@ -22,7 +23,7 @@ pub(super) struct CartesianSemantics<'task> {
 }
 
 pub(super) fn mark_fact_split_dependencies(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     coordinates: &Coordinates<'_>,
     fact: &ExplicitFact,
     propositional_axioms_by_prop_var: &[Vec<usize>],
@@ -72,7 +73,7 @@ pub(super) fn mark_fact_split_dependencies(
 }
 
 impl<'task> CartesianSemantics<'task> {
-    pub(super) fn task(&self) -> &dyn AbstractNumericTask {
+    pub(super) fn task(&self) -> &Task {
         self.task
     }
 
@@ -100,10 +101,7 @@ impl<'task> CartesianSemantics<'task> {
         &self.target_split_boundaries
     }
 
-    pub(super) fn new(
-        task: &'task dyn AbstractNumericTask,
-        config: &Icaps26CartesianConfig,
-    ) -> Result<Self> {
+    pub(super) fn new(task: &'task Task, config: &Icaps26CartesianConfig) -> Result<Self> {
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
         let coordinates = Coordinates::new(task);
         for (op_id, op) in task.operators().iter().enumerate() {
