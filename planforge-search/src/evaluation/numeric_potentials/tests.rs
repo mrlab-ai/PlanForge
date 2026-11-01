@@ -68,6 +68,7 @@ fn every_cpp_numeric_potential_option_parses() {
         ("epsilon", "0.25"),
         ("dump_lp", "true"),
         ("validate_duality", "true"),
+        ("goal_strengthening", "false"),
     ]
     .map(|(name, value)| option(name, value));
     let mut config = NumericPotentialConfig::default();
@@ -80,6 +81,7 @@ fn every_cpp_numeric_potential_option_parses() {
     assert_eq!(config.max_online_functions, 7);
     assert!(config.max_potential.is_infinite());
     assert!(config.validate_duality);
+    assert!(!config.goal_strengthening);
 
     assert!(
         config
@@ -840,8 +842,16 @@ fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
         assignment_axioms: vec![],
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
-    let potential_task =
-        PotentialTask::build(&task, 1e-6, 0.0, false, BoundsProvider::Monotone, false).unwrap();
+    let potential_task = PotentialTask::build(
+        &task,
+        1e-6,
+        0.0,
+        false,
+        BoundsProvider::Monotone,
+        false,
+        true,
+    )
+    .unwrap();
     assert_eq!(potential_task.feature_goal_bounds[0].lower, 3.0);
     assert_eq!(potential_task.ray_feature_goal_bounds[0].lower, 3.0);
     assert!(
@@ -1039,7 +1049,7 @@ fn an_affine_comparison_is_one_linear_feature() {
         global_constraint: Some(ExplicitFact::propositional(1, 0)),
     }));
     let potential_task =
-        PotentialTask::build(&*task, 1e-6, 0.0, false, BoundsProvider::All, false).unwrap();
+        PotentialTask::build(&*task, 1e-6, 0.0, false, BoundsProvider::All, false, true).unwrap();
     assert_eq!(
         potential_task
             .features
@@ -1083,4 +1093,117 @@ fn an_affine_comparison_is_one_linear_feature() {
         panic!("expected an optimal conditioned affine potential")
     };
     assert!((value - 3.0).abs() < 1e-7, "got {value}");
+}
+
+/// The paper's example: goal `g`, reached only by a unit-cost action that
+/// needs `x >= 5`, while a unit-cost action increments `x` -- and, with
+/// `decrement`, another one lowers it.
+fn threshold_achiever_task(decrement: bool) -> NumericRootTask {
+    let change = |name: &str, operation| {
+        Operator::new(
+            name.into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                VariableIndex::new(0),
+                operation,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
+        )
+    };
+    let mut operators = vec![
+        change("increment", AssignmentOperation::Plus),
+        Operator::new(
+            "finish".into(),
+            vec![
+                ExplicitFact::propositional(0, 0),
+                ExplicitFact::propositional(1, 1),
+            ],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::new(1),
+                Some(ExplicitValueIndex::new(1)),
+                ExplicitValueIndex::new(0),
+            )],
+            vec![],
+            OperatorCost::new(1),
+        ),
+    ];
+    if decrement {
+        operators.push(change("decrement", AssignmentOperation::Minus));
+    }
+    NumericRootTask::new(NumericRootTaskParts {
+        metric: Metric::new(false, None),
+        variables: vec![
+            ExplicitVariable::new(
+                2,
+                "x-at-least-five".into(),
+                vec!["true".into(), "false".into()],
+                Some(0),
+                ExplicitValueIndex::new(1),
+            ),
+            ExplicitVariable::new(
+                2,
+                "goal".into(),
+                vec!["true".into(), "false".into()],
+                None,
+                ExplicitValueIndex::new(0),
+            ),
+        ],
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("five".into(), NumericType::Constant, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(1, 0)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(5.0),
+            NumericValue::new(1.0),
+        ],
+        operators,
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        assignment_axioms: vec![],
+        global_constraint: None,
+    })
+}
+
+#[test]
+fn a_goal_implies_the_monotone_precondition_of_its_only_achiever() {
+    let (value, _) = optimize_initial(threshold_achiever_task(false));
+    assert!((value - 6.0).abs() < 1e-7, "got {value}");
+}
+
+#[test]
+fn goal_strengthening_can_be_switched_off() {
+    let task: TaskRef<'static> = Arc::new(threshold_achiever_task(false));
+    let mut registry = StateRegistry::for_task(task.clone());
+    let initial = registry.get_initial_state();
+    let mut config = NumericPotentialConfig::default();
+    config.goal_strengthening = false;
+    let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
+    let OptimizationOutcome::Optimal { value, .. } = optimizer
+        .optimize_for_state(registry.view(&initial))
+        .unwrap()
+    else {
+        panic!("expected bounded optimal potential")
+    };
+    assert!((value - 1.0).abs() < 1e-7, "got {value}");
+}
+
+#[test]
+fn a_decreasable_precondition_does_not_strengthen_the_goal() {
+    let (value, _) = optimize_initial(threshold_achiever_task(true));
+    assert!((value - 1.0).abs() < 1e-7, "got {value}");
 }

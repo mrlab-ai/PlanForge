@@ -115,6 +115,10 @@ pub struct NumericPotentialConfig {
     pub dump_lp: bool,
     #[option(positional)]
     pub validate_duality: bool,
+    /// Add to the goal every comparison that each reachable state satisfying
+    /// a propositional goal satisfies too.
+    #[option(positional)]
+    pub goal_strengthening: bool,
 }
 
 impl Default for NumericPotentialConfig {
@@ -153,6 +157,7 @@ impl Default for NumericPotentialConfig {
             epsilon: 0.0,
             dump_lp: false,
             validate_duality: false,
+            goal_strengthening: true,
         }
     }
 }

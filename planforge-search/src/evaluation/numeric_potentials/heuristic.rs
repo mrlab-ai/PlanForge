@@ -80,11 +80,18 @@ impl NumericPotentialHeuristic {
         let ordinary_rows = optimizer.num_rows();
         let mut registry = StateRegistry::for_task(task_ref.clone());
         let initial_state = registry.get_initial_state();
+        // The exact verifier of unboundedness. It is built when the first LP
+        // turns out unbounded, unless rays are requested from the start: a
+        // floating-point unboundedness verdict alone never declares a dead
+        // end.
         let mut ray_generator = (config.rays > 0)
             .then(|| RayGenerator::new(&optimizer, config.ray_epsilon))
             .transpose()?;
         let mut rays = Vec::new();
-        let mut ray_certified_initial_state = if let Some(generator) = ray_generator.as_mut() {
+        let mut ray_certified_initial_state = if config.rays > 0 {
+            let generator = ray_generator
+                .as_mut()
+                .expect("a positive ray count builds the verifier up front");
             if let Some(ray) =
                 generator.try_certify(&mut optimizer, registry.view(&initial_state))?
             {
@@ -121,44 +128,42 @@ impl NumericPotentialHeuristic {
                     (function, false, value.max(0.0), true)
                 }
                 Some(OptimizationOutcome::Unbounded { primal_ray }) => {
-                    if let Some(generator) = ray_generator.as_mut() {
-                        let mut candidate = if primal_ray.is_empty() {
-                            None
-                        } else {
-                            generator.certify_native(
-                                &mut optimizer,
-                                primal_ray,
-                                registry.view(&initial_state),
-                            )?
-                        };
-                        if candidate.is_none() {
-                            candidate = generator
-                                .try_certify(&mut optimizer, registry.view(&initial_state))?;
-                        }
-                        if let Some(ray) = candidate {
-                            if generator.emit_certificate(
-                                &ray,
-                                &mut optimizer,
-                                registry.view(&initial_state),
-                                Path::new(&config.ray_certificate_file),
-                            )? {
-                                rays.push(ray);
-                                ray_certified_initial_state = true;
-                                (optimizer.zero_function(), true, f64::INFINITY, false)
-                            } else {
-                                warn!(
-                                    "numeric potential exact ray artifact validation failed; retaining the admissible zero potential"
-                                );
-                                (optimizer.zero_function(), false, 0.0, false)
-                            }
+                    let generator =
+                        exact_verifier(&mut ray_generator, &optimizer, config.ray_epsilon)?;
+                    let mut candidate = if primal_ray.is_empty() {
+                        None
+                    } else {
+                        generator.certify_native(
+                            &mut optimizer,
+                            primal_ray,
+                            registry.view(&initial_state),
+                        )?
+                    };
+                    if candidate.is_none() {
+                        candidate =
+                            generator.try_certify(&mut optimizer, registry.view(&initial_state))?;
+                    }
+                    if let Some(ray) = candidate {
+                        if generator.emit_certificate(
+                            &ray,
+                            &mut optimizer,
+                            registry.view(&initial_state),
+                            Path::new(&config.ray_certificate_file),
+                        )? {
+                            rays.push(ray);
+                            ray_certified_initial_state = true;
+                            (optimizer.zero_function(), true, f64::INFINITY, false)
                         } else {
                             warn!(
-                                "numeric potential unboundedness had no exact ray; retaining the admissible zero potential"
+                                "numeric potential exact ray artifact validation failed; retaining the admissible zero potential"
                             );
                             (optimizer.zero_function(), false, 0.0, false)
                         }
                     } else {
-                        (optimizer.zero_function(), true, f64::INFINITY, false)
+                        warn!(
+                            "numeric potential unboundedness had no exact ray; retaining the admissible zero potential"
+                        );
+                        (optimizer.zero_function(), false, 0.0, false)
                     }
                 }
                 Some(OptimizationOutcome::Infeasible) => {
@@ -174,7 +179,7 @@ impl NumericPotentialHeuristic {
                     (optimizer.zero_function(), false, 0.0, false)
                 }
             };
-        if config.rays > 0 {
+        if ray_generator.is_some() {
             info!(
                 "Numeric ray s_0 certificate: {}",
                 if ray_certified_initial_state {
@@ -395,11 +400,7 @@ impl NumericPotentialHeuristic {
             rays,
             ray_hit_counts: vec![0; ray_count],
             states_pruned_by_rays: 0,
-            ray_generator: if enable_online && config.rays > 0 {
-                Some(ray_generator.expect("online rays requested without a ray generator"))
-            } else {
-                None
-            },
+            ray_generator: if enable_online { ray_generator } else { None },
             max_rays: config.rays,
             ray_epsilon: config.ray_epsilon,
             cache_estimates: config.cache_estimates,
@@ -554,13 +555,9 @@ impl NumericPotentialHeuristic {
                 }
             }
             OptimizationOutcome::Unbounded { primal_ray } => {
-                if self.max_rays == 0 {
-                    return Ok(f64::INFINITY);
-                }
-                let generator = self
-                    .ray_generator
-                    .as_mut()
-                    .expect("ray-enabled online optimizer has no exact verifier");
+                let generator =
+                    exact_verifier(&mut self.ray_generator, optimizer, self.ray_epsilon)
+                        .map_err(EvaluationError::ComputationFailed)?;
                 let mut candidate = if primal_ray.is_empty() {
                     None
                 } else {
@@ -630,6 +627,18 @@ impl NumericPotentialHeuristic {
         online.clean_cache_states.clear();
         self.revision += 1;
     }
+}
+
+/// The exact verifier of unboundedness in `slot`, built on first use.
+fn exact_verifier<'slot>(
+    slot: &'slot mut Option<RayGenerator>,
+    optimizer: &NumericPotentialOptimizer,
+    epsilon: f64,
+) -> Result<&'slot mut RayGenerator, String> {
+    if slot.is_none() {
+        *slot = Some(RayGenerator::new(optimizer, epsilon)?);
+    }
+    Ok(slot.as_mut().expect("the verifier was just built"))
 }
 
 impl Drop for NumericPotentialHeuristic {

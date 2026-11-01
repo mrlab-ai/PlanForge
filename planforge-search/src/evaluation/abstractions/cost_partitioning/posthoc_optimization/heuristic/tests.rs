@@ -12,7 +12,7 @@ fn test_heuristic(
         lp_model: build_lp_model(num_abstractions, &constraints).unwrap(),
         constraints,
         state_value_cache: StateValueCache::default(),
-        values: ExplicitState::default(),
+        numeric_values: Vec::new(),
         h_values: Vec::new(),
     }
 }
