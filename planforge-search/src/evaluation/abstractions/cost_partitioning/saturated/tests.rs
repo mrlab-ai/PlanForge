@@ -23,8 +23,8 @@ use std::time::Duration;
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, Operator, OperatorCost, VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, Operator, OperatorCost,
+    Task, TaskParts, VariableIndex,
 };
 
 use planforge_sas::state_registry::StateRegistry;
@@ -54,8 +54,8 @@ pub(super) fn binary_variable(name: &str) -> ExplicitVariable {
     )
 }
 
-pub(super) fn independent_goals_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+pub(super) fn independent_goals_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![binary_variable("p"), binary_variable("q")],
         numeric_variables: vec![],
@@ -100,7 +100,7 @@ pub(super) fn independent_goals_task() -> NumericRootTask {
 }
 
 /// A Cartesian abstraction of `task` with its source sets.
-pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstraction {
+pub(super) fn cartesian_abstraction(task: &Task) -> CartesianAbstraction {
     let mut abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         cegar: CegarOptions {
             max_states: 16,
@@ -136,10 +136,10 @@ pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpCo
 }
 
 pub(super) fn evaluate_initial(
-    task: &NumericRootTask,
+    task: &Task,
     heuristic: &mut dyn Heuristic,
 ) -> Result<f64, EvaluationError> {
-    let mut registry = StateRegistry::for_task(std::sync::Arc::new(task));
+    let mut registry = StateRegistry::for_task(std::sync::Arc::new(task.clone()));
     let initial_state = registry.get_initial_state();
     let eval_state = EvaluationState::new(&initial_state, task, &registry);
     heuristic.evaluate(&eval_state)
@@ -147,10 +147,10 @@ pub(super) fn evaluate_initial(
 
 /// Offline diversified SCP over a goal-focused Cartesian collection of `task`,
 /// with the goals its abstractions specialize in.
-pub(super) fn goal_cover_scp<'task>(
-    task: &'task std::sync::Arc<NumericRootTask>,
+pub(super) fn goal_cover_scp(
+    task: &std::sync::Arc<Task>,
     max_orders: impl FnOnce(usize) -> usize,
-) -> (SaturatedCostPartitioningHeuristic<'task>, HashSet<usize>) {
+) -> (SaturatedCostPartitioningHeuristic, HashSet<usize>) {
     let mut abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
@@ -174,11 +174,11 @@ pub(super) fn goal_cover_scp<'task>(
             ..Default::default()
         })
         .unwrap()
-        .generate(&**task)
+        .generate(task)
         .unwrap();
     for abstraction in &mut abstractions {
         abstraction
-            .prepare_regional_saturation(&RegionSemantics::new(&**task).unwrap(), Deadline::NONE)
+            .prepare_regional_saturation(&RegionSemantics::new(task).unwrap(), Deadline::NONE)
             .unwrap();
     }
     let expected_goals = abstractions
@@ -211,14 +211,14 @@ pub(super) fn goal_cover_scp<'task>(
 }
 
 /// The cost partitionings `heuristic` built for the initial state.
-pub(super) fn retained_cost_partitionings<'a>(
-    heuristic: &'a SaturatedCostPartitioningHeuristic<'_>,
-) -> &'a [CostPartitioningHeuristic] {
+pub(super) fn retained_cost_partitionings(
+    heuristic: &SaturatedCostPartitioningHeuristic,
+) -> &[CostPartitioningHeuristic] {
     &heuristic.cost_partitionings
 }
 
 pub(super) fn retained_goal_cover_orders_per_goal(
-    heuristic: &SaturatedCostPartitioningHeuristic<'_>,
+    heuristic: &SaturatedCostPartitioningHeuristic,
 ) -> HashMap<usize, usize> {
     let mut retained_per_goal = HashMap::<usize, usize>::new();
     for goal_id in retained_cost_partitionings(heuristic)

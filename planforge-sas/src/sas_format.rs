@@ -3,7 +3,7 @@
 //! Everything that goes in or out of the format goes through [`SasTaskParts`]:
 //! the translator builds one from its own representation, [`crate::sas_writer`]
 //! writes one out, [`crate::numeric_parser`] reads one back in, and
-//! [`NumericRootTask::from_sas_parts`] turns one into the task the search runs.
+//! [`Task::from_sas_parts`] turns one into the task the search runs.
 //! So everything the format leaves implicit lives here rather than in any of
 //! them: the token tables and their inverses, the way it spells an absent
 //! value, the prevail/effect-precondition merge, and the axiom default a
@@ -20,8 +20,8 @@ use crate::axioms::{
 };
 use crate::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, VariableIndex,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    Task, TaskParts, VariableIndex,
 };
 
 /// The version of the format this crate reads and the translator writes.
@@ -168,7 +168,7 @@ impl Metric {
 /// writes it into the initial-state block instead and lets the axiom closure
 /// compute the real value on top of it. An [`ExplicitVariable`] can therefore
 /// only be built once the initial state is known, which is what
-/// [`NumericRootTask::from_sas_parts`] does.
+/// [`Task::from_sas_parts`] does.
 pub struct SasVariable {
     pub domain_size: usize,
     pub name: String,
@@ -222,7 +222,7 @@ impl SasOperator {
 ///
 /// The single intermediate of the format: [`crate::numeric_parser`] reads one,
 /// [`crate::sas_writer`] writes one, the translator builds one, and
-/// [`NumericRootTask::from_sas_parts`] is the only way from one into a root
+/// [`Task::from_sas_parts`] is the only way from one into a root
 /// task. A second entry point that established one invariant fewer would let
 /// the text path and the direct path drift apart silently.
 pub struct SasTaskParts {
@@ -243,13 +243,13 @@ pub struct SasTaskParts {
     pub global_constraint: ExplicitFact,
 }
 
-impl NumericRootTask {
+impl Task {
     /// The one way into a root task from the SAS+ shape.
     ///
     /// Two things the format states only implicitly are established here: a
     /// derived variable's axiom default, which it writes into the initial state
     /// rather than into the variable's own block, and the merge of an operator's
-    /// two condition lists. [`NumericRootTask::new`] takes care of the rest —
+    /// two condition lists. [`Task::new`] takes care of the rest —
     /// fact namespaces and the axiom closure of the initial state — for every
     /// task, however built.
     pub fn from_sas_parts(parts: SasTaskParts) -> Self {
@@ -269,7 +269,7 @@ impl NumericRootTask {
             global_constraint,
         } = parts;
 
-        NumericRootTask::new(NumericRootTaskParts {
+        Task::new(TaskParts {
             metric,
             variables: build_variables(variables, &state),
             numeric_variables,

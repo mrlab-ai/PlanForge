@@ -2,7 +2,6 @@ use super::*;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
-use planforge_sas::numeric_task::AbstractNumericTask;
 
 #[test]
 fn region_stolen_costs_accept_transition_free_components() {

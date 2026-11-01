@@ -2,9 +2,8 @@ use crate::{
     axioms::{AssignmentAxiom, CalOperator, PropositionalAxiom},
     explicit_state::ExplicitState,
     numeric_task::{
-        Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-        NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
-        TaskRef, VariableIndex,
+        Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericType,
+        NumericValue, NumericVariable, Operator, OperatorCost, Task, TaskParts, VariableIndex,
     },
     state_registry::{ConcreteStateView, StateRegistry},
 };
@@ -14,7 +13,7 @@ use crate::tests::*;
 
 #[test]
 fn test_state_registry_initial_state() {
-    let task: TaskRef = Arc::new(get_root_task());
+    let task: Arc<Task> = Arc::new(get_root_task());
     let mut state_registry = StateRegistry::for_task(task);
     let initial_state = state_registry.get_initial_state();
     assert_eq!(
@@ -29,8 +28,8 @@ fn test_state_registry_initial_state() {
 
 /// A task with one variable of every numeric type: `x` regular, `c`
 /// constant, `cost` a cost variable and `d = x + c` derived.
-fn task_with_every_numeric_type() -> TaskRef<'static> {
-    Arc::new(NumericRootTask::new(NumericRootTaskParts {
+fn task_with_every_numeric_type() -> Arc<Task> {
+    Arc::new(Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::new(2))),
         variables: vec![ExplicitVariable::new(
             2,
@@ -95,7 +94,7 @@ fn a_decoded_view_has_no_unevaluated_numeric_values() {
 
 #[test]
 fn initial_state_registration_does_not_mutate_shared_task() {
-    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -133,7 +132,7 @@ fn initial_state_registration_does_not_mutate_shared_task() {
 
 #[test]
 fn test_cost_information_storage() {
-    let task: TaskRef = Arc::new(get_root_task());
+    let task: Arc<Task> = Arc::new(get_root_task());
     let mut state_registry = StateRegistry::for_task(task);
 
     let initial_state = state_registry.get_initial_state();
@@ -195,7 +194,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         OperatorCost::new(1),
     );
 
-    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::new(0))),
         variables,
         numeric_variables,
@@ -271,7 +270,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         )],
         OperatorCost::new(1),
     );
-    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables,
         numeric_variables,
@@ -309,7 +308,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
 
 #[test]
 fn numeric_states_pack_exact_value_ids_with_propositions() {
-    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -344,7 +343,7 @@ fn numeric_states_pack_exact_value_ids_with_propositions() {
 
 #[test]
 fn numeric_states_support_more_than_u16_distinct_values() {
-    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         // The global constraint below names variable 0, so the task has to
         // have one.
@@ -383,7 +382,7 @@ fn numeric_states_support_more_than_u16_distinct_values() {
 
 #[test]
 fn distinct_states_with_the_same_hash_remain_distinguishable() {
-    let task: TaskRef = Arc::new(get_root_task());
+    let task: Arc<Task> = Arc::new(get_root_task());
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let successor = registry
@@ -442,7 +441,7 @@ fn a_maximised_metric_charges_its_decrease() {
         )],
         OperatorCost::new(1),
     );
-    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, Some(VariableIndex::new(0))),
         variables: vec![ExplicitVariable::new(
             2,
@@ -478,5 +477,5 @@ fn a_maximised_metric_charges_its_decrease() {
         .unwrap();
 
     assert_eq!(step_cost, 3.0);
-    assert_eq!(crate::numeric_task::metric_operator_costs(&*task), [3.0]);
+    assert_eq!(crate::numeric_task::metric_operator_costs(&task), [3.0]);
 }

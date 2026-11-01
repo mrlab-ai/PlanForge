@@ -8,7 +8,7 @@
 //!
 //! Conditions are a first-class part of a task: [`NumericConditions`] is
 //! built once at task construction and reached through
-//! [`crate::numeric_task::AbstractNumericTask::numeric_conditions`]. Nothing
+//! [`crate::numeric_task::Task::numeric_conditions`]. Nothing
 //! else in the codebase rebuilds the "propositional variable -> comparison
 //! axiom" mapping.
 //!

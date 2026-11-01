@@ -3,7 +3,7 @@
 //! The corpus tests translate through the fast path, which skips invariant
 //! synthesis, so they never noticed when it stopped finding any invariant.
 
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planforge_sas::numeric_task::ExplicitFact;
 
 use crate::corpus::{assets, translate_in_memory};
 

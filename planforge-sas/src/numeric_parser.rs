@@ -11,7 +11,7 @@ use crate::axioms::{
 };
 use crate::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, Metric,
-    NumericRootTask, NumericType, NumericValue, NumericVariable, OperatorCost, VariableIndex,
+    NumericType, NumericValue, NumericVariable, OperatorCost, Task, VariableIndex,
 };
 use crate::sas_format::{
     SasOperator, SasTaskParts, SasVariable, axiom_layer_from_sas, effect_precondition_from_sas,
@@ -476,7 +476,7 @@ pub(crate) fn parse_sas_parts(input: &str) -> IResult<&str, SasTaskParts> {
     Ok((input, parts))
 }
 
-pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
+pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, Task> {
     let (input, parts) = parse_sas_parts(input)?;
-    Ok((input, NumericRootTask::from_sas_parts(parts)))
+    Ok((input, Task::from_sas_parts(parts)))
 }

@@ -3,9 +3,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
-    TaskRef, VariableIndex,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericType, NumericValue,
+    NumericVariable, Operator, OperatorCost, Task, TaskParts, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
 
@@ -77,7 +76,7 @@ fn metric_operator_costs_are_the_constant_increments() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric,
         variables,
         numeric_variables,
@@ -96,7 +95,7 @@ fn metric_operator_costs_are_the_constant_increments() {
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
-    let task: TaskRef = Arc::new(task);
+    let task: Arc<Task> = Arc::new(task);
     let mut state_registry = StateRegistry::for_task(task.clone());
     let initial_state = state_registry.get_initial_state();
 
@@ -149,7 +148,7 @@ impl Heuristic for FailingHeuristic {
 
 #[test]
 fn initial_evaluation_error_is_not_reported_as_no_solution() {
-    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -337,7 +336,7 @@ impl Heuristic for LazyHeuristic {
 fn lazy_astar_defers_each_expansion_even_when_the_estimate_does_not_increase() {
     let task = one_step_task();
     let calls = Rc::new(Cell::new(0));
-    let mut params = SearchParams::new(Box::new(BlindHeuristic::for_task(&*task)));
+    let mut params = SearchParams::new(Box::new(BlindHeuristic::for_task(&task)));
     // Below the non-goal floor: the single evaluation path must preserve it.
     params.lazy = Some(Box::new(LazyHeuristic {
         estimate: 0.0,
@@ -380,7 +379,7 @@ fn lazy_astar_defers_each_expansion_even_when_the_estimate_does_not_increase() {
 fn lazy_astar_prunes_a_lazy_dead_end() {
     let task = one_step_task();
     let calls = Rc::new(Cell::new(0));
-    let mut params = SearchParams::new(Box::new(BlindHeuristic::for_task(&*task)));
+    let mut params = SearchParams::new(Box::new(BlindHeuristic::for_task(&task)));
     params.lazy = Some(Box::new(LazyHeuristic {
         estimate: f64::INFINITY,
         calls: calls.clone(),
@@ -399,7 +398,7 @@ fn lazy_astar_prunes_a_lazy_dead_end() {
 #[test]
 fn lazy_astar_propagates_evaluation_failures() {
     let task = one_step_task();
-    let mut params = SearchParams::new(Box::new(BlindHeuristic::for_task(&*task)));
+    let mut params = SearchParams::new(Box::new(BlindHeuristic::for_task(&task)));
     params.lazy = Some(Box::new(FailingHeuristic));
     let error = AStarSearch::new(task.clone(), params).run().unwrap_err();
     assert!(format!("{error:#}").contains("slow heuristic evaluation failed"));

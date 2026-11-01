@@ -6,10 +6,11 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, TaskRef};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, Task};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use tracing::{debug, info, warn};
@@ -69,7 +70,7 @@ struct OnlineState {
 
 impl NumericPotentialHeuristic {
     pub fn from_config(
-        task_ref: TaskRef<'_>,
+        task_ref: Arc<Task>,
         config: NumericPotentialConfig,
     ) -> Result<Self, String> {
         config.validate()?;
@@ -685,7 +686,7 @@ impl Drop for NumericPotentialHeuristic {
 fn build_goal_cost_partitions(
     task: &PotentialTask,
     groups: &[Vec<NumericPotentialFunction>],
-    space: &mut SampleSpace<'_>,
+    space: &mut SampleSpace,
     config: &NumericPotentialConfig,
 ) -> Result<Vec<Vec<f64>>, String> {
     let mut objective_states = vec![space.initial_state.clone()];
@@ -764,7 +765,7 @@ fn compute_goal_cost_partition(
 
 fn build_conditioned_groups(
     optimizer: &mut NumericPotentialOptimizer,
-    space: &mut SampleSpace<'_>,
+    space: &mut SampleSpace,
     config: &NumericPotentialConfig,
 ) -> Result<Vec<Vec<NumericPotentialFunction>>, String> {
     let start = Instant::now();
@@ -854,7 +855,7 @@ fn build_conditioned_groups(
 
 fn build_static_portfolio(
     optimizer: &mut NumericPotentialOptimizer,
-    space: &mut SampleSpace<'_>,
+    space: &mut SampleSpace,
     config: &NumericPotentialConfig,
     initial_function: NumericPotentialFunction,
 ) -> Result<Vec<NumericPotentialFunction>, String> {
@@ -888,7 +889,7 @@ struct SampleTarget {
 
 fn build_diverse_portfolio(
     optimizer: &mut NumericPotentialOptimizer,
-    space: &mut SampleSpace<'_>,
+    space: &mut SampleSpace,
     config: &NumericPotentialConfig,
     initial_function: NumericPotentialFunction,
 ) -> Result<Vec<NumericPotentialFunction>, String> {
@@ -1013,7 +1014,7 @@ fn remove_covered(
     function: &NumericPotentialFunction,
     targets: &mut Vec<SampleTarget>,
     task: &PotentialTask,
-    registry: &StateRegistry<'_>,
+    registry: &StateRegistry,
 ) -> Result<usize, String> {
     let before = targets.len();
     let mut kept = Vec::with_capacity(targets.len());
@@ -1034,7 +1035,7 @@ fn largest_gap_target(
     functions: &[NumericPotentialFunction],
     targets: &[SampleTarget],
     task: &PotentialTask,
-    registry: &StateRegistry<'_>,
+    registry: &StateRegistry,
 ) -> Result<usize, String> {
     let mut best = 0;
     let mut largest_gap = f64::NEG_INFINITY;

@@ -57,6 +57,7 @@
 //!   * Hoffmann, *The Metric-FF Planning System*, JAIR 2003.
 
 use planforge_sas::axioms::{AssignmentAxiom, NumericExpression};
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
 use std::collections::{HashSet, VecDeque};
 
@@ -66,9 +67,8 @@ use planforge_sas::axioms::{CalOperator, ComparisonOperator, PropositionalAxiom}
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
-    ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericType, NumericValue, Operator,
-    OperatorIndex, VariableIndex, ZERO_VALUE,
+    AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact, ExplicitValueIndex, INF_VALUE,
+    NEG_INF_VALUE, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -279,7 +279,7 @@ struct FactUniverse {
 }
 
 impl FactUniverse {
-    fn build(task: &dyn AbstractNumericTask) -> Result<Self, String> {
+    fn build(task: &Task) -> Result<Self, String> {
         let mut fact_id_offsets = Vec::with_capacity(task.variables().len());
         let mut flat_len = 0usize;
         for variable in task.variables() {
@@ -436,9 +436,7 @@ impl RelaxedOperators {
 /// Initial value of every `Constant` numeric variable, `None` for the rest.
 ///
 /// Captured at construction so effect directions can be classified statically.
-fn constant_numeric_values(
-    task: &dyn AbstractNumericTask,
-) -> Result<Vec<Option<NumericValue>>, String> {
+fn constant_numeric_values(task: &Task) -> Result<Vec<Option<NumericValue>>, String> {
     let initial_numeric = task.initial_numeric_values();
     task.numeric_variables()
         .iter()
@@ -511,7 +509,7 @@ fn add_task_operator(
     ops: &mut RelaxedOperators,
     universe: &FactUniverse,
     constant_value: &[Option<NumericValue>],
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     op_idx: usize,
     op: &Operator,
 ) -> Result<(), String> {
@@ -679,7 +677,7 @@ fn add_propositional_axiom_operator(
 /// rules that say so are exponential in the worst case and wanted by nothing but
 /// a relaxation. See `planforge_sas::default_value_axioms`.
 fn collect_relaxed_operators(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     universe: &FactUniverse,
     constant_value: &[Option<NumericValue>],
 ) -> Result<RelaxedOperators, String> {
@@ -728,7 +726,7 @@ fn index_comparison_axioms_by_numeric_var(
 /// Assignment axioms in topological (SAS axiom-layer) order, each describing a
 /// derived numeric variable as `affected := left ∘ right`.
 fn collect_assignment_axioms(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     num_numeric: usize,
 ) -> Result<Vec<AssignmentAxiom>, String> {
     task.assignment_axioms()
@@ -840,10 +838,7 @@ fn build_achiever_index(
     Ok(achievers)
 }
 
-fn collect_goal_facts(
-    task: &dyn AbstractNumericTask,
-    universe: &FactUniverse,
-) -> Result<Vec<FactId>, String> {
+fn collect_goal_facts(task: &Task, universe: &FactUniverse) -> Result<Vec<FactId>, String> {
     task.goals()
         .iter()
         .map(|goal| {
@@ -928,7 +923,7 @@ impl FfHeuristic {
     /// Compile the task into the relaxed planning graph this heuristic
     /// evaluates: a fact universe, the operators over it, and the achiever and
     /// consumer indices the BFS and relaxed-plan extraction walk.
-    pub fn new(task: &dyn AbstractNumericTask) -> Result<Self, String> {
+    pub fn new(task: &Task) -> Result<Self, String> {
         let universe = FactUniverse::build(task)?;
         let num_facts = universe.len();
         let num_numeric = task.numeric_variables().len();
@@ -1613,7 +1608,7 @@ impl crate::heuristic_factory::HeuristicFeature for FfFeature {
         _: &Self::Config,
         context: &crate::heuristic_factory::BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
-        let heuristic = FfHeuristic::new(&**context.task)
+        let heuristic = FfHeuristic::new(context.task)
             .map_err(|error| format!("failed to construct ff heuristic: {error}"))?;
         Ok(Box::new(heuristic))
     }

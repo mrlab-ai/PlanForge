@@ -1,11 +1,12 @@
 //! The progress states of a goal-focused collection's variants; see the
 //! [module documentation](super).
 
+use planforge_sas::numeric_task::Task;
 use std::collections::VecDeque;
 
 use anyhow::{Result, ensure};
 use planforge_sas::explicit_state::{ExplicitState, ExplicitStateSpace};
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 use tracing::debug;
 
 use super::{GoalFocusedBackend, MemberRoot};
@@ -39,10 +40,7 @@ pub(super) struct ProgressStates<'task> {
 
 impl<'task> ProgressStates<'task> {
     /// `variants_per_goal` progress states at the initial state of `task`.
-    pub(super) fn new(
-        task: &'task dyn AbstractNumericTask,
-        variants_per_goal: usize,
-    ) -> Result<Self> {
+    pub(super) fn new(task: &'task Task, variants_per_goal: usize) -> Result<Self> {
         let states = ExplicitStateSpace::new(task);
         let initial_state = states.initial_state()?;
         let satisfied_goals = states.satisfied_goal_count(&initial_state);

@@ -50,13 +50,13 @@ fn diverse_orders_support_mixed_abstraction_representations() {
     };
     let mut domain = DomainAbstractionGenerator::new(domain_config)
         .unwrap()
-        .generate(&*task)
+        .generate(&task)
         .unwrap();
     domain
-        .prepare_regional_saturation(&RegionSemantics::new(&*task).unwrap(), Deadline::NONE)
+        .prepare_regional_saturation(&RegionSemantics::new(&task).unwrap(), Deadline::NONE)
         .unwrap();
     let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
-    let pdb = PatternDatabase::new(ProjectedTask::new(&*task, &pattern).unwrap(), 32).unwrap();
+    let pdb = PatternDatabase::new(ProjectedTask::new(&task, &pattern).unwrap(), 32).unwrap();
     let components = vec![
         AbstractionComponent::from(domain),
         AbstractionComponent::from(cartesian_abstraction(&task)),
@@ -97,7 +97,7 @@ fn diverse_order_generator_requires_diversify() {
         None,
         vec![component],
         config,
-        std::sync::Arc::new(&task),
+        std::sync::Arc::new(task.clone()),
         Default::default(),
     );
     let error = match result {

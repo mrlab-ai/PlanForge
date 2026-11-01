@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
+use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
@@ -27,7 +27,7 @@ impl Heuristic for GoalCountHeuristic {
 }
 
 fn run(path: &str) {
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(path));
+    let task: Arc<Task> = Arc::new(Task::from_file(path));
     let mut heuristic = GoalCountHeuristic;
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();

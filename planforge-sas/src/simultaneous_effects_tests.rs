@@ -9,8 +9,8 @@
 use crate::explicit_state::ExplicitStateSpace;
 use crate::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
-    Operator, OperatorCost, TaskRef, VariableIndex,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost, Task, TaskParts,
+    VariableIndex,
 };
 use crate::state_registry::StateRegistry;
 use std::sync::Arc;
@@ -23,11 +23,8 @@ const COST: usize = 3;
 /// Numeric variables: `x = 10` and `y = 3` (both regular), the constant `1`,
 /// and a cost variable starting at `0`. One propositional variable `p`, false
 /// in the initial state.
-fn task_with_effects(
-    effects: Vec<AssignmentEffect>,
-    metric_var: Option<VariableIndex>,
-) -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn task_with_effects(effects: Vec<AssignmentEffect>, metric_var: Option<VariableIndex>) -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, metric_var),
         variables: vec![ExplicitVariable::new(
             2,
@@ -68,7 +65,7 @@ fn task_with_effects(
 /// The successor's numeric values, which the registry and the explicit
 /// state space must agree on.
 fn successor_values(effects: Vec<AssignmentEffect>) -> Vec<NumericValue> {
-    let task: TaskRef = Arc::new(task_with_effects(effects, None));
+    let task: Arc<Task> = Arc::new(task_with_effects(effects, None));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let successor = registry
@@ -77,7 +74,7 @@ fn successor_values(effects: Vec<AssignmentEffect>) -> Vec<NumericValue> {
     let values = registry
         .get_numeric_vars(&successor)
         .expect("successor has numeric values");
-    let space = ExplicitStateSpace::new(&*task);
+    let space = ExplicitStateSpace::new(&task);
     let explicit = space
         .successor(&space.initial_state().unwrap(), &task.operators()[0])
         .unwrap();
@@ -172,7 +169,7 @@ fn effect_conditions_are_read_from_the_parent_state() {
     // The operator sets `p` to true and, conditionally on `p` being true, adds
     // one to `x`. The condition must be evaluated before the operator's own
     // propositional effect, so `x` stays 10.
-    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    let task: Arc<Task> = Arc::new(Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -239,7 +236,7 @@ fn effect_conditions_are_read_from_the_parent_state() {
         NumericValue::new(10.0),
         "condition must read the parent value of p"
     );
-    let space = ExplicitStateSpace::new(&*task);
+    let space = ExplicitStateSpace::new(&task);
     let explicit = space
         .successor(&space.initial_state().unwrap(), &task.operators()[0])
         .unwrap();

@@ -1,11 +1,10 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::collections::{HashMap, HashSet};
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, NumericType, NumericValue, VariableIndex,
-};
+use planforge_sas::numeric_task::{AssignmentOperation, NumericType, NumericValue, VariableIndex};
 use planforge_sas::utils::float_tolerance;
 
 use crate::task_transformations::restriction::validate_restricted_task;
@@ -21,7 +20,7 @@ pub struct NumericSizeEstimator {
 }
 
 impl NumericSizeEstimator {
-    pub fn new(task: &dyn AbstractNumericTask) -> Self {
+    pub fn new(task: &Task) -> Self {
         validate_restricted_task(task)
             .expect("numeric PDB size estimation requires a restricted task");
         let base_initial_numeric_values = task.initial_numeric_values().to_vec();
@@ -51,7 +50,7 @@ impl NumericSizeEstimator {
 }
 
 fn collect_numeric_conditions(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     base_initial_numeric_values: &[NumericValue],
 ) -> Vec<NumericCondition> {
     let mut comparison_axioms_by_var = HashMap::new();
@@ -96,7 +95,7 @@ fn collect_numeric_conditions(
 }
 
 fn build_numeric_condition(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     comparison_axiom_id: usize,
     initial_numeric_values: &[NumericValue],
 ) -> Option<NumericCondition> {
@@ -130,7 +129,7 @@ fn build_numeric_condition(
 }
 
 fn estimate_numeric_domain_size(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     numeric_var_id: VariableIndex,
     base_initial_numeric_values: &[NumericValue],
     conditions: &[NumericCondition],

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType, NumericValue,
+    AssignmentEffect, AssignmentOperation, NumericType, NumericValue,
 };
 
 const DOMAIN: &str = "(define (domain transfer)

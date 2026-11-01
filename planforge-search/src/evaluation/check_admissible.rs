@@ -15,9 +15,10 @@ mod tests;
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
 
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -36,7 +37,7 @@ const G_IMPROVEMENT_TOLERANCE: f64 = 1e-12;
 pub struct CheckAdmissibleHeuristic<'task> {
     inner: Box<dyn Heuristic + 'task>,
     name: String,
-    oracle: GoalDistanceOracle<'task>,
+    oracle: GoalDistanceOracle,
     /// True goal distances keyed by the id the *search's* registry gave the
     /// state. The oracle numbers its own states independently, so its ids
     /// cannot be used here.
@@ -45,7 +46,7 @@ pub struct CheckAdmissibleHeuristic<'task> {
 
 impl<'task> CheckAdmissibleHeuristic<'task> {
     /// Wrap `inner`, verifying it against the goal distances of `task`.
-    pub fn new(inner: Box<dyn Heuristic + 'task>, task: TaskRef<'task>) -> Result<Self, String> {
+    pub fn new(inner: Box<dyn Heuristic + 'task>, task: Arc<Task>) -> Result<Self, String> {
         let oracle = GoalDistanceOracle::new(task)?;
         Ok(Self {
             // Keep the wrapper distinct from the heuristic it checks in diagnostics.
@@ -134,23 +135,23 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
 ///
 /// The oracle keeps its own [`StateRegistry`]: `EvaluationState` only lends an
 /// immutable one, while generating successors needs a mutable one.
-struct GoalDistanceOracle<'task> {
-    task: TaskRef<'task>,
-    registry: StateRegistry<'task>,
+struct GoalDistanceOracle {
+    task: Arc<Task>,
+    registry: StateRegistry,
     expander: RegistryExpander,
     operator_costs: Vec<f64>,
     min_action_cost: f64,
 }
 
-impl<'task> GoalDistanceOracle<'task> {
-    fn new(task: TaskRef<'task>) -> Result<Self, String> {
+impl GoalDistanceOracle {
+    fn new(task: Arc<Task>) -> Result<Self, String> {
         let mut registry = StateRegistry::for_task(task.clone());
         // Creating the initial state is what fixes the registry's numeric
         // layout (constant values and packed slots); `copy_state_in` needs it.
         registry.get_initial_state();
-        let operator_costs = task.effective_operator_costs().into_owned();
+        let operator_costs = task.effective_operator_costs().to_vec();
         let min_action_cost = minimum_action_cost(&operator_costs);
-        let expander = RegistryExpander::new(&*task);
+        let expander = RegistryExpander::new(&task);
         Ok(Self {
             task,
             registry,
@@ -212,7 +213,7 @@ impl<'task> GoalDistanceOracle<'task> {
             operator_costs,
             min_action_cost,
         } = self;
-        let is_goal = |registry: &StateRegistry<'_>, state: &ConcreteState| {
+        let is_goal = |registry: &StateRegistry, state: &ConcreteState| {
             registry.view(state).holds_all(task.goals())
         };
         if is_goal(registry, &start) {

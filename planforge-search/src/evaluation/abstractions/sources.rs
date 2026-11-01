@@ -2,6 +2,7 @@
 //! collections and pattern databases -- and their construction under a shared
 //! time budget.
 
+use planforge_sas::numeric_task::Task;
 use std::time::{Duration, Instant};
 
 use crate::config::{ApplyOptions, ConfigError, TimeLimit};
@@ -31,7 +32,6 @@ use crate::evaluation::abstractions::pdb::pattern_generator_systematic::{
     SystematicPatternGeneratorConfig, generate_systematic_patterns,
 };
 use crate::evaluation::abstractions::pdb::pdb_collection::build_pattern_databases;
-use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
 use crate::evaluation::abstractions::cartesian::{
@@ -120,22 +120,22 @@ impl AbstractionSource {
         }
     }
 
-    pub fn build<'task>(
+    pub fn build(
         &self,
-        task: &'task dyn AbstractNumericTask,
+        task: &Task,
         purpose: AbstractionPurpose,
         remaining: Option<Duration>,
-    ) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError> {
+    ) -> Result<Vec<AbstractionComponent>, HeuristicBuildError> {
         self.requirements().validate(task)?;
         self.build_validated(task, purpose, remaining)
     }
 
-    fn build_validated<'task>(
+    fn build_validated(
         &self,
-        task: &'task dyn AbstractNumericTask,
+        task: &Task,
         purpose: AbstractionPurpose,
         remaining: Option<Duration>,
-    ) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError> {
+    ) -> Result<Vec<AbstractionComponent>, HeuristicBuildError> {
         match self {
             Self::Domain(config) => build_cegar_source::<DomainAbstractionGenerator>(
                 task,
@@ -207,12 +207,12 @@ pub struct PdbSourceConfig {
 }
 
 impl PdbSourceConfig {
-    fn build<'task>(
+    fn build(
         &self,
-        task: &'task dyn AbstractNumericTask,
+        task: &Task,
         retain_transitions: bool,
         remaining: Option<Duration>,
-    ) -> Result<Vec<PatternDatabase<'task>>, String> {
+    ) -> Result<Vec<PatternDatabase>, String> {
         let heuristics = PdbHeuristicConfig {
             exploration_heuristic: self.exploration_heuristic,
             frontier_heuristic: self.frontier_heuristic,
@@ -297,12 +297,12 @@ impl<O: ApplyOptions> CombinationConfig<O> {
     }
 }
 
-pub(crate) fn build_components<'task>(
-    task: &'task dyn AbstractNumericTask,
+pub(crate) fn build_components(
+    task: &Task,
     sources: &[AbstractionSource],
     purpose: AbstractionPurpose,
     deadline: Deadline,
-) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError> {
+) -> Result<Vec<AbstractionComponent>, HeuristicBuildError> {
     assert!(
         !sources.is_empty(),
         "a configured abstraction collection has sources"
@@ -347,15 +347,15 @@ pub(crate) fn build_components<'task>(
     Ok(components)
 }
 
-fn build_cegar_source<'task, G>(
-    task: &dyn AbstractNumericTask,
+fn build_cegar_source<G>(
+    task: &Task,
     mut config: G::Config,
     purpose: AbstractionPurpose,
     remaining: Option<Duration>,
-) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError>
+) -> Result<Vec<AbstractionComponent>, HeuristicBuildError>
 where
     G: AbstractionGenerator,
-    G::Abstraction: Into<AbstractionComponent<'task>>,
+    G::Abstraction: Into<AbstractionComponent>,
 {
     let cegar = config.cegar_mut();
     cegar.keep_transitions = purpose.needs_transition_system();
@@ -369,15 +369,15 @@ where
     Ok(vec![abstraction.into()])
 }
 
-fn build_cegar_collection_source<'task, G>(
-    task: &dyn AbstractNumericTask,
+fn build_cegar_collection_source<G>(
+    task: &Task,
     mut config: CollectionConfig<G::Config>,
     purpose: AbstractionPurpose,
     remaining: Option<Duration>,
-) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError>
+) -> Result<Vec<AbstractionComponent>, HeuristicBuildError>
 where
     G: AbstractionGenerator,
-    G::Abstraction: Into<AbstractionComponent<'task>>,
+    G::Abstraction: Into<AbstractionComponent>,
 {
     config.member.cegar_mut().keep_transitions = purpose.needs_transition_system();
     if let Some(remaining) = remaining {

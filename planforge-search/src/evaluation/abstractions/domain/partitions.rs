@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod tests;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, VariableIndex};
+use planforge_sas::numeric_task::Task;
+use planforge_sas::numeric_task::{NumericValue, VariableIndex};
 use planforge_sas::utils::value_lattice::ValueLattice;
 
 use crate::evaluation::abstractions::common::cegar::split::numeric_split_intervals;
@@ -33,7 +34,7 @@ impl std::hash::Hash for NumericPartitions {
 }
 
 impl NumericPartitions {
-    pub fn trivial(task: &dyn AbstractNumericTask) -> Self {
+    pub fn trivial(task: &Task) -> Self {
         let partitions_by_numeric_var = (0..task.numeric_variables().len())
             .map(|var_id| vec![trivial_interval(task, VariableIndex::from_usize(var_id))])
             .collect();

@@ -7,7 +7,7 @@ fn task(
     constants: &[f64],
     definitions: &[(CalOperator, usize, usize)],
     comparisons: &[(usize, usize, ComparisonOperator)],
-) -> NumericRootTask {
+) -> Task {
     let base = regular.len() + constants.len();
     let numeric_variables =
         regular
@@ -40,7 +40,7 @@ fn task(
         )
     }))
     .collect();
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -109,24 +109,24 @@ fn shares_linear_parts_across_constants_order_and_positive_scale() {
             (11, 2, LessThanOrEqual),
         ],
     );
-    assert_eq!(task.assignment_axioms.len(), 2);
-    let comparisons = &task.comparison_axioms;
+    assert_eq!(task.assignment_axioms().len(), 2);
+    let comparisons = &task.comparison_axioms();
     assert_eq!(comparisons[0].left_hand_side, comparisons[1].left_hand_side);
     assert_eq!(comparisons[2].left_hand_side, comparisons[3].left_hand_side);
     assert_ne!(comparisons[0].left_hand_side, comparisons[2].left_hand_side);
     assert_eq!(comparisons[2].operator, LessThanOrEqual);
     assert_eq!(
-        task.numeric_state[comparisons[0].right_hand_side.index()],
+        task.initial_numeric_values()[comparisons[0].right_hand_side.index()],
         NumericValue::new(4.0)
     );
     assert_eq!(
-        task.numeric_state[comparisons[1].right_hand_side.index()],
+        task.initial_numeric_values()[comparisons[1].right_hand_side.index()],
         NumericValue::new(2.0)
     );
     assert!(
-        task.numeric_conditions
+        task.numeric_conditions()
             .iter()
-            .all(|condition| condition.evaluate_point(&task.numeric_state))
+            .all(|condition| condition.evaluate_point(task.initial_numeric_values()))
     );
 }
 
@@ -159,12 +159,12 @@ fn unary_negative_coefficients_reverse_all_ordered_comparisons() {
             .map(|operator| (3, 2, operator))
             .collect::<Vec<_>>(),
     );
-    assert!(task.assignment_axioms.is_empty());
-    for (comparison, operator) in task.comparison_axioms.iter().zip(expected) {
+    assert!(task.assignment_axioms().is_empty());
+    for (comparison, operator) in task.comparison_axioms().iter().zip(expected) {
         assert_eq!(comparison.left_hand_side, VariableIndex::new(0));
         assert_eq!(comparison.operator, operator);
         assert_eq!(
-            task.numeric_state[comparison.right_hand_side.index()],
+            task.initial_numeric_values()[comparison.right_hand_side.index()],
             NumericValue::new(-4.0)
         );
     }
@@ -178,9 +178,9 @@ fn folds_constant_expressions() {
         &[(CalOperator::Product, 0, 1)],
         &[(2, 0, ComparisonOperator::GreaterThan)],
     );
-    assert!(task.assignment_axioms.is_empty());
+    assert!(task.assignment_axioms().is_empty());
     assert_eq!(
-        task.state[1],
+        task.initial_propositional_values()[1],
         ExplicitValueIndex::new(ConditionValue::True.as_u32())
     );
 }
@@ -194,13 +194,13 @@ fn nonlinear_products_remain_binary() {
         &[(3, 2, ComparisonOperator::GreaterThan)],
     );
     assert!(matches!(
-        task.assignment_axioms[0].expression,
+        task.assignment_axioms()[0].expression,
         NumericExpression::Binary {
             operator: CalOperator::Product,
             ..
         }
     ));
-    assert!(task.numeric_conditions.all()[0].evaluate_point(&task.numeric_state));
+    assert!(task.numeric_conditions().all()[0].evaluate_point(task.initial_numeric_values()));
 }
 
 #[test]
@@ -211,12 +211,12 @@ fn unary_comparisons_use_the_decided_arithmetic_contract() {
         &[(CalOperator::Product, 0, 1), (CalOperator::Product, 4, 2)],
         &[(5, 3, ComparisonOperator::Equal)],
     );
-    assert!(task.assignment_axioms.is_empty());
+    assert!(task.assignment_axioms().is_empty());
     assert_eq!(
-        task.comparison_axioms[0].left_hand_side,
+        task.comparison_axioms()[0].left_hand_side,
         VariableIndex::new(0)
     );
-    assert!(!task.numeric_conditions.all()[0].evaluate_point(&task.numeric_state));
+    assert!(!task.numeric_conditions().all()[0].evaluate_point(task.initial_numeric_values()));
 }
 
 #[test]
@@ -265,10 +265,10 @@ fn grid_unit_coefficients_are_scaled_before_comparison() {
         &[(CalOperator::Product, 0, 1)],
         &[(3, 2, ComparisonOperator::GreaterThanOrEqual)],
     );
-    let comparison = &task.comparison_axioms[0];
+    let comparison = &task.comparison_axioms()[0];
     assert_eq!(comparison.left_hand_side, VariableIndex::new(0));
     assert_eq!(
-        task.numeric_state[comparison.right_hand_side.index()],
+        task.initial_numeric_values()[comparison.right_hand_side.index()],
         NumericValue::new(4.0)
     );
 }
@@ -282,11 +282,11 @@ fn folds_constant_subexpressions_inside_nonlinear_comparisons() {
         &[(Product, 0, 1), (Sum, 2, 3), (Sum, 4, 5)],
         &[(6, 2, ComparisonOperator::GreaterThan)],
     );
-    assert_eq!(task.assignment_axioms.len(), 2);
+    assert_eq!(task.assignment_axioms().len(), 2);
     assert!(
-        task.numeric_variables
+        task.numeric_variables()
             .iter()
-            .zip(&task.numeric_state)
+            .zip(task.initial_numeric_values())
             .any(|(var, value)| var.numeric_type() == NumericType::Constant
                 && *value == NumericValue::new(5.0))
     );
@@ -300,26 +300,23 @@ fn rebuilding_a_normalized_task_preserves_numeric_ids_and_definitions() {
         &[(CalOperator::Sum, 0, 1)],
         &[(3, 2, ComparisonOperator::GreaterThan)],
     );
-    let expected_variables = original.numeric_variables.clone();
-    let expected_assignments = original.assignment_axioms.clone();
-    let expected_comparisons = original.comparison_axioms.clone();
-    let rebuilt = NumericRootTask::new(NumericRootTaskParts {
-        metric: original.metric,
-        variables: original.variables,
-        numeric_variables: original.numeric_variables,
-        goals: original.goals,
-        mutexes: original.mutexes,
-        state: original.state,
-        numeric_state: original.numeric_state,
-        operators: original.operators,
-        axioms: original.axioms,
-        comparison_axioms: original.comparison_axioms,
-        assignment_axioms: original.assignment_axioms,
-        global_constraint: original.global_constraint,
+    let rebuilt = Task::new(TaskParts {
+        metric: original.metric().clone(),
+        variables: original.variables().to_vec(),
+        numeric_variables: original.numeric_variables().to_vec(),
+        goals: original.goals().to_vec(),
+        mutexes: original.mutexes().to_vec(),
+        state: original.initial_propositional_values().to_vec(),
+        numeric_state: original.initial_numeric_values().to_vec(),
+        operators: original.operators().to_vec(),
+        axioms: original.axioms().to_vec(),
+        comparison_axioms: original.comparison_axioms().to_vec(),
+        assignment_axioms: original.assignment_axioms().to_vec(),
+        global_constraint: original.global_constraint().copied(),
     });
-    assert_eq!(rebuilt.numeric_variables, expected_variables);
-    assert_eq!(rebuilt.assignment_axioms, expected_assignments);
-    assert_eq!(rebuilt.comparison_axioms, expected_comparisons);
+    assert_eq!(rebuilt.numeric_variables(), original.numeric_variables());
+    assert_eq!(rebuilt.assignment_axioms(), original.assignment_axioms());
+    assert_eq!(rebuilt.comparison_axioms(), original.comparison_axioms());
 }
 
 #[test]
@@ -338,12 +335,12 @@ fn shared_expression_dags_are_not_expanded_as_trees() {
         &definitions,
         &[(101, 1, ComparisonOperator::GreaterThan)],
     );
-    assert!(task.assignment_axioms.is_empty());
+    assert!(task.assignment_axioms().is_empty());
     assert_eq!(
-        task.comparison_axioms[0].left_hand_side,
+        task.comparison_axioms()[0].left_hand_side,
         VariableIndex::new(0)
     );
-    assert!(task.numeric_conditions.all()[0].evaluate_point(&task.numeric_state));
+    assert!(task.numeric_conditions().all()[0].evaluate_point(task.initial_numeric_values()));
 }
 
 #[test]
@@ -356,7 +353,7 @@ fn scaling_preserves_small_terms_in_a_multivariate_comparison() {
         &[(Product, 0, 2), (Product, 1, 3), (Sum, 5, 6)],
         &[(7, 4, ComparisonOperator::GreaterThan)],
     );
-    let NumericExpression::Linear(terms) = &task.assignment_axioms[0].expression else {
+    let NumericExpression::Linear(terms) = &task.assignment_axioms()[0].expression else {
         panic!("expected a linear sum");
     };
     assert_eq!(terms.len(), 2);
@@ -365,5 +362,5 @@ fn scaling_preserves_small_terms_in_a_multivariate_comparison() {
             .iter()
             .all(|(_, coefficient)| *coefficient != ZERO_VALUE)
     );
-    assert!(task.numeric_conditions.all()[0].evaluate_point(&task.numeric_state));
+    assert!(task.numeric_conditions().all()[0].evaluate_point(task.initial_numeric_values()));
 }

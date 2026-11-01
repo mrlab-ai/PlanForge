@@ -12,10 +12,11 @@ pub use open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpen
 pub use ordering::{AStar, Greedy, NodeOrdering, UniformCost};
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, ensure};
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use tracing::info;
@@ -70,8 +71,8 @@ pub struct BestFirstSearch<'a, O: NodeOrdering, Q: OpenList> {
 
 /// Everything of a search but its successor generator.
 struct SearchCore<'a, O: NodeOrdering, Q: OpenList> {
-    task: TaskRef<'a>,
-    registry: StateRegistry<'a>,
+    task: Arc<Task>,
+    registry: StateRegistry,
     initial_state: ConcreteState,
     /// Per-operator costs, for a task whose costs do not depend on the state.
     operator_costs: Vec<f64>,
@@ -152,7 +153,7 @@ struct Parent {
 
 impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
     /// A search of `task`; its clock starts here.
-    pub fn new(task: TaskRef<'a>, params: SearchParams<'a>) -> Self {
+    pub fn new(task: Arc<Task>, params: SearchParams<'a>) -> Self {
         let SearchParams {
             heuristic,
             lazy,
@@ -168,13 +169,13 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         // Registering the initial state fixes the numeric constants the
         // metric's operator costs read.
         let initial_state = registry.get_initial_state();
-        let operator_costs = task.effective_operator_costs().into_owned();
+        let operator_costs = task.effective_operator_costs().to_vec();
         info!(
             "State representation: bins={}",
             registry.global_state_packer().num_bins()
         );
         Self {
-            expander: RegistryExpander::new(&*task),
+            expander: RegistryExpander::new(&task),
             core: SearchCore {
                 use_metric: task.metric().use_metric(),
                 min_action_cost: minimum_action_cost(&operator_costs),
@@ -381,7 +382,7 @@ impl<O: NodeOrdering, Q: OpenList> SearchCore<'_, O, Q> {
         {
             let evaluation = evaluate::<O>(
                 lazy,
-                &evaluation_state(&*self.task, &self.registry, &state, node.is_goal),
+                &evaluation_state(&self.task, &self.registry, &state, node.is_goal),
                 entry.g_value,
                 self.min_action_cost,
                 None,
@@ -482,7 +483,7 @@ impl<O: NodeOrdering, Q: OpenList> SearchCore<'_, O, Q> {
         });
         let evaluation = evaluate::<O>(
             &mut *self.heuristic,
-            &evaluation_state(&*self.task, &self.registry, state, is_goal),
+            &evaluation_state(&self.task, &self.registry, state, is_goal),
             g_value,
             self.min_action_cost,
             preferred,
@@ -579,7 +580,7 @@ impl<O: NodeOrdering, Q: OpenList> SearchCore<'_, O, Q> {
                     "A* entered a higher f-layer after its heuristic proved h(init) = h*"
                 );
                 SearchOutcome::Solved {
-                    plan: self.space.extract_plan(goal, &*self.task),
+                    plan: self.space.extract_plan(goal, &self.task),
                     cost: self.space.g_value(goal),
                 }
             }
@@ -633,8 +634,8 @@ fn evaluate<O: NodeOrdering>(
 }
 
 fn evaluation_state<'state, 'task>(
-    task: &'task dyn AbstractNumericTask,
-    registry: &'state StateRegistry<'task>,
+    task: &'task Task,
+    registry: &'state StateRegistry,
     state: &'state ConcreteState,
     is_goal: bool,
 ) -> EvaluationState<'state, 'task> {

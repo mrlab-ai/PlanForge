@@ -1,5 +1,6 @@
-use planforge_sas::numeric_task::TaskRef;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use std::sync::Arc;
 
 use crate::successor_generator::RegistryExpander;
 
@@ -8,13 +9,13 @@ const SEED: u32 = 2011;
 
 /// The states potential functions are fitted to: the registry they live in,
 /// the initial state, and random walks from it.
-pub(crate) struct SampleSpace<'task> {
-    pub(crate) registry: StateRegistry<'task>,
+pub(crate) struct SampleSpace {
+    pub(crate) registry: StateRegistry,
     pub(crate) initial_state: ConcreteState,
-    pub(crate) sampler: RandomWalkSampler<'task>,
+    pub(crate) sampler: RandomWalkSampler,
 }
 
-impl SampleSpace<'_> {
+impl SampleSpace {
     /// `count` random-walk end states.
     pub(crate) fn sample(&mut self, count: usize) -> Result<Vec<ConcreteState>, String> {
         self.sampler
@@ -26,20 +27,20 @@ impl SampleSpace<'_> {
 /// whose length is binomially distributed around four times the number of
 /// average-cost operators the initial estimate stands for, drawn from the
 /// C++ planner's random stream.
-pub(crate) struct RandomWalkSampler<'task> {
-    task: TaskRef<'task>,
+pub(crate) struct RandomWalkSampler {
+    task: Arc<Task>,
     expander: RegistryExpander,
     rng: CppMt19937,
     initial_h: f64,
     average_operator_cost: f64,
 }
 
-impl<'task> RandomWalkSampler<'task> {
+impl RandomWalkSampler {
     /// Walks scaled to the initial estimate `initial_h` of `task`, whose
     /// operators cost `average_operator_cost` on average.
-    pub(crate) fn new(task: TaskRef<'task>, initial_h: f64, average_operator_cost: f64) -> Self {
+    pub(crate) fn new(task: Arc<Task>, initial_h: f64, average_operator_cost: f64) -> Self {
         Self {
-            expander: RegistryExpander::new(&*task),
+            expander: RegistryExpander::new(&task),
             task,
             rng: CppMt19937::new(SEED),
             initial_h,
@@ -63,7 +64,7 @@ impl<'task> RandomWalkSampler<'task> {
 
     fn sample(
         &mut self,
-        registry: &mut StateRegistry<'_>,
+        registry: &mut StateRegistry,
         initial: &ConcreteState,
         count: usize,
     ) -> Result<Vec<ConcreteState>, String> {

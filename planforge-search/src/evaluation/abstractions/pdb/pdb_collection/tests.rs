@@ -1,7 +1,6 @@
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
-    VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericType, NumericValue,
+    NumericVariable, Operator, OperatorCost, Task, TaskParts, VariableIndex,
 };
 
 use super::*;
@@ -17,8 +16,8 @@ fn simple_var(name: &str) -> ExplicitVariable {
     )
 }
 
-fn sample_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn sample_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("p"), simple_var("q")],
         numeric_variables: vec![NumericVariable::new(

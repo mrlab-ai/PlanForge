@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use planforge_sas::{
     numeric_task::{
-        AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, Operator,
-        OperatorIndex, VariableIndex,
+        ExplicitFact, ExplicitValueIndex, NumericValue, Operator, OperatorIndex, VariableIndex,
     },
     state_registry::{ConcreteState, ExpansionContext, StateRegistry},
     utils::errors::{ConstructError, StateInsertError},
@@ -107,7 +107,7 @@ impl Debug for SuccessorTree {
 }
 
 impl SuccessorTree {
-    pub fn new(task: &dyn AbstractNumericTask) -> Self {
+    pub fn new(task: &Task) -> Self {
         let mut builder = TreeBuilder::new(task);
         let mut queue: VecDeque<OperatorIndex> = (0..task.operators().len() as u32)
             .map(OperatorIndex::new)
@@ -194,7 +194,7 @@ pub struct RegistryExpander {
 }
 
 impl RegistryExpander {
-    pub fn new(task: &dyn AbstractNumericTask) -> Self {
+    pub fn new(task: &Task) -> Self {
         Self {
             successor_tree: SuccessorTree::new(task),
             propositional: Vec::new(),
@@ -209,7 +209,7 @@ impl RegistryExpander {
     /// applicable in it, in the successor generator's order.
     pub fn expand<'e>(
         &'e mut self,
-        registry: &StateRegistry<'_>,
+        registry: &StateRegistry,
         state: &ConcreteState,
     ) -> Result<Expansion<'e>, StateInsertError> {
         registry
@@ -259,7 +259,7 @@ impl<'e> Expansion<'e> {
     /// was expanded from, and the operator's metric cost there.
     pub fn successor(
         &mut self,
-        registry: &mut StateRegistry<'_>,
+        registry: &mut StateRegistry,
         operator: &Operator,
     ) -> Result<(ConcreteState, f64), StateInsertError> {
         registry.apply_operator_in_context(
@@ -277,7 +277,7 @@ impl<'e> Expansion<'e> {
 // -----------------------------------------------------------------------
 
 struct TreeBuilder<'a> {
-    task: &'a dyn AbstractNumericTask,
+    task: &'a Task,
     branches: Vec<BranchEntry>,
     leaves: Vec<LeafEntry>,
     empty_leaf: NodeId,
@@ -286,7 +286,7 @@ struct TreeBuilder<'a> {
 }
 
 impl<'a> TreeBuilder<'a> {
-    fn new(task: &'a dyn AbstractNumericTask) -> Self {
+    fn new(task: &'a Task) -> Self {
         let operators = task.operators();
         let mut conditions = Vec::with_capacity(operators.len());
         let mut next_condition_by_operator = Vec::with_capacity(operators.len());

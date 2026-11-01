@@ -17,8 +17,8 @@ use pyo3::exceptions::{PyException, PyFileNotFoundError, PyIndexError, PyValueEr
 use pyo3::prelude::*;
 
 use planforge_sas::numeric_task::{
-    AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, NumericRootTask, NumericType,
-    NumericValue, Operator, OperatorIndex, TaskRef, VariableIndex,
+    AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, NumericType, NumericValue,
+    Operator, OperatorIndex, VariableIndex,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
@@ -1003,12 +1003,12 @@ impl Heuristic for PyHeuristic {
 
 #[pyclass(unsendable)]
 struct Task {
-    task: TaskRef<'static>,
-    registry: RefCell<StateRegistry<'static>>,
+    task: Arc<planforge_sas::numeric_task::Task>,
+    registry: RefCell<StateRegistry>,
     succ: SuccessorTree,
 }
 
-struct GilReleasedTask(TaskRef<'static>);
+struct GilReleasedTask(Arc<planforge_sas::numeric_task::Task>);
 
 // PyO3's stable `allow_threads` bound requires captured values to be `Send`,
 // even though the closure is executed synchronously on the current thread with
@@ -1035,15 +1035,18 @@ impl GilReleasedTask {
 
 /// The default way from PDDL to a task: no SAS+ text in between. `from_sas` and
 /// `from_sas_text` remain for a file produced earlier or by another tool.
-fn translate_pddl_to_task(domain: &Path, problem: &Path) -> Result<NumericRootTask, String> {
+fn translate_pddl_to_task(
+    domain: &Path,
+    problem: &Path,
+) -> Result<planforge_sas::numeric_task::Task, String> {
     planforge_translate::translate_to_task(&domain.to_string_lossy(), &problem.to_string_lossy())
         .map_err(|err| err.to_string())
 }
 
 fn restrict_numeric_task(
-    task: NumericRootTask,
+    task: planforge_sas::numeric_task::Task,
     restrict_task: bool,
-) -> Result<NumericRootTask, String> {
+) -> Result<planforge_sas::numeric_task::Task, String> {
     if !restrict_task {
         return Ok(task);
     }
@@ -1128,7 +1131,7 @@ fn checked_duration(seconds: f64, name: &str) -> PyResult<Duration> {
 
 fn state_space_to_py(
     graph: OwnedStateSpace,
-    task: &dyn planforge_sas::numeric_task::AbstractNumericTask,
+    task: &planforge_sas::numeric_task::Task,
 ) -> PyResult<PyStateSpace> {
     // Names are copied out now: the enumeration outlives the borrow of the task.
     let fact_names = task
@@ -1174,7 +1177,7 @@ impl Task {
     #[pyo3(signature = (text, restrict_task=false))]
     fn from_sas_text(text: &str, restrict_task: bool) -> PyResult<Self> {
         let task = restrict_numeric_task(
-            NumericRootTask::try_from_str(text).map_err(ParseError::new_err)?,
+            planforge_sas::numeric_task::Task::try_from_str(text).map_err(ParseError::new_err)?,
             restrict_task,
         )
         .map_err(PlanforgeError::new_err)?;
@@ -1202,7 +1205,7 @@ impl Task {
         restrict_task: bool,
     ) -> PyResult<Self> {
         let task = py
-            .allow_threads(|| -> Result<NumericRootTask, String> {
+            .allow_threads(|| -> Result<planforge_sas::numeric_task::Task, String> {
                 translate_pddl_to_task(&domain, &problem)
             })
             .map_err(TranslateError::new_err)?;
@@ -1423,7 +1426,7 @@ impl Task {
         let graph = py
             .allow_threads(move || task.enumerate(limits))
             .map_err(|error| EnumerationError::new_err(error.to_string()))?;
-        state_space_to_py(graph, &*self.task)
+        state_space_to_py(graph, &self.task)
     }
 
     /// (operator, successor_state, transition_cost) for every applicable operator.
@@ -1530,9 +1533,9 @@ impl Task {
 }
 
 impl Task {
-    fn build(task: TaskRef<'static>) -> Self {
+    fn build(task: Arc<planforge_sas::numeric_task::Task>) -> Self {
         let registry = StateRegistry::for_task(task.clone());
-        let succ = SuccessorTree::new(&*task);
+        let succ = SuccessorTree::new(&task);
         Task {
             task,
             registry: RefCell::new(registry),
@@ -1677,11 +1680,11 @@ fn solve(
                     .clone()
                     .expect("validated: exactly one source was provided")
             };
-            NumericRootTask::try_from_str(&sas_text).map_err(SolveError::Parse)?
+            planforge_sas::numeric_task::Task::try_from_str(&sas_text).map_err(SolveError::Parse)?
         };
 
         let task = restrict_numeric_task(task, restrict_task).map_err(SolveError::Restrict)?;
-        let task: TaskRef<'static> = Arc::new(task);
+        let task: Arc<planforge_sas::numeric_task::Task> = Arc::new(task);
         planforge_search::search::solve_task(task, &spec, time_limit, memory_limit)
             .map_err(|err| SolveError::Search(err.to_string()))
     });

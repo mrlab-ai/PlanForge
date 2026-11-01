@@ -4,6 +4,7 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::resource_limits::Deadline;
 use planforge_sas::explicit_state::StateValues;
+use planforge_sas::numeric_task::Task;
 
 #[test]
 fn goal_collection_builds_every_goal_with_source_sets() {
@@ -46,7 +47,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             OperatorCost::new(1),
         ),
     ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -281,7 +282,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
 
 #[test]
 fn progress_states_refine_from_reachable_concrete_checkpoints() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-two"),
@@ -443,7 +444,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
 
 #[test]
 fn progress_states_complete_after_reaching_the_full_goal() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-four"),
@@ -564,7 +565,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
 
 #[test]
 fn progress_states_complete_after_a_dead_progress_state() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-one"),
@@ -702,7 +703,7 @@ fn progress_states_complete_after_a_dead_progress_state() {
 
 #[test]
 fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-four"),
@@ -849,7 +850,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
 
 #[test]
 fn goal_collection_preserves_empty_goal_tasks() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,

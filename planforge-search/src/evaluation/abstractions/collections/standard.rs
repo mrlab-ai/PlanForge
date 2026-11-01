@@ -13,12 +13,13 @@
 //! concrete plan, or its initial state is an abstract dead end, and no further
 //! member can help the search.
 
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, VariableIndex};
+use planforge_sas::numeric_task::{ExplicitFact, NumericType, VariableIndex};
 use rand::seq::SliceRandom;
 use rand::{Rng, RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
@@ -57,7 +58,7 @@ pub(crate) struct StandardSchedule {
 /// Builds the standard collection of `task` with members from `G`
 /// configured by `member`.
 pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     schedule: &StandardSchedule,
     member: &G::Config,
 ) -> Result<Vec<G::Abstraction>> {
@@ -208,7 +209,7 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
 /// The variables restarts split initially and blacklist: every propositional
 /// variable no axiom writes, except condition variables that no goal
 /// mentions, and then every regular numeric variable.
-fn initial_split_candidates(task: &dyn AbstractNumericTask) -> Vec<InitialSplitVar> {
+fn initial_split_candidates(task: &Task) -> Vec<InitialSplitVar> {
     let goal_var_ids: HashSet<VariableIndex> =
         task.goals().iter().map(ExplicitFact::var_index).collect();
     let propositional = (0..task.variables().len())

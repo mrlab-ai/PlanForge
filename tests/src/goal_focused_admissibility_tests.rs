@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
+use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
@@ -39,7 +39,7 @@ use planforge_search::task_transformations::restriction::build_restricted_task;
 use crate::corpus::{self, Scratch, translate_to_disk};
 
 /// The instance's task, restricted exactly as `--restrict-task` restricts it.
-fn restricted_task(folder: &str, stem: &str) -> NumericRootTask {
+fn restricted_task(folder: &str, stem: &str) -> Task {
     let root = corpus::assets().join("numeric-pddl-files").join(folder);
     let scratch = Scratch::new(&format!("goal_focused_admissibility_{folder}_{stem}"));
     let task = translate_to_disk(
@@ -54,9 +54,9 @@ fn restricted_task(folder: &str, stem: &str) -> NumericRootTask {
 }
 
 /// The states of an optimal plan and `h*` of each of them.
-fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(ConcreteState, f64)>) {
+fn optimal_plan_states(task: &Task) -> (StateRegistry, Vec<(ConcreteState, f64)>) {
     let result = AStarSearch::new(
-        Arc::new(task),
+        Arc::new(task.clone()),
         SearchParams::new(Box::new(BlindHeuristic::for_task(task))),
     )
     .run()
@@ -69,7 +69,7 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
         panic!("blind A* must solve the instance: {:?}", result.outcome);
     };
 
-    let mut registry = StateRegistry::for_task(Arc::new(task));
+    let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
     let mut state = registry.get_initial_state();
     let mut prefix_costs = vec![0.0];
     let mut states = vec![state.clone()];
@@ -100,7 +100,7 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
     (registry, states)
 }
 
-fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
+fn domain_collection(task: &Task) -> Vec<DomainAbstraction> {
     DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 3_000,
         total_max_time: None.into(),
@@ -125,7 +125,7 @@ fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
     .expect("the goal-focused domain collection must build")
 }
 
-fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
+fn cartesian_collection(task: &Task) -> Vec<CartesianAbstraction> {
     CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
         member: CartesianAbstractionConfig {
             cegar: CegarOptions {
@@ -164,13 +164,13 @@ fn scp_config(partitioning: CostPartitioningMethod) -> ScpConfig {
 /// `h(s_i) <= h*(s_i)` and finite on every state of the optimal plan.
 fn assert_admissible_along_plan(
     what: &str,
-    task: &NumericRootTask,
-    registry: &StateRegistry<'_>,
+    task: &Task,
+    registry: &StateRegistry,
     states: &[(ConcreteState, f64)],
     heuristic: &mut dyn Heuristic,
 ) {
     for (step, (state, optimal_cost)) in states.iter().enumerate() {
-        let mut eval = EvaluationState::new(state, task as &dyn AbstractNumericTask, registry);
+        let mut eval = EvaluationState::new(state, task as &Task, registry);
         eval.set_is_goal(step + 1 == states.len());
         let h = heuristic
             .evaluate(&eval)
@@ -223,7 +223,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                         None,
                         components(domain.clone(), Vec::new()),
                         scp_config(partitioning),
-                        std::sync::Arc::new(&task),
+                        std::sync::Arc::new(task.clone()),
                         Default::default(),
                     ),
                 ),
@@ -233,7 +233,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                         None,
                         components(vec![], cartesian.clone()),
                         scp_config(partitioning),
-                        std::sync::Arc::new(&task),
+                        std::sync::Arc::new(task.clone()),
                         Default::default(),
                     ),
                 ),
@@ -243,7 +243,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                         None,
                         components(domain.clone(), cartesian.clone()),
                         scp_config(partitioning),
-                        std::sync::Arc::new(&task),
+                        std::sync::Arc::new(task.clone()),
                         Default::default(),
                     ),
                 ),
@@ -308,10 +308,10 @@ admissibility_tests! {
 
 /// The collection heuristics' components: the domain abstractions, then the
 /// Cartesian ones.
-fn components<'task>(
+fn components(
     domain: Vec<DomainAbstraction>,
     cartesian: Vec<CartesianAbstraction>,
-) -> Vec<AbstractionComponent<'task>> {
+) -> Vec<AbstractionComponent> {
     domain
         .into_iter()
         .map(AbstractionComponent::from)

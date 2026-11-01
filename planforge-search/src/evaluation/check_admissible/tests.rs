@@ -2,14 +2,14 @@ use super::*;
 use planforge_sas::numeric_task::Operator;
 
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, OperatorCost, VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, OperatorCost, Task,
+    TaskParts, VariableIndex,
 };
 use std::sync::Arc;
 
 /// Chain task: one variable stepping `0 -> 1 -> 2`, goal `v = 2`, unit costs.
 /// The true goal distance is 2 from the initial state and 1 after one step.
-fn chain_task() -> TaskRef<'static> {
+fn chain_task() -> Arc<Task> {
     let variables = vec![ExplicitVariable::new(
         3,
         "v".to_string(),
@@ -32,7 +32,7 @@ fn chain_task() -> TaskRef<'static> {
         )
     };
 
-    Arc::new(NumericRootTask::new(NumericRootTaskParts {
+    Arc::new(Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -78,14 +78,14 @@ impl Heuristic for ConstantHeuristic {
 }
 
 fn evaluate_initial_state(
-    task: TaskRef<'static>,
+    task: Arc<Task>,
     inner: Box<dyn Heuristic + 'static>,
 ) -> Result<f64, EvaluationError> {
     let mut heuristic = CheckAdmissibleHeuristic::new(inner, task.clone())
         .expect("the chain task has finite non-negative costs");
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();
-    let mut eval_state = EvaluationState::new(&initial_state, &*task, &registry);
+    let mut eval_state = EvaluationState::new(&initial_state, &task, &registry);
     eval_state.set_is_goal(false);
     heuristic.evaluate(&eval_state)
 }
@@ -132,7 +132,7 @@ fn checks_a_blind_heuristic() {
     let h_value = evaluate_initial_state(
         chain_task(),
         Box::new(crate::evaluation::heuristic::BlindHeuristic::for_task(
-            &*chain_task(),
+            &chain_task(),
         )),
     )
     .expect("the blind estimate is the minimum action cost");
@@ -152,7 +152,7 @@ fn goal_distance_is_computed_per_state() {
     let task = chain_task();
     let mut heuristic = CheckAdmissibleHeuristic::new(
         Box::new(crate::evaluation::heuristic::BlindHeuristic::for_task(
-            &*task,
+            &task,
         )),
         task.clone(),
     )

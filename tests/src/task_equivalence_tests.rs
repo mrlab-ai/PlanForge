@@ -15,14 +15,12 @@
 //!
 //! The whole-task `assert_eq!` at the end of [`assert_tasks_are_equivalent`] is
 //! what makes the list above exhaustive rather than a list someone maintained:
-//! a field neither this file nor `NumericRootTask` forgets is a field the test
+//! a field neither this file nor `Task` forgets is a field the test
 //! covers.
 
 use std::path::Path;
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, NumericRootTask, VariableIndex, assert_fact_namespaces,
-};
+use planforge_sas::numeric_task::{ExplicitFact, Task, VariableIndex, assert_fact_namespaces};
 use planforge_translate::{translate_to_sas_string, translate_to_task};
 
 use crate::corpus::{self, assert_fixture_set_is_pinned, problem_file_names, subdirectory_names};
@@ -85,7 +83,7 @@ fn pddl_fixtures() -> Vec<(String, std::path::PathBuf, std::path::PathBuf)> {
 
 /// The task the translation hands over, and the task the SAS+ file it writes
 /// reads back as.
-fn both_ways(domain: &Path, problem: &Path, what: &str) -> (NumericRootTask, NumericRootTask) {
+fn both_ways(domain: &Path, problem: &Path, what: &str) -> (Task, Task) {
     let path_of = |path: &Path| {
         path.to_str()
             .unwrap_or_else(|| panic!("non-utf8 fixture path: {path:?}"))
@@ -96,7 +94,7 @@ fn both_ways(domain: &Path, problem: &Path, what: &str) -> (NumericRootTask, Num
 
     let sas_text = translate_to_sas_string(&path_of(domain), &path_of(problem))
         .unwrap_or_else(|error| panic!("writing the SAS text of {what} failed: {error}"));
-    let parsed = NumericRootTask::try_from_str(&sas_text)
+    let parsed = Task::try_from_str(&sas_text)
         .unwrap_or_else(|error| panic!("reading the SAS text of {what} back failed: {error}"));
 
     (direct, parsed)
@@ -115,7 +113,7 @@ type TaggedSection = (String, Vec<TaggedFact>);
 /// `(variable, value)` on purpose — so the whole-task comparison cannot see it,
 /// and a task whose facts were all tagged propositional would compare equal to
 /// one that tagged its condition variables correctly.
-fn tagged_facts(task: &NumericRootTask) -> Vec<TaggedSection> {
+fn tagged_facts(task: &Task) -> Vec<TaggedSection> {
     let tagged = |facts: &[ExplicitFact]| -> Vec<TaggedFact> {
         facts
             .iter()
@@ -164,7 +162,7 @@ fn tagged_facts(task: &NumericRootTask) -> Vec<TaggedSection> {
 ///
 /// Section by section first, so that a failure names the section that disagrees
 /// rather than dumping two whole tasks, and then in full.
-fn assert_tasks_are_equivalent(direct: &NumericRootTask, parsed: &NumericRootTask, what: &str) {
+fn assert_tasks_are_equivalent(direct: &Task, parsed: &Task, what: &str) {
     assert_eq!(direct.metric(), parsed.metric(), "{what}: metric");
 
     assert_eq!(

@@ -1,16 +1,16 @@
 //! The immutable root planning task and its four variable-id spaces.
 //!
-//! Task propositional ids index [`NumericRootTask::variables`]. Numeric-condition
+//! Task propositional ids index [`Task::variables`]. Numeric-condition
 //! ids use that same index range but are tagged as [`FactNamespace::Condition`]
 //! so callers cannot confuse a comparison verdict with an ordinary proposition.
-//! Task numeric ids independently index [`NumericRootTask::numeric_variables`].
+//! Task numeric ids independently index [`Task::numeric_variables`].
 //! Domain abstractions have a fourth, private combined space, tagged
 //! [`FactNamespace::NumericVariable`], whose values are partition ids rather
 //! than task-domain values.
 //!
 //! Axiom layers are stratified across those spaces: derived numeric assignment
 //! axioms run first, all numeric comparisons occupy the next layer, and
-//! propositional axioms occupy higher layers. [`NumericRootTask::new`] checks
+//! propositional axioms occupy higher layers. [`Task::new`] checks
 //! these representation and layer invariants once before publishing a task.
 
 use crate::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
@@ -24,7 +24,7 @@ use crate::utils::linear_effects::{
     LinearNumericEffect, LinearizationError, linearize_numeric_var,
     linearize_operator_assignment_effects,
 };
-use std::{collections::HashSet, fmt, sync::Arc};
+use std::{collections::HashSet, fmt};
 
 mod task_api;
 mod value;

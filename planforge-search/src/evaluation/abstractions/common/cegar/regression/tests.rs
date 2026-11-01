@@ -1,3 +1,4 @@
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex};
 use planforge_sas::numeric_task::{ONE_VALUE, ZERO_VALUE};
 use planforge_sas::utils::interval::Interval;
@@ -9,7 +10,7 @@ const X: VariableIndex = VariableIndex::new(0);
 
 /// A box over the task's numeric variables in which `x` lies in `x` and
 /// the constants keep their values; propositional variables are free.
-fn state(task: &dyn AbstractNumericTask, numeric: Vec<Interval>) -> CartesianSet {
+fn state(task: &Task, numeric: Vec<Interval>) -> CartesianSet {
     let propositions = (0..task.variables().len())
         .map(|var| {
             (0..task.variables()[var].domain_size())
@@ -20,7 +21,7 @@ fn state(task: &dyn AbstractNumericTask, numeric: Vec<Interval>) -> CartesianSet
     CartesianSet::with_all_props_constrained(propositions, numeric)
 }
 
-fn jump_state(task: &dyn AbstractNumericTask, x: Interval) -> CartesianSet {
+fn jump_state(task: &Task, x: Interval) -> CartesianSet {
     state(
         task,
         vec![
@@ -50,7 +51,7 @@ fn at_least(value: f64) -> Interval {
 }
 
 fn search_in_scope(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     states: &[CartesianSet],
     operators: &[OperatorIndex],
     numeric: &[NumericValue],
@@ -76,7 +77,7 @@ fn search_in_scope(
 }
 
 fn search(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     states: &[CartesianSet],
     operators: &[OperatorIndex],
     numeric: &[NumericValue],

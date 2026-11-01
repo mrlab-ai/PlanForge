@@ -5,7 +5,7 @@ use super::*;
 fn test_heuristic(
     num_abstractions: usize,
     constraints: Vec<Vec<usize>>,
-) -> PostHocOptimizationHeuristic<'static> {
+) -> PostHocOptimizationHeuristic {
     PostHocOptimizationHeuristic {
         name: "posthoc_test".to_string(),
         components: Vec::new(),

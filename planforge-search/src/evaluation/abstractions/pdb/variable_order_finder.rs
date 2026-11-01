@@ -1,12 +1,13 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
+use planforge_sas::numeric_task::{NumericType, VariableIndex};
 
 use super::causal_graph::{CausalGraph, CausalGraphVariable};
 use crate::config::option_enum;
@@ -37,7 +38,7 @@ pub struct VariableOrderFinder {
 
 impl VariableOrderFinder {
     pub(crate) fn new(
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         variable_order_type: GreedyVariableOrderType,
         numeric_variables_first: bool,
         random_seed: u64,
@@ -201,10 +202,7 @@ impl VariableOrderFinder {
     }
 }
 
-fn add_numeric_vars(
-    task: &dyn AbstractNumericTask,
-    remaining_vars: &mut Vec<(VariableIndex, bool)>,
-) {
+fn add_numeric_vars(task: &Task, remaining_vars: &mut Vec<(VariableIndex, bool)>) {
     for numeric_var_id in 0..task.numeric_variables().len() {
         let is_regular = task
             .numeric_variables()

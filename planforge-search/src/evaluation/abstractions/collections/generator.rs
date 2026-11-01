@@ -1,11 +1,11 @@
 //! The collection generator of every abstraction representation: a standard
 //! or goal-focused collection of the abstractions one generator builds.
 
+use planforge_sas::numeric_task::Task;
 use std::hash::Hash;
 
 use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
 use super::config::{CollectionConfig, MemberConfig};
@@ -36,14 +36,14 @@ pub trait AbstractionGenerator: Sized {
     /// and refines within `scope`.
     fn generate_from_root(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         refinement_root: Option<&ExplicitState>,
         scope: &RefinementScope,
     ) -> Result<Self::Abstraction>;
 
     /// Builds an abstraction of `task` refined from its initial state, on
     /// every variable.
-    fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Self::Abstraction> {
+    fn generate(&self, task: &Task) -> Result<Self::Abstraction> {
         self.generate_from_root(task, None, &RefinementScope::default())
     }
 
@@ -76,7 +76,7 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
     /// task, and every member still partitions the task's full state space,
     /// so the members remain admissible components for canonical and
     /// cost-partitioned collection heuristics.
-    pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Vec<G::Abstraction>> {
+    pub fn generate(&self, task: &Task) -> Result<Vec<G::Abstraction>> {
         let members = match self.config.collection_strategy {
             CollectionStrategy::Standard => build_standard_collection::<G>(
                 task,
@@ -112,7 +112,7 @@ impl<G: AbstractionGenerator> GoalFocusedBackend for CollectionGenerator<G> {
 
     fn build(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         root: Option<&ExplicitState>,
         construction: &MemberConstruction,
     ) -> Result<Self::Member> {

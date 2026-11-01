@@ -3,8 +3,8 @@ use planforge_sas::axioms::{
 };
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericValue, NumericVariable,
-    Operator, OperatorCost, VariableIndex,
+    ExplicitVariable, Metric, NumericValue, NumericVariable, Operator, OperatorCost, Task,
+    TaskParts, VariableIndex,
 };
 
 use super::*;
@@ -19,8 +19,8 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
     )
 }
 
-fn propositional_predecessor_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn propositional_predecessor_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("q", None), simple_var("p", None)],
         numeric_variables: vec![],
@@ -50,8 +50,8 @@ fn propositional_predecessor_task() -> NumericRootTask {
 /// The goal is the comparison `x >= threshold`, which is what a numeric goal
 /// compiles to: the pattern generator has to reach the comparison's numeric
 /// operand from it.
-fn numeric_goal_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn numeric_goal_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("cmp", Some(0)), simple_var("reads-cmp", Some(1))],
         numeric_variables: vec![
@@ -80,8 +80,8 @@ fn numeric_goal_task() -> NumericRootTask {
     })
 }
 
-fn eff_eff_goal_join_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn eff_eff_goal_join_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("g1", None), simple_var("g2", None)],
         numeric_variables: vec![],
@@ -119,8 +119,8 @@ fn eff_eff_goal_join_task() -> NumericRootTask {
     })
 }
 
-fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn helper_goal_with_unsupported_numeric_effect_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("cmp", Some(1)), simple_var("goal", None)],
         numeric_variables: vec![

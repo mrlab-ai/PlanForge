@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
+use planforge_sas::numeric_task::Task;
 use planforge_search::config::parse_call;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_factory::{
@@ -21,7 +21,7 @@ impl HeuristicFeature for ExternalTest {
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
         BUILD_CALLED.store(true, Ordering::SeqCst);
         Ok(Box::new(
-            planforge_search::evaluation::heuristic::BlindHeuristic::for_task(&**context.task),
+            planforge_search::evaluation::heuristic::BlindHeuristic::for_task(context.task),
         ))
     }
 }
@@ -58,7 +58,7 @@ fn external_heuristic_is_visible_to_every_registry_path() {
             .unwrap_err();
         assert!(error.to_string().contains("requires unrestricted CPLEX"));
     }
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(concat!(
+    let task: Arc<Task> = Arc::new(Task::from_file(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../tests/assets/numeric_sas/example2.sas"
     )));

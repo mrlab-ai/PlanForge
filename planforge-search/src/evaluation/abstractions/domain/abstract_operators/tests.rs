@@ -7,8 +7,8 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, INF_VALUE,
-    Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable,
-    Operator, OperatorCost, VariableIndex,
+    Metric, NEG_INF_VALUE, NumericType, NumericVariable, Operator, OperatorCost, Task, TaskParts,
+    VariableIndex,
 };
 
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
@@ -17,10 +17,7 @@ use planforge_sas::utils::interval::Interval;
 
 /// The abstraction of `task` that keeps every propositional value apart and
 /// partitions numeric variables by `partitions`.
-fn identity_function(
-    task: &NumericRootTask,
-    partitions: NumericPartitions,
-) -> DomainAbstractionFunction {
+fn identity_function(task: &Task, partitions: NumericPartitions) -> DomainAbstractionFunction {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task);
     DomainAbstractionFunction::new(
         &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
@@ -32,7 +29,7 @@ fn identity_function(
 }
 
 /// Why the CEGAR semantics rejects `task`.
-fn semantics_error(task: &NumericRootTask) -> anyhow::Error {
+fn semantics_error(task: &Task) -> anyhow::Error {
     match CegarSemantics::for_options(task, &CegarOptions::default()) {
         Ok(_) => panic!("the CEGAR semantics accepted the task"),
         Err(error) => error,
@@ -41,7 +38,7 @@ fn semantics_error(task: &NumericRootTask) -> anyhow::Error {
 
 /// The abstract operators of [`identity_function`].
 fn identity_operators(
-    task: &NumericRootTask,
+    task: &Task,
     partitions: NumericPartitions,
     combine_labels: bool,
 ) -> Result<Vec<AbstractOperator>> {
@@ -100,7 +97,7 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -175,7 +172,7 @@ fn numeric_partition_transitions_and_comparison_filtering() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -254,7 +251,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -316,7 +313,7 @@ fn affected_numeric_var_keeps_its_partition_in_an_identity_transition() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -356,7 +353,7 @@ fn affected_numeric_var_keeps_its_partition_in_an_identity_transition() {
 
 #[test]
 fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![global_constraint_variable()],
         numeric_variables: vec![
@@ -453,7 +450,7 @@ fn multiply_out_unconditional_propositional_effects() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -510,7 +507,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables,
         numeric_variables,
@@ -583,7 +580,7 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -671,7 +668,7 @@ fn additive_view_filters_false_equality_precondition() {
         NumericVariable::new("zero".into(), NumericType::Constant, None),
         NumericVariable::new("target".into(), NumericType::Regular, None),
     ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -741,7 +738,7 @@ fn additive_view_filters_false_equality_precondition() {
 #[test]
 #[should_panic(expected = "derived variable has an arithmetic definition")]
 fn task_rejects_a_missing_arithmetic_definition() {
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![global_constraint_variable()],
         numeric_variables: vec![
@@ -805,7 +802,7 @@ fn duplicate_assignment_effects_are_rejected() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -882,7 +879,7 @@ fn conditional_propositional_effect_branches() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -949,7 +946,7 @@ fn conditional_assignment_effect_branches() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -991,7 +988,7 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         OperatorCost::new(1),
     );
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,

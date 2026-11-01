@@ -31,7 +31,7 @@
 
 use std::path::{Path, PathBuf};
 
-use planforge_sas::numeric_task::{AbstractNumericTask, FactNamespace, NumericRootTask};
+use planforge_sas::numeric_task::{FactNamespace, Task};
 
 use crate::corpus::{
     Scratch, assert_fixture_set_is_pinned, assets, problem_file_names, subdirectory_names,
@@ -166,7 +166,7 @@ const STRIPS: &[Row] = &[
 /// The namespace is what separates a condition variable from an axiom-derived one:
 /// both have an axiom layer, and telling them apart by walking the comparison
 /// axioms is what [`FactNamespace`] exists to spare every caller.
-fn census(task: &NumericRootTask, what: &str) -> Census {
+fn census(task: &Task, what: &str) -> Census {
     let mut census = Census::default();
     for fact in task.goals() {
         match fact.namespace() {

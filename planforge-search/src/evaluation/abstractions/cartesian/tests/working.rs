@@ -1,10 +1,11 @@
 use super::*;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use planforge_sas::numeric_task::Task;
 
 #[test]
 fn unchanged_transition_source_sets_share_state_dimensions() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -60,7 +61,7 @@ fn unchanged_transition_source_sets_share_state_dimensions() {
 
 #[test]
 fn finalized_abstractions_omit_zero_contribution_self_loops() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -112,7 +113,7 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
 
 #[test]
 fn standalone_finalization_reuses_exact_distances_without_materializing_transitions() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,

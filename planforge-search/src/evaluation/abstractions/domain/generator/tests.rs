@@ -18,11 +18,11 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, OperatorIndex, VariableIndex,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    OperatorIndex, Task, TaskParts, VariableIndex,
 };
 
-fn one_dimensional_sailing_like_task() -> NumericRootTask {
+fn one_dimensional_sailing_like_task() -> Task {
     let variables = vec![
         ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,
@@ -70,7 +70,7 @@ fn one_dimensional_sailing_like_task() -> NumericRootTask {
         OperatorCost::new(1),
     );
 
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -130,7 +130,7 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
         vec![],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -185,7 +185,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
         None,
         ExplicitValueIndex::new(0),
     )];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -226,7 +226,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
         None,
         ExplicitValueIndex::new(0),
     )];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -265,7 +265,7 @@ fn init_value_split_separates_the_initial_value() {
         None,
         ExplicitValueIndex::new(0),
     )];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -415,8 +415,8 @@ fn backward_splits_build_goal_side_partitions() {
 /// converged abstraction is then exact on the plan, and its h(s0) is the one
 /// its distance table stores.
 /// A counter `x` from `initial` with the goal `x >= 20` and a unit increment.
-fn counter_to_twenty(initial: f64) -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn counter_to_twenty(initial: f64) -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,

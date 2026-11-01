@@ -1,7 +1,8 @@
 //! Base trait for heuristic evaluators.
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
+use planforge_sas::numeric_task::Task;
 
 /// A heuristic: an estimate of the cost of reaching a goal from a state.
 ///
@@ -64,10 +65,10 @@ pub struct BlindHeuristic {
 
 impl BlindHeuristic {
     /// Build the blind estimate from the task's cheapest effective action cost.
-    pub fn for_task(task: &dyn AbstractNumericTask) -> Self {
+    pub fn for_task(task: &Task) -> Self {
         Self {
             name: "blind_heuristic".to_string(),
-            min_action_cost: minimum_action_cost(&task.effective_operator_costs()),
+            min_action_cost: minimum_action_cost(task.effective_operator_costs()),
         }
     }
 }
@@ -112,6 +113,6 @@ impl crate::heuristic_factory::HeuristicFeature for BlindFeature {
         _: &Self::Config,
         context: &crate::heuristic_factory::BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
-        Ok(Box::new(BlindHeuristic::for_task(&**context.task)))
+        Ok(Box::new(BlindHeuristic::for_task(context.task)))
     }
 }

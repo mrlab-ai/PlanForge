@@ -6,28 +6,24 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, OperatorIndex, VariableIndex,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    OperatorIndex, Task, TaskParts, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
 
 use super::{PatternDatabase, PdbBuildConfig, PdbHeuristicConfig, PdbInternalHeuristic};
 use crate::task_transformations::projection::{Pattern, ProjectedTask};
 
-fn build<'task>(
-    task: &'task NumericRootTask,
-    pattern: &Pattern,
-    max_states: usize,
-) -> PatternDatabase<'task> {
+fn build(task: &Task, pattern: &Pattern, max_states: usize) -> PatternDatabase {
     PatternDatabase::new(ProjectedTask::new(task, pattern).unwrap(), max_states).unwrap()
 }
 
-fn build_with<'task>(
-    task: &'task NumericRootTask,
+fn build_with(
+    task: &Task,
     pattern: &Pattern,
     max_states: usize,
     heuristics: PdbHeuristicConfig,
-) -> PatternDatabase<'task> {
+) -> PatternDatabase {
     PatternDatabase::build(
         ProjectedTask::new(task, pattern).unwrap(),
         PdbBuildConfig {
@@ -39,15 +35,15 @@ fn build_with<'task>(
     .unwrap()
 }
 
-fn initial_state(task: &NumericRootTask) -> ExplicitState {
-    let mut registry = StateRegistry::for_task(Arc::new(task));
+fn initial_state(task: &Task) -> ExplicitState {
+    let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
     let initial = registry.get_initial_state();
     let mut values = ExplicitState::default();
     registry.view(&initial).fill_explicit(&mut values).unwrap();
     values
 }
 
-fn value(pdb: &PatternDatabase<'_>, state: &ExplicitState) -> f64 {
+fn value(pdb: &PatternDatabase, state: &ExplicitState) -> f64 {
     pdb.value(StateValues::new(&state.propositional, &state.numeric))
 }
 
@@ -98,8 +94,8 @@ fn condition_var(name: &str, axiom_layer: usize) -> ExplicitVariable {
     )
 }
 
-fn comparison_guarded_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn comparison_guarded_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![condition_var("cmp", 0), simple_var("goal", None)],
         numeric_variables: vec![
@@ -134,8 +130,8 @@ fn comparison_guarded_task() -> NumericRootTask {
     })
 }
 
-fn truncated_chain_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn truncated_chain_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             3,
@@ -182,8 +178,8 @@ fn truncated_chain_task() -> NumericRootTask {
     })
 }
 
-fn relevance_precision_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn relevance_precision_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("p", None)],
         numeric_variables: vec![],
@@ -224,8 +220,8 @@ fn relevance_precision_task() -> NumericRootTask {
     })
 }
 
-fn cost_only_hidden_numeric_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn cost_only_hidden_numeric_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables: vec![simple_var("p", None)],
         numeric_variables: vec![
@@ -276,8 +272,8 @@ fn cost_only_hidden_numeric_task() -> NumericRootTask {
     })
 }
 
-fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn zero_metric_cost_hidden_numeric_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables: vec![simple_var("p", None)],
         numeric_variables: vec![
@@ -313,8 +309,8 @@ fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
     })
 }
 
-fn failed_lookup_chain_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn failed_lookup_chain_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             5,
@@ -393,8 +389,8 @@ fn failed_lookup_chain_task() -> NumericRootTask {
 
 /// `inc` raises `x` by one at cost 2 while `p` is 0, and `trap` sets `p` to
 /// 1 at cost 1; the goal is `x >= 5`.
-fn counter_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn counter_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![condition_var("x>=5", 0), simple_var("p", None)],
         numeric_variables: vec![

@@ -1,8 +1,8 @@
 use crate::axioms::{ComparisonAxiom, ComparisonOperator};
 use crate::numeric_conditions::ConditionValue;
 use crate::numeric_task::{
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    Task, TaskParts,
 };
 
 use super::*;
@@ -116,13 +116,13 @@ impl TaskBuilder {
         self
     }
 
-    fn build(self) -> NumericRootTask {
+    fn build(self) -> Task {
         let state = self
             .variables
             .iter()
             .map(|variable| ExplicitValueIndex::new(variable.domain_size() as u32 - 1))
             .collect();
-        NumericRootTask::new(NumericRootTaskParts {
+        Task::new(TaskParts {
             metric: Metric::new(true, None),
             variables: self.variables,
             numeric_variables: self.numeric_variables,
@@ -143,7 +143,7 @@ impl TaskBuilder {
 type Rule = (VariableIndex, ExplicitValueIndex, Vec<(usize, usize)>);
 
 /// The produced rules, in the order [`default_value_axioms`] returns them.
-fn rules(task: &NumericRootTask, mode: DefaultValueAxiomMode) -> Vec<Rule> {
+fn rules(task: &Task, mode: DefaultValueAxiomMode) -> Vec<Rule> {
     default_value_axioms(task, mode)
         .iter()
         .map(|axiom| {

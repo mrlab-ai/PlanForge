@@ -1,5 +1,6 @@
 use super::*;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::utils::value_lattice::ValueLattice;
 
 #[test]
@@ -68,7 +69,7 @@ fn whole_plan_candidates_deduplicate_identical_refinements() {
 
 #[test]
 fn min_growth_uses_projected_transition_count() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -148,7 +149,7 @@ fn min_growth_uses_projected_transition_count() {
 
 #[test]
 fn native_random_selector_is_seeded() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             ExplicitVariable::new(

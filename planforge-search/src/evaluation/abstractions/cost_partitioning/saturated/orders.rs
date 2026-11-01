@@ -27,14 +27,14 @@ pub(super) struct CandidateCostPartitions {
     pub(super) best_index: usize,
 }
 
-impl<'task> ScpBuilder<'task> {
+impl ScpBuilder {
     /// The order SCP starts from at the evaluated state: the greedy order, or
     /// for region SCP over a goal-focused collection, its goal-cover order.
     pub(super) fn compute_order_for_state(
         &self,
         state: &mut OrderSelection,
         abstract_state_ids: &[Option<usize>],
-        components: &[AbstractionComponent<'_>],
+        components: &[AbstractionComponent],
     ) -> Vec<usize> {
         let order = Self::compute_greedy_order_for_state(state, abstract_state_ids);
         if self.config.partitioning.uses_regions()
@@ -107,7 +107,7 @@ impl<'task> ScpBuilder<'task> {
     /// the goal their goal-cover order puts first.
     pub(super) fn build_best_cp_from_candidate_orders(
         &self,
-        collection: PartitionedCollection<'_, '_>,
+        collection: PartitionedCollection<'_>,
         incumbent_order: &mut Vec<usize>,
         budget: Deadline,
         optimization_max_time: Option<Duration>,
@@ -182,7 +182,7 @@ impl<'task> ScpBuilder<'task> {
     pub(super) fn candidate_region_orders(
         &self,
         base_order: &[usize],
-        components: &[AbstractionComponent<'_>],
+        components: &[AbstractionComponent],
         abstraction_h: &[f64],
     ) -> Vec<(Option<usize>, Vec<usize>)> {
         let mut orders = Vec::new();
@@ -242,7 +242,7 @@ impl<'task> ScpBuilder<'task> {
 /// The iteration that built component `component_id` of its collection;
 /// components outside a collection come last.
 pub(super) fn abstraction_collection_iteration(
-    components: &[AbstractionComponent<'_>],
+    components: &[AbstractionComponent],
     component_id: usize,
 ) -> usize {
     components[component_id]

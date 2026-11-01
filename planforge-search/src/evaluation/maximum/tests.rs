@@ -77,7 +77,7 @@ fn maximum_combines_estimates_preferences_and_independent_revisions() {
     let task = one_step_task();
     let mut registry = StateRegistry::for_task(task.clone());
     let state = registry.get_initial_state();
-    let eval = EvaluationState::new(&state, &*task, &registry);
+    let eval = EvaluationState::new(&state, &task, &registry);
     assert_eq!(maximum.evaluate(&eval).unwrap(), 5.0);
     let mut preferred = Vec::new();
     assert_eq!(
@@ -107,7 +107,7 @@ fn maximum_propagates_child_errors_and_rejects_nan() {
     let task = one_step_task();
     let mut registry = StateRegistry::for_task(task.clone());
     let state = registry.get_initial_state();
-    let eval = EvaluationState::new(&state, &*task, &registry);
+    let eval = EvaluationState::new(&state, &task, &registry);
     let error = EvaluationError::ComputationFailed("failure".into());
     let mut maximum = MaximumHeuristic::new("max".into(), vec![child(Err(error.clone()))]);
     assert_eq!(maximum.evaluate(&eval), Err(error));
@@ -124,7 +124,7 @@ fn maximum_of_a_dead_end_is_a_dead_end() {
     let task = one_step_task();
     let mut registry = StateRegistry::for_task(task.clone());
     let state = registry.get_initial_state();
-    let eval = EvaluationState::new(&state, &*task, &registry);
+    let eval = EvaluationState::new(&state, &task, &registry);
     let mut maximum =
         MaximumHeuristic::new("max".into(), vec![child(Ok(3.0)), child(Ok(f64::INFINITY))]);
     assert_eq!(maximum.evaluate(&eval), Ok(f64::INFINITY));
@@ -136,7 +136,7 @@ fn configured_maximum_builds_arbitrary_and_mixed_children() {
     let context = BuildContext::new(&task);
     let mut registry = StateRegistry::for_task(task.clone());
     let state = registry.get_initial_state();
-    let eval = EvaluationState::new(&state, &*task, &registry);
+    let eval = EvaluationState::new(&state, &task, &registry);
     for text in [
         "astar(max(ff()))",
         "astar(max([blind(), ff(), lmcutnumeric()]))",

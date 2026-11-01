@@ -1,8 +1,9 @@
+use planforge_sas::numeric_task::Task;
 use std::time::Instant;
 
 use anyhow::Result;
 use planforge_sas::explicit_state::{ExplicitState, StateValues};
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 
 use super::abstraction::CartesianAbstraction;
 use super::config::CartesianAbstractionConfig;
@@ -45,7 +46,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
 
     fn generate_from_root(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         refinement_root: Option<&ExplicitState>,
         scope: &RefinementScope,
     ) -> Result<CartesianAbstraction> {

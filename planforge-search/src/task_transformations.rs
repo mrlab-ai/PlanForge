@@ -7,8 +7,11 @@
 //!   abstractions require.
 //! - [`projection`]: the task projected to a pattern of variables, primarily
 //!   the abstract task of a pattern database.
-//! - `single_goal`: the task with one of its goal facts as the whole goal,
-//!   which goal-focused abstraction collections refine for.
+//!
+//! A task with another goal, which goal-focused abstraction collections
+//! refine for, needs no transformation: [`Task::with_goals`] shares
+//! everything else.
+//!
+//! [`Task::with_goals`]: planforge_sas::numeric_task::Task::with_goals
 pub mod projection;
 pub mod restriction;
-pub(crate) mod single_goal;

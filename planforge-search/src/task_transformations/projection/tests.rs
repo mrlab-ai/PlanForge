@@ -5,8 +5,8 @@ use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
-    Operator, OperatorCost, VariableIndex,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost, Task, TaskParts,
+    VariableIndex,
 };
 
 use super::*;
@@ -21,8 +21,8 @@ fn variable(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
     )
 }
 
-fn restricted_sample_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn restricted_sample_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             variable("p", None),
@@ -112,8 +112,8 @@ fn borrowed_task_extension_methods_preserve_projected_overrides() {
         },
     )
     .unwrap();
-    let task_object: &dyn AbstractNumericTask = &**projected.task();
-    let forwarded: &dyn AbstractNumericTask = &task_object;
+    let task_object: &Task = projected.task();
+    let forwarded: &Task = task_object;
 
     assert_eq!(
         forwarded.evaluate_initial_state_values().unwrap(),
@@ -141,7 +141,7 @@ fn projection_rejects_an_unrestricted_task() {
         .iter()
         .map(|variable| variable.with_axiom_layer(variable.axiom_layer().map(|layer| layer + 1)))
         .collect();
-    let unrestricted = NumericRootTask::new(NumericRootTaskParts {
+    let unrestricted = Task::new(TaskParts {
         metric: task.metric().clone(),
         variables,
         numeric_variables,
@@ -185,7 +185,7 @@ fn projection_rejects_an_unrestricted_task() {
 
 #[test]
 fn projection_rejects_derived_pattern_variables() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![variable("p", None)],
         numeric_variables: vec![
@@ -231,7 +231,7 @@ fn projection_rejects_derived_pattern_variables() {
 
 #[test]
 fn projection_closes_over_numeric_effect_sources() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![variable("p", None)],
         numeric_variables: vec![
@@ -278,7 +278,7 @@ fn projection_closes_over_numeric_effect_sources() {
 
 #[test]
 fn projection_computes_transitive_numeric_effect_source_closure() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![variable("p", None)],
         numeric_variables: vec![
@@ -347,7 +347,7 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
 
 #[test]
 fn projection_closes_over_selected_comparison_operands() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,
@@ -402,8 +402,8 @@ fn projection_closes_over_selected_comparison_operands() {
 /// The goal is the comparison itself, which is what a numeric goal compiles to
 /// and what an abstraction accepts; the derived atoms above it are read by the
 /// axiom closure, not by the goal.
-fn task_reading_a_failed_comparison() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn task_reading_a_failed_comparison() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             variable("global-constraint", None),
@@ -523,7 +523,7 @@ fn a_failed_comparison_verdict_reaches_the_horn_rules_once() {
 
 #[test]
 fn projected_axioms_drop_omitted_conditions_admissibly() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             variable("condition", None),
@@ -601,8 +601,8 @@ fn source_state_projection_is_a_direct_index_mapping() {
 }
 
 /// `inc-x` raises `x`, and `use` needs `x >= limit` to reach the goal `p`.
-fn comparison_precondition_task() -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+fn comparison_precondition_task() -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![
             variable("p", None),

@@ -1,18 +1,19 @@
 //! The concrete operators domain and Cartesian abstractions support.
 
 use anyhow::{Context, Result, ensure};
+use planforge_sas::numeric_task::Task;
 
 use crate::ensure_supported;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, NumericType, Operator, OperatorIndex, ZERO_VALUE,
+    AssignmentOperation, NumericType, Operator, OperatorIndex, ZERO_VALUE,
 };
 
 /// Validates the concrete-operator fragment shared by domain and Cartesian
 /// abstractions. Unsupported task input is rejected before either backend
 /// constructs transitions.
 pub(crate) fn validate_abstraction_operator(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     operator: &Operator,
     operator_id: OperatorIndex,
 ) -> Result<()> {

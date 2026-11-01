@@ -23,7 +23,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::NumericRootTask;
+use planforge_sas::numeric_task::Task;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 use planforge_translate::{translate_to_sas_to_path_fast, translate_to_task};
@@ -77,18 +77,18 @@ impl Drop for Scratch {
 ///
 /// The returned [`Scratch`] owns the temporary files and must stay alive for as
 /// long as the caller wants them.
-pub fn translate_to_disk(domain: &Path, problem: &Path, scratch: &Scratch) -> NumericRootTask {
+pub fn translate_to_disk(domain: &Path, problem: &Path, scratch: &Scratch) -> Task {
     let output = scratch.path().join("output.sas");
 
     translate_to_sas_to_path_fast(path_str(domain), path_str(problem), &output)
         .unwrap_or_else(|e| panic!("translate failed for {problem:?}: {e}"));
 
-    NumericRootTask::from_file(&output)
+    Task::from_file(&output)
 }
 
 /// Translates entirely in memory, the way the `planforge` binary does for a
 /// two-argument PDDL invocation. Keeps multi-valued variables.
-pub fn translate_in_memory(domain: &Path, problem: &Path) -> NumericRootTask {
+pub fn translate_in_memory(domain: &Path, problem: &Path) -> Task {
     assert!(domain.is_file(), "missing fixture {domain:?}");
     assert!(problem.is_file(), "missing fixture {problem:?}");
 
@@ -142,9 +142,9 @@ impl SearchRun {
 
 /// Runs blind A*, which is optimal, so the returned cost is the true optimum.
 /// `None` means the search terminated without a plan.
-pub fn blind_astar_run(task: &NumericRootTask) -> Option<SearchRun> {
+pub fn blind_astar_run(task: &Task) -> Option<SearchRun> {
     let result = AStarSearch::new(
-        Arc::new(task),
+        Arc::new(task.clone()),
         SearchParams::new(Box::new(BlindHeuristic::for_task(task))),
     )
     .run()
@@ -163,12 +163,12 @@ pub fn blind_astar_run(task: &NumericRootTask) -> Option<SearchRun> {
 
 /// Cost and length of the plan blind A* finds, for the tests that pin an optimum
 /// rather than a whole run.
-pub fn blind_astar(task: &NumericRootTask) -> Option<Solution> {
+pub fn blind_astar(task: &Task) -> Option<Solution> {
     blind_astar_run(task).map(|run| run.solution())
 }
 
 /// Blind A* that insists on a plan, for fixtures whose solvability is pinned.
-pub fn blind_astar_cost(task: &NumericRootTask, what: &str) -> f64 {
+pub fn blind_astar_cost(task: &Task, what: &str) -> f64 {
     blind_astar(task)
         .unwrap_or_else(|| panic!("blind A* returned no plan for {what}"))
         .cost

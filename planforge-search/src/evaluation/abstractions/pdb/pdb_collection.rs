@@ -6,14 +6,14 @@ use super::pattern_database::{PatternDatabase, PdbBuildConfig};
 use super::utils;
 use crate::task_transformations::projection::ProjectedTask;
 use crate::task_transformations::restriction::validate_restricted_task;
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::Task;
 
 /// The pattern database of every pattern in `patterns`, in order.
-pub fn build_pattern_databases<'task>(
-    task: &'task dyn AbstractNumericTask,
+pub fn build_pattern_databases(
+    task: &Task,
     patterns: &PatternCollection,
     config: PdbBuildConfig,
-) -> Result<Vec<PatternDatabase<'task>>, String> {
+) -> Result<Vec<PatternDatabase>, String> {
     validate_restricted_task(task)?;
     patterns
         .iter()

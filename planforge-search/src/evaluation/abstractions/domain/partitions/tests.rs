@@ -6,7 +6,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     ExplicitFact, ExplicitValueIndex, ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE,
-    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, ZERO_VALUE,
+    NumericType, NumericVariable, Task, TaskParts, ZERO_VALUE,
 };
 
 /// The propositional variable a comparison axiom writes: true or false,
@@ -37,7 +37,7 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
         ComparisonOperator::LessThan,
     )];
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![condition_variable("x0 < c1", 0)],
         numeric_variables,
@@ -87,7 +87,7 @@ fn reachable_partitions_overlaps_result_interval() {
         Interval::new(NumericValue::new(9.0), INF_VALUE, true, false),
     ]];
 
-    let dummy_task = NumericRootTask::new(NumericRootTaskParts {
+    let dummy_task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -196,7 +196,7 @@ fn trivial_partitions_use_singletons_for_constants() {
         NumericVariable::new("c7".into(), NumericType::Constant, None),
     ];
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -237,7 +237,7 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
         None,
     )];
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -290,7 +290,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         ComparisonOperator::Equal,
     )];
 
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![condition_variable("d2 == x0", 1)],
         numeric_variables,

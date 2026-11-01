@@ -1,6 +1,7 @@
+use planforge_sas::numeric_task::Task;
+use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric_task::TaskRef;
 use tracing::info;
 
 use super::{AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchParams, SearchResult};
@@ -8,7 +9,7 @@ use crate::heuristic_factory::{BuildContext, HeuristicBuildError};
 
 /// Searches `task` as `spec` configures it, within the limits.
 pub fn solve_task(
-    task: TaskRef<'_>,
+    task: Arc<Task>,
     spec: &SearchConfig,
     time_limit: Option<Duration>,
     memory_limit: Option<u64>,

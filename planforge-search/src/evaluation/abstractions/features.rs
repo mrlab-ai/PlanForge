@@ -3,9 +3,8 @@
 //! maximum over its abstractions. The combinations of sources register next
 //! to their heuristics in [`super::cost_partitioning`].
 
+use planforge_sas::numeric_task::Task;
 use std::marker::PhantomData;
-
-use planforge_sas::numeric_task::AbstractNumericTask;
 
 use super::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionConfig, CartesianAbstractionGenerator,
@@ -103,7 +102,7 @@ where
         let mut config = config.clone();
         config.cegar_mut().keep_transitions = false;
         let abstraction = G::new(config)
-            .and_then(|generator| generator.generate(&**context.task))
+            .and_then(|generator| generator.generate(context.task))
             .map_err(|error| {
                 HeuristicBuildError::from_source(error, format!("failed to build {}", G::KIND))
             })?;
@@ -137,13 +136,13 @@ impl<C: SourceConfig> HeuristicFeature for SourceFeature<C> {
         config: &C,
         context: &BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        max_over_sources(&**context.task, &[config.source()], &context.name)
+        max_over_sources(context.task, &[config.source()], &context.name)
     }
 }
 
 /// The maximum over the abstractions of `sources`.
 pub(crate) fn max_over_sources<'task>(
-    task: &'task dyn AbstractNumericTask,
+    task: &'task Task,
     sources: &[AbstractionSource],
     name: &str,
 ) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {

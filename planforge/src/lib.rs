@@ -28,7 +28,7 @@ use limits::{
     apply_process_limits, format_time_limit, normalize_wrapped_exit, parse_memory_limit,
     parse_time_limit,
 };
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
+use planforge_sas::numeric_task::Task;
 use planforge_search::heuristic_factory::{HeuristicEntry, register_external_heuristics};
 use planforge_search::search::{SearchConfig, SearchResult, solve_task};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
@@ -314,7 +314,7 @@ pub fn install_process_hooks(memory_limit: Option<u64>) -> std::io::Result<()> {
 fn load_enumeration_task(
     arguments: &EnumerateCli,
     grounding_limits: planforge_translate::GroundingLimits,
-) -> std::io::Result<NumericRootTask> {
+) -> std::io::Result<Task> {
     let mut task = if arguments.inputs.len() == 2 {
         planforge_translate::translate_to_task_with_limits(
             &arguments.inputs[0],
@@ -323,7 +323,7 @@ fn load_enumeration_task(
         )
         .map_err(translation_error)?
     } else {
-        NumericRootTask::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
+        Task::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
     };
     if arguments.restrict_task
         && let Some(restricted) = build_restricted_task(&task)
@@ -433,7 +433,7 @@ fn run_enumeration(
     arguments: &EnumerateCli,
     grounding_limits: planforge_translate::GroundingLimits,
 ) -> std::io::Result<()> {
-    let task: TaskRef<'static> = Arc::new(load_enumeration_task(arguments, grounding_limits)?);
+    let task: Arc<Task> = Arc::new(load_enumeration_task(arguments, grounding_limits)?);
     let start = std::time::Instant::now();
     let graph = enumerate_state_space(
         task,
@@ -486,7 +486,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         )
     } else {
         let path = cli.inputs[0].clone();
-        let task = NumericRootTask::try_from_file(&path).map_err(std::io::Error::other)?;
+        let task = Task::try_from_file(&path).map_err(std::io::Error::other)?;
         (task, path)
     };
     if cli.restrict_task {
@@ -512,7 +512,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             );
         }
     }
-    let task: TaskRef<'static> = Arc::new(task);
+    let task: Arc<Task> = Arc::new(task);
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 

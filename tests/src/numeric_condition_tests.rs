@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use planforge_sas::axioms::ComparisonOperator;
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
+use planforge_sas::numeric_task::Task;
 
 use crate::corpus::{
     self, Solution, assert_fixture_set_is_pinned, blind_astar, subdirectory_names,
@@ -32,7 +32,7 @@ fn fixtures_root() -> PathBuf {
     corpus::assets().join("numeric-conditions")
 }
 
-fn fixture_task(name: &str) -> NumericRootTask {
+fn fixture_task(name: &str) -> Task {
     let dir = fixtures_root().join(name);
     translate_in_memory(&dir.join("domain.pddl"), &dir.join("problem.pddl"))
 }

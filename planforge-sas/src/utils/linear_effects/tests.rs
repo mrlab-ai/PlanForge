@@ -1,8 +1,8 @@
 use super::*;
 use crate::axioms::{AssignmentAxiom, ComparisonAxiom};
 use crate::numeric_task::{
-    AssignmentEffect, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericVariable, Operator, OperatorCost,
+    AssignmentEffect, ExplicitValueIndex, ExplicitVariable, Metric, NumericVariable, Operator,
+    OperatorCost, Task, TaskParts,
 };
 
 fn simple_var(name: &str, values: &[&str], axiom_layer: Option<usize>) -> ExplicitVariable {
@@ -20,8 +20,8 @@ fn base_task(
     operators: Vec<Operator>,
     assignment_axioms: Vec<AssignmentAxiom>,
     numeric_state: Vec<NumericValue>,
-) -> NumericRootTask {
-    NumericRootTask::new(NumericRootTaskParts {
+) -> Task {
+    Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables: vec![simple_var("p", &["f", "t"], None)],
         numeric_variables,
@@ -59,8 +59,8 @@ fn linearizes_derived_sum_expression() {
         ],
     );
 
-    let expression =
-        linearize_numeric_var(&task, VariableIndex::new(2)).expect("derived sum should be linear");
+    let expression = linearize_numeric_var(task.data(), VariableIndex::new(2))
+        .expect("derived sum should be linear");
 
     assert_eq!(expression.coefficients, vec![1.0, 1.0, 0.0]);
     assert_eq!(expression.constant, 0.0);
@@ -103,7 +103,7 @@ fn linearizes_operator_assignment_effect_through_derived_var() {
         ],
     );
 
-    let effects = linearize_operator_assignment_effects(&task, OperatorIndex::new(0))
+    let effects = linearize_operator_assignment_effects(task.data(), OperatorIndex::new(0))
         .expect("operator effect through derived sum should be linear");
 
     assert_eq!(effects.len(), 1);
@@ -134,7 +134,7 @@ fn rejects_non_linear_product_of_two_variables() {
         ],
     );
 
-    let error = linearize_numeric_var(&task, VariableIndex::new(2))
+    let error = linearize_numeric_var(task.data(), VariableIndex::new(2))
         .expect_err("product of two variables should not linearize");
 
     assert!(matches!(
@@ -161,7 +161,7 @@ fn rejects_short_initial_numeric_value_table() {
     let mut visiting = vec![false];
 
     let error = linearize_numeric_var_with_lookup(
-        &task,
+        task.data(),
         VariableIndex::new(0),
         &[None],
         &[],

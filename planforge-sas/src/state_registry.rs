@@ -22,7 +22,7 @@ mod tests;
 use crate::axioms::AxiomEvaluator;
 use crate::explicit_state::ExplicitState;
 use crate::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, NumericValue, Operator, TaskRef, VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, NumericValue, Operator, Task, VariableIndex,
 };
 use crate::utils::errors::{AssignmentAxiomError, StateInsertError, StateNotFoundError};
 use crate::utils::segmented_vector::SegmentedArrayVector;
@@ -171,7 +171,7 @@ enum ConcreteStateViewBacking<'a> {
         cost_numeric_indices: &'a [(usize, usize)],
         compact_numeric_values: &'a CompactNumericValues,
         cost_info: &'a DenseCostInformation,
-        axiom_evaluator: &'a AxiomEvaluator<'a>,
+        axiom_evaluator: &'a AxiomEvaluator,
     },
 }
 
@@ -455,11 +455,11 @@ enum NumericSlot {
 /// - Deduplicating identical states to save memory.
 /// - Evaluating axioms when states change.
 /// - Managing numeric variables and cost information.
-pub struct StateRegistry<'a> {
+pub struct StateRegistry {
     /// Unique identifier for this registry instance.
     id: usize,
     /// Shared handle to the planning task.
-    task: TaskRef<'a>,
+    task: Arc<Task>,
     /// Pool of state data, each entry is a packed state representation.
     state_data_pool: DataStorage,
     /// Scratch space successors are built in before they are registered.
@@ -476,7 +476,7 @@ pub struct StateRegistry<'a> {
     /// numeric values are represented by checked 32-bit IDs in the packer.
     compact_numeric_values: CompactNumericValues,
     /// What the registry fixed at construction.
-    layout: StateLayout<'a>,
+    layout: StateLayout,
 }
 
 #[derive(Debug, Default)]
@@ -508,11 +508,8 @@ impl CompactNumericValues {
     }
 }
 
-impl<'a> StateRegistry<'a> {
-    pub fn view<'s>(&'s self, state: &'s ConcreteState) -> ConcreteStateView<'s>
-    where
-        'a: 's,
-    {
+impl StateRegistry {
+    pub fn view<'s>(&'s self, state: &'s ConcreteState) -> ConcreteStateView<'s> {
         ConcreteStateView {
             packer: &self.layout.global_state_packer,
             prop: self.get_buffer(state.get_id()),
@@ -531,20 +528,20 @@ impl<'a> StateRegistry<'a> {
     /// Build the state packer, axiom evaluator, and registry for `task` in
     /// one step. This is the common construction path; use `Self::new`
     /// when a custom packer or axiom evaluator is needed.
-    pub fn for_task(task: TaskRef<'a>) -> Self {
+    pub fn for_task(task: Arc<Task>) -> Self {
         let packer = Arc::new(StatePacker::from_abstract_task_with_numeric_range(
-            &*task,
+            &task,
             u32::MAX as u64,
         ));
-        let axiom_evaluator = Arc::new(AxiomEvaluator::new(task.clone(), packer.clone()));
+        let axiom_evaluator = Arc::new(AxiomEvaluator::new(&task, packer.clone()));
         Self::new(task, packer, axiom_evaluator)
     }
 
     /// Create a new state registry for the given planning task.
     fn new(
-        task: TaskRef<'a>,
+        task: Arc<Task>,
         global_state_packer: Arc<StatePacker>,
-        axiom_evaluator: Arc<AxiomEvaluator<'a>>,
+        axiom_evaluator: Arc<AxiomEvaluator>,
     ) -> Self {
         let numeric_vars = task.numeric_variables();
         let number_numeric_vars = numeric_vars.len();
@@ -1316,9 +1313,9 @@ impl<'a> StateRegistry<'a> {
 
 /// What a registry fixes at construction: the packer, where each numeric
 /// variable lives, the metric, and the axioms closing a state.
-struct StateLayout<'a> {
+struct StateLayout {
     /// Axiom evaluator for handling derived predicates and numeric axioms.
-    axiom_evaluator: Arc<AxiomEvaluator<'a>>,
+    axiom_evaluator: Arc<AxiomEvaluator>,
     /// State packer for efficient bit-level state representation.
     global_state_packer: Arc<StatePacker>,
     /// Where each numeric variable's value lives, fixed at construction.
@@ -1359,7 +1356,7 @@ struct StateLayout<'a> {
     has_axiom_derived_bits: bool,
 }
 
-impl<'a> StateLayout<'a> {
+impl StateLayout {
     /// Packs the regular numeric values into `buffer` and returns the cost
     /// values.
     fn process_numeric_variables(

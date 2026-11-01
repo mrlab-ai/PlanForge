@@ -2,8 +2,7 @@ use super::*;
 
 use crate::numeric_conditions::ConditionValue;
 use crate::numeric_task::{
-    AbstractNumericTask, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-    NumericType, NumericVariable,
+    ExplicitVariable, Metric, NumericType, NumericVariable, Task, TaskParts,
 };
 use crate::tests::*;
 
@@ -32,8 +31,8 @@ fn assignment_axiom_reports_division_by_zero_distinctly() {
 }
 
 /// A task whose condition "left + right > zero" reads the derived sum.
-fn sum_condition_task_parts() -> NumericRootTaskParts {
-    NumericRootTaskParts {
+fn sum_condition_task_parts() -> TaskParts {
+    TaskParts {
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,
@@ -88,7 +87,7 @@ fn task_rejects_an_assignment_axiom_operand_out_of_range() {
         VariableIndex::new(0),
         VariableIndex::new(7),
     );
-    NumericRootTask::new(parts);
+    Task::new(parts);
 }
 
 #[test]
@@ -96,17 +95,17 @@ fn task_rejects_an_assignment_axiom_operand_out_of_range() {
 fn task_rejects_a_comparison_axiom_operand_out_of_range() {
     let mut parts = sum_condition_task_parts();
     parts.comparison_axioms[0].right_hand_side = VariableIndex::new(7);
-    NumericRootTask::new(parts);
+    Task::new(parts);
 }
 
 #[test]
 fn complete_evaluation_runs_arithmetic_before_comparisons() {
-    let problem = std::sync::Arc::new(NumericRootTask::new(sum_condition_task_parts()));
+    let problem = std::sync::Arc::new(Task::new(sum_condition_task_parts()));
     let state_packer = std::sync::Arc::new(StatePacker::new(&[ConditionValue::DOMAIN_SIZE as u64]));
     let result_var = problem.comparison_axioms()[0].get_left_var_id();
     let mut numeric_state = problem.initial_numeric_values().to_vec();
     numeric_state[result_var.index()] = ZERO_VALUE;
-    let axiom_evaluator = AxiomEvaluator::new(problem, state_packer.clone());
+    let axiom_evaluator = AxiomEvaluator::new(&problem, state_packer.clone());
     let mut buffer = vec![0; state_packer.num_bins()];
     state_packer.set(&mut buffer, 0, ConditionValue::False.as_usize() as u64);
 
@@ -133,7 +132,7 @@ fn test_axiom_evaluator_creation() {
     }
 
     let state_packer = std::sync::Arc::new(StatePacker::new(&domain_sizes));
-    let axiom_evaluator = AxiomEvaluator::new(problem.clone(), state_packer);
+    let axiom_evaluator = AxiomEvaluator::new(&problem, state_packer);
 
     // The task's initial state is already closed under its axioms: var0 is
     // derived by the unconditional propositional axiom, var1 keeps its value
@@ -176,7 +175,7 @@ fn test_example1_axiom_evaluation() {
     }
 
     let state_packer = std::sync::Arc::new(StatePacker::new(&domain_sizes));
-    let axiom_evaluator = AxiomEvaluator::new(problem.clone(), state_packer);
+    let axiom_evaluator = AxiomEvaluator::new(&problem, state_packer);
 
     // Verify axiom structure is set up correctly.
     assert!(

@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef, VariableIndex};
+use planforge_sas::numeric_task::{Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::config::parse_call;
 use planforge_search::evaluation::abstractions::cartesian::{
@@ -149,7 +149,7 @@ fn fixtures_root() -> PathBuf {
 
 /// Translates the way the `planforge` binary does for a two-argument PDDL
 /// invocation, which keeps genuine multi-valued variables.
-fn fixture_task(name: &str) -> NumericRootTask {
+fn fixture_task(name: &str) -> Task {
     let dir = fixtures_root().join(name);
     translate_in_memory(&dir.join("domain.pddl"), &dir.join("problem.pddl"))
 }
@@ -157,14 +157,14 @@ fn fixture_task(name: &str) -> NumericRootTask {
 /// The heads of the compiled numeric conditions. They carry an axiom layer like
 /// a derived propositional variable but are three-valued and are evaluated by
 /// the comparison pass, so everything below excludes them.
-fn comparison_heads(task: &NumericRootTask) -> BTreeSet<usize> {
+fn comparison_heads(task: &Task) -> BTreeSet<usize> {
     task.comparison_axioms()
         .iter()
         .map(|axiom| axiom.get_affected_var_id().index())
         .collect()
 }
 
-fn derived_propositional_variables(task: &NumericRootTask) -> Vec<usize> {
+fn derived_propositional_variables(task: &Task) -> Vec<usize> {
     let comparisons = comparison_heads(task);
     (0..task.variables().len())
         .filter(|&var| {
@@ -177,7 +177,7 @@ fn derived_propositional_variables(task: &NumericRootTask) -> Vec<usize> {
 }
 
 /// Measures the shape [`FIXTURE_SHAPES`] pins.
-fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
+fn shape_of(name: &str, task: &Task) -> Shape {
     let derived = derived_propositional_variables(task);
     let defaults: BTreeMap<usize, usize> = derived
         .iter()
@@ -328,11 +328,9 @@ fn derived_predicate_fixtures_keep_their_optima_and_shape() {
 fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
     for &(name, cost, length) in FIXTURE_OPTIMA {
         let task = fixture_task(name);
-        let heuristic = LandmarkCutNumericHeuristic::from_config(
-            &task as &dyn AbstractNumericTask,
-            LmCutNumericConfig::default(),
-        )
-        .expect("the default lmcutnumeric config is supported");
+        let heuristic =
+            LandmarkCutNumericHeuristic::from_config(&task as &Task, LmCutNumericConfig::default())
+                .expect("the default lmcutnumeric config is supported");
         let found = astar_solution(&task, Box::new(heuristic), &format!("{name}/lmcutnumeric"));
         let expected = Solution { cost, length };
         assert!(
@@ -346,11 +344,11 @@ fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
 /// Cost and length of the plan A* returns for `task` under `heuristic`, insisting
 /// that it returns one.
 fn astar_solution<'task>(
-    task: &'task NumericRootTask,
+    task: &'task Task,
     heuristic: Box<dyn Heuristic + 'task>,
     what: &str,
 ) -> Solution {
-    let result = AStarSearch::new(Arc::new(task), SearchParams::new(heuristic))
+    let result = AStarSearch::new(Arc::new(task.clone()), SearchParams::new(heuristic))
         .run()
         .unwrap_or_else(|error| panic!("{what}: A* failed: {error}"));
 
@@ -441,7 +439,7 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
         ),
     );
 
-    let task_ref: TaskRef<'_> = Arc::new(&task);
+    let task_ref: Arc<Task> = Arc::new(task.clone());
     let pdb = HeuristicConfig::from_spec(&parse_call("pdb(patterns=greedy())").unwrap())
         .unwrap()
         .build(&BuildContext::new(&task_ref));
@@ -475,7 +473,7 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
 
     let ff = astar_solution(
         &task,
-        Box::new(FfHeuristic::new(&task as &dyn AbstractNumericTask).expect("ff constructs")),
+        Box::new(FfHeuristic::new(&task as &Task).expect("ff constructs")),
         &format!("{name}/ff"),
     );
     assert!(
@@ -486,11 +484,8 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
     let lmcut = astar_solution(
         &task,
         Box::new(
-            LandmarkCutNumericHeuristic::from_config(
-                &task as &dyn AbstractNumericTask,
-                LmCutNumericConfig::default(),
-            )
-            .expect("the default lmcutnumeric config is supported"),
+            LandmarkCutNumericHeuristic::from_config(&task as &Task, LmCutNumericConfig::default())
+                .expect("the default lmcutnumeric config is supported"),
         ),
         &format!("{name}/lmcutnumeric"),
     );
@@ -548,7 +543,7 @@ fn a_derived_closure_grows_when_an_operator_extends_the_graph() {
          global-constraint atom"
     );
 
-    let arc = Arc::new(&task);
+    let arc = Arc::new(task.clone());
     let mut registry = StateRegistry::for_task(arc.clone());
     let build_link = task
         .operators()

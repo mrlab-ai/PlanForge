@@ -12,9 +12,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, NumericRootTask, NumericType, Operator, VariableIndex,
-};
+use planforge_sas::numeric_task::{NumericType, Operator, Task, VariableIndex};
 use planforge_sas::plan_verification::{PlanRejection, ReplayOutcome, replay_plan};
 use planforge_sas::state_registry::StateRegistry;
 
@@ -46,16 +44,16 @@ fn corpus_root() -> PathBuf {
 /// Deliberately *not* the `..._fast` path, which requests singleton fact groups
 /// and would collapse every variable to domain 2. The real pipeline builds
 /// genuine multi-valued variables, and those are what these tests are about.
-fn translated_task(fixture: &str, problem_file: &str) -> NumericRootTask {
+fn translated_task(fixture: &str, problem_file: &str) -> Task {
     let dir = corpus_root().join(fixture);
     translate_in_memory(&dir.join("domain.pddl"), &dir.join(problem_file))
 }
 
-fn blocks_4_0() -> NumericRootTask {
+fn blocks_4_0() -> Task {
     translated_task("blocks-4-0", "probBLOCKS-4-0.pddl")
 }
 
-fn operators_named<'t>(task: &'t NumericRootTask, names: &[&str]) -> Vec<&'t Operator> {
+fn operators_named<'t>(task: &'t Task, names: &[&str]) -> Vec<&'t Operator> {
     names
         .iter()
         .map(|name| {
@@ -117,7 +115,7 @@ fn optimal_blocks_plan_verifies_with_the_expected_cost() {
     let mut registry = StateRegistry::for_task(arc.clone());
     let operators = operators_named(&arc, &BLOCKS_4_0_PLAN);
 
-    let replay = replay_plan(&*arc, &mut registry, arc.global_constraint(), &operators)
+    let replay = replay_plan(&arc, &mut registry, arc.global_constraint(), &operators)
         .expect("replay machinery failed");
 
     match replay.outcome {
@@ -144,7 +142,7 @@ fn plan_padded_past_the_goal_still_verifies_at_the_goal_prefix() {
     names.push("unstack d c");
     let operators = operators_named(&arc, &names);
 
-    let replay = replay_plan(&*arc, &mut registry, arc.global_constraint(), &operators)
+    let replay = replay_plan(&arc, &mut registry, arc.global_constraint(), &operators)
         .expect("replay machinery failed");
 
     assert!(replay.is_solved(), "expected the goal prefix to verify");
@@ -164,7 +162,7 @@ fn reordered_blocks_plan_is_rejected_at_the_first_inapplicable_operator() {
     // `pick-up b` has not yet established.
     let operators = operators_named(&arc, &["stack b a", "pick-up b"]);
 
-    let replay = replay_plan(&*arc, &mut registry, arc.global_constraint(), &operators)
+    let replay = replay_plan(&arc, &mut registry, arc.global_constraint(), &operators)
         .expect("replay machinery failed");
 
     match replay.outcome {
@@ -183,7 +181,7 @@ fn truncated_blocks_plan_is_rejected_for_missing_goals() {
     let mut registry = StateRegistry::for_task(arc.clone());
     let operators = operators_named(&arc, &BLOCKS_4_0_PLAN[..4]);
 
-    let replay = replay_plan(&*arc, &mut registry, arc.global_constraint(), &operators)
+    let replay = replay_plan(&arc, &mut registry, arc.global_constraint(), &operators)
         .expect("replay machinery failed");
 
     match replay.outcome {

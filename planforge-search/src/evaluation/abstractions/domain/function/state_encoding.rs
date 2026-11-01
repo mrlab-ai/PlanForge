@@ -1,9 +1,10 @@
 use planforge_sas::explicit_state::StateValues;
+use planforge_sas::numeric_task::Task;
 use std::sync::Arc;
 
 use anyhow::Result;
 use planforge_sas::numeric_conditions::ConditionValue;
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planforge_sas::numeric_task::ExplicitFact;
 use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
 use planforge_sas::utils::interval::Interval;
 
@@ -174,7 +175,7 @@ impl DomainAbstractionFunction {
     /// The region of the concrete states that satisfy the abstract `facts`.
     pub(super) fn cartesian_set_from_facts(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         facts: &[ExplicitFact],
     ) -> CartesianSet {
         let num_props = self.layout.domain_sizes().len();
@@ -258,10 +259,7 @@ impl DomainAbstractionFunction {
     /// variable, which no abstract operator writes. A variable the abstraction has
     /// collapsed to a single value carries no information and is dropped rather
     /// than mapped.
-    pub(super) fn compute_abstract_goals(
-        &self,
-        task: &dyn AbstractNumericTask,
-    ) -> Vec<ExplicitFact> {
+    pub(super) fn compute_abstract_goals(&self, task: &Task) -> Vec<ExplicitFact> {
         let mut out: Vec<ExplicitFact> = Vec::new();
         for fact in task.goals() {
             let var = fact.var_index();
@@ -284,7 +282,7 @@ impl DomainAbstractionFunction {
     /// goal condition. `intervals` is scratch space.
     pub fn is_goal_state(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         state: usize,
         goals: &[ExplicitFact],
         intervals: &mut Vec<Interval>,
@@ -314,7 +312,7 @@ impl DomainAbstractionFunction {
     /// The abstract states that satisfy the abstract `goals`, ascending.
     pub(crate) fn goal_states(
         &self,
-        task: &dyn AbstractNumericTask,
+        task: &Task,
         goals: &[ExplicitFact],
         deadline: Deadline,
     ) -> Result<Vec<usize>> {
@@ -332,7 +330,7 @@ impl DomainAbstractionFunction {
     }
 
     /// The abstract state of the task's initial state.
-    pub(crate) fn initial_state(&self, task: &dyn AbstractNumericTask) -> usize {
+    pub(crate) fn initial_state(&self, task: &Task) -> usize {
         self.abstract_state(StateValues::new(
             task.initial_propositional_values(),
             task.initial_numeric_values(),

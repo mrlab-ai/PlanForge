@@ -1,5 +1,6 @@
 use planforge_sas::axioms::CalOperator;
 use planforge_sas::axioms::ComparisonOperator;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::{
     ExplicitValueIndex, ExplicitVariable, NumericValue, OperatorCost, VariableIndex,
 };
@@ -35,7 +36,7 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
         )],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -160,7 +161,7 @@ fn a_unary_comparison_becomes_a_threshold_on_its_variable() {
         )],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -254,7 +255,7 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
         ],
         OperatorCost::new(0),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::from_usize(4))),
         variables,
         numeric_variables,
@@ -301,7 +302,7 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
 /// Settlers: the metric is a sum of fluents, derived by an assignment
 /// axiom, rather than a `total-cost` variable the operators increase. A
 /// translator mutex group spans the comparison's head and a location.
-fn task_with_derived_metric() -> NumericRootTask {
+fn task_with_derived_metric() -> Task {
     let variables = vec![
         ExplicitVariable::new(
             2,
@@ -349,7 +350,7 @@ fn task_with_derived_metric() -> NumericRootTask {
         ],
         OperatorCost::new(0),
     );
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric: Metric::new(true, Some(VariableIndex::from_usize(6))),
         variables,
         numeric_variables,
@@ -396,7 +397,7 @@ fn task_with_derived_metric() -> NumericRootTask {
 
 /// The restriction keeps the metric's cost and, since it keeps every
 /// propositional variable id, the translator's mutex groups unchanged.
-fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
+fn assert_derived_metric_cost_preserved(transformed: &Task) {
     assert_eq!(transformed.mutexes(), task_with_derived_metric().mutexes());
     let metric_var_id = transformed.metric().var_id().unwrap();
     assert_eq!(transformed.numeric_type(metric_var_id), NumericType::Cost);
@@ -434,7 +435,7 @@ fn restricted_task_returns_none_when_domain_has_no_derived_roots() {
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("limit".into(), NumericType::Constant, None),
     ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -485,7 +486,7 @@ fn restricted_task_reports_unsupported_effect_as_error() {
         )],
         OperatorCost::new(1),
     );
-    let task = NumericRootTask::new(NumericRootTaskParts {
+    let task = Task::new(TaskParts {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,

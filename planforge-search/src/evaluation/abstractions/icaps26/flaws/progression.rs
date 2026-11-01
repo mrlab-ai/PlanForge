@@ -44,7 +44,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
     semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
     state_packer: &Arc<StatePacker>,
-    axiom_evaluator: &AxiomEvaluator<'_>,
+    axiom_evaluator: &AxiomEvaluator,
     refinement_root: &ConcreteState,
     selected_plan: Option<&[TransitionKey]>,
 ) -> Result<PlanCheck> {
@@ -241,7 +241,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
 pub(in super::super) fn validate_concrete_plan(
     semantics: &CartesianSemantics<'_>,
     state_packer: &Arc<StatePacker>,
-    axiom_evaluator: &AxiomEvaluator<'_>,
+    axiom_evaluator: &AxiomEvaluator,
     refinement_root: &ConcreteState,
     plan: &ConcretePlan,
 ) -> Result<()> {

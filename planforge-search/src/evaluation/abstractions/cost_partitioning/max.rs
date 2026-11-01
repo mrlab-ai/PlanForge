@@ -12,18 +12,18 @@ use planforge_sas::numeric_task::NumericValue;
 use super::standalone_estimate;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 
-pub struct MaxAbstractionHeuristic<'task> {
+pub struct MaxAbstractionHeuristic {
     name: String,
-    components: Vec<AbstractionComponent<'task>>,
+    components: Vec<AbstractionComponent>,
     numeric_values: Vec<NumericValue>,
 }
 
-impl<'task> MaxAbstractionHeuristic<'task> {
+impl MaxAbstractionHeuristic {
     /// The maximum over `components`, which it reads only the goal distances
     /// of: components built for standalone use keep no transition data.
     pub fn new(
         name: Option<String>,
-        components: Vec<AbstractionComponent<'task>>,
+        components: Vec<AbstractionComponent>,
     ) -> Result<Self, String> {
         if components.is_empty() {
             return Err("max abstraction heuristic requires at least one component".to_string());
@@ -36,7 +36,7 @@ impl<'task> MaxAbstractionHeuristic<'task> {
     }
 }
 
-impl Heuristic for MaxAbstractionHeuristic<'_> {
+impl Heuristic for MaxAbstractionHeuristic {
     fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         let state = eval_state.values(&mut self.numeric_values)?;
         let mut best = 0.0_f64;
@@ -86,11 +86,11 @@ impl HeuristicFeature for MaxFeature {
             }
         }
         if others.is_empty() {
-            return max_over_sources(&**context.task, &sources, &context.name);
+            return max_over_sources(context.task, &sources, &context.name);
         }
         let mut children = Vec::new();
         if !sources.is_empty() {
-            children.push(max_over_sources(&**context.task, &sources, &context.name)?);
+            children.push(max_over_sources(context.task, &sources, &context.name)?);
         }
         for child in others {
             children.push(child.build(context)?);

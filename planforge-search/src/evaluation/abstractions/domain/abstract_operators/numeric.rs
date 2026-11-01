@@ -3,8 +3,9 @@
 //! through a comparison precondition.
 
 use anyhow::{Context, Result};
+use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, ExplicitFact, NumericType, OperatorIndex, VariableIndex,
+    AssignmentEffect, ExplicitFact, NumericType, OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -37,7 +38,7 @@ pub(super) struct NumericTransition {
 /// regression offset is 0 and the match tree never queries it, so it is a
 /// wildcard of the abstract operator.
 pub(super) fn numeric_partition_transitions(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     function: &DomainAbstractionFunction,
     concrete_op_id: OperatorIndex,
     preconditions: &[ExplicitFact],
@@ -124,7 +125,7 @@ pub(super) fn numeric_partition_transitions(
 /// `concrete_op_id` may lead between, ascending: every partition the image of
 /// a source partition intersects.
 fn variable_partition_transitions(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     function: &DomainAbstractionFunction,
     concrete_op_id: OperatorIndex,
     var_id: VariableIndex,
@@ -149,7 +150,7 @@ fn variable_partition_transitions(
 /// numeric dimensions start in the state layout, and whether a combination
 /// must be checked against comparison preconditions at all.
 struct PartitionComboEnumeration<'a> {
-    task: &'a dyn AbstractNumericTask,
+    task: &'a Task,
     function: &'a DomainAbstractionFunction,
     preconditions: &'a [ExplicitFact],
     per_var: &'a [(VariableIndex, Vec<(usize, usize)>)],
@@ -238,7 +239,7 @@ fn enumerate_partition_combos(
 /// a state may lie in them; see [`fill_condition_intervals`].
 #[must_use]
 pub(super) fn fill_source_intervals(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     function: &DomainAbstractionFunction,
     source_partitions: &[(VariableIndex, usize)],
     out: &mut Vec<Interval>,
@@ -263,7 +264,7 @@ pub(super) fn fill_source_intervals(
 /// no condition facts; the preconditions only filter combinations, by their
 /// concrete true or false value.
 fn comparison_preconditions_admit(
-    task: &dyn AbstractNumericTask,
+    task: &Task,
     preconditions: &[ExplicitFact],
     source_intervals: &[Interval],
 ) -> bool {

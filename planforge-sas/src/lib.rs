@@ -1,8 +1,8 @@
 //! SAS+ task representation and execution semantics for PlanForge.
 //!
 //! This crate is the middle of the PDDL translation → SAS+ task → search
-//! pipeline. `planforge-translate` produces [`numeric_task::NumericRootTask`]
-//! values; `planforge-search` consumes the [`numeric_task::AbstractNumericTask`]
+//! pipeline. `planforge-translate` produces [`numeric_task::Task`]
+//! values; `planforge-search` consumes the [`numeric_task::Task`]
 //! interface, while this crate owns parsing, axioms, state transitions, state
 //! registration, and exact plan replay.
 //!

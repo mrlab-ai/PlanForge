@@ -3,9 +3,7 @@
 
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, NumericRootTask, NumericTaskExt, OperatorIndex,
-};
+use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
@@ -15,12 +13,12 @@ use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
 
 use crate::corpus::{self, translate_in_memory};
 
-fn load_dependent_cost_task() -> NumericRootTask {
+fn load_dependent_cost_task() -> Task {
     let dir = corpus::assets().join("lmcut-bounds/load-dependent-cost");
     translate_in_memory(&dir.join("domain.pddl"), &dir.join("problem.pddl"))
 }
 
-fn initial_h(task: &NumericRootTask, bound_iterations: usize) -> f64 {
+fn initial_h(task: &Task, bound_iterations: usize) -> f64 {
     let mut heuristic = LandmarkCutNumericHeuristic::from_config(
         task,
         LmCutNumericConfig {
@@ -29,9 +27,9 @@ fn initial_h(task: &NumericRootTask, bound_iterations: usize) -> f64 {
         },
     )
     .expect("the LM-cut configuration is supported");
-    let mut registry = StateRegistry::for_task(Arc::new(task));
+    let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
     let initial = registry.get_initial_state();
-    let mut eval = EvaluationState::new(&initial, task as &dyn AbstractNumericTask, &registry);
+    let mut eval = EvaluationState::new(&initial, task as &Task, &registry);
     eval.set_is_goal(false);
     heuristic
         .evaluate(&eval)

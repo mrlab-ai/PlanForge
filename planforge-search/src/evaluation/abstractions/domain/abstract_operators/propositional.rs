@@ -1,9 +1,8 @@
 //! The propositional cross product of a concrete operator: one skeleton for
 //! every abstract value its effects without a precondition may change from.
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, Operator, VariableIndex,
-};
+use planforge_sas::numeric_task::Task;
+use planforge_sas::numeric_task::{ExplicitFact, ExplicitValueIndex, Operator, VariableIndex};
 
 use super::transition_vars_match;
 use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
@@ -34,10 +33,7 @@ pub(super) struct PropositionalSkeletons<'a> {
 }
 
 impl<'a> PropositionalSkeletons<'a> {
-    pub(super) fn new(
-        function: &'a DomainAbstractionFunction,
-        task: &dyn AbstractNumericTask,
-    ) -> Self {
+    pub(super) fn new(function: &'a DomainAbstractionFunction, task: &Task) -> Self {
         let num_variables = task.variables().len();
         Self {
             function,
@@ -61,11 +57,7 @@ impl<'a> PropositionalSkeletons<'a> {
     /// The skeletons of `op`, in cross-product order. An operator that
     /// changes no abstract propositional value and has no assignment effect
     /// has none.
-    pub(super) fn of_operator(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-        op: &Operator,
-    ) -> Vec<PropositionalSkeleton> {
+    pub(super) fn of_operator(&mut self, task: &Task, op: &Operator) -> Vec<PropositionalSkeleton> {
         let preconditions = op.preconditions();
         for pre in preconditions {
             let var_id = pre.var_index();

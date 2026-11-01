@@ -1,7 +1,8 @@
 use planforge_sas::numeric_task::NumericValue;
-use planforge_sas::numeric_task::TaskRef;
+use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::StateRegistry;
 use rand::{SeedableRng, rngs::SmallRng};
+use std::sync::Arc;
 use tracing::info;
 
 use crate::config::ConfigError;
@@ -47,8 +48,8 @@ struct OrderSelection {
 
 /// The construction of the cost partitionings: the task, the configuration
 /// and the costs it partitions.
-struct ScpBuilder<'task> {
-    task: TaskRef<'task>,
+struct ScpBuilder {
+    task: Arc<Task>,
     config: ScpConfig,
     original_operator_costs: Vec<f64>,
     construction_deadline: Deadline,
@@ -57,9 +58,9 @@ struct ScpBuilder<'task> {
 /// The maximum over saturated cost partitionings of abstraction heuristics
 /// (Seipp, Keller and Helmert 2020), built for the initial state at
 /// construction.
-pub struct SaturatedCostPartitioningHeuristic<'task> {
+pub struct SaturatedCostPartitioningHeuristic {
     name: String,
-    components: Vec<AbstractionComponent<'task>>,
+    components: Vec<AbstractionComponent>,
     cost_partitionings: Vec<CostPartitioningHeuristic>,
     /// The components some lookup table reads, the only ones a state is
     /// mapped into.
@@ -68,12 +69,12 @@ pub struct SaturatedCostPartitioningHeuristic<'task> {
     abstract_state_ids: Vec<Option<usize>>,
 }
 
-impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+impl SaturatedCostPartitioningHeuristic {
     pub fn new(
         name: Option<String>,
-        components: Vec<AbstractionComponent<'task>>,
+        components: Vec<AbstractionComponent>,
         config: ScpConfig,
-        task: TaskRef<'task>,
+        task: Arc<Task>,
         construction_deadline: Deadline,
     ) -> Result<Self, EvaluationError> {
         if components.is_empty() {
@@ -86,7 +87,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .map_err(EvaluationError::ComputationFailed)?;
         let mut components = components;
         if config.partitioning.uses_regions() {
-            let regions = RegionSemantics::new(&*task)
+            let regions = RegionSemantics::new(&task)
                 .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
             for (component_id, component) in components.iter_mut().enumerate() {
                 match component {
@@ -103,7 +104,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 }
             }
         }
-        let original_costs: Vec<f64> = task.effective_operator_costs().iter().copied().collect();
+        let original_costs: Vec<f64> = task.effective_operator_costs().to_vec();
 
         let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(components.len());
         let mut saturated_costs_by_abstraction: Vec<Vec<f64>> =
@@ -152,7 +153,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             let initial_state = registry.get_initial_state();
             abstract_state_ids_into(
                 &components,
-                &EvaluationState::new(&initial_state, &*task, &registry),
+                &EvaluationState::new(&initial_state, &task, &registry),
                 None,
                 &mut numeric_values,
                 &mut abstract_state_ids,
@@ -202,14 +203,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 }
 
-impl<'task> ScpBuilder<'task> {
+impl ScpBuilder {
     /// The cost partitionings of the collection for the state with the
     /// abstract states `abstract_state_ids`: the greedy order's, or the
     /// diverse orders' over the random-walk samples, which are pairwise
     /// distinct.
     fn build_cost_partitionings(
         &self,
-        components: &[AbstractionComponent<'task>],
+        components: &[AbstractionComponent],
         state: &mut OrderSelection,
         abstract_state_ids: &[Option<usize>],
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
@@ -279,7 +280,7 @@ impl<'task> ScpBuilder<'task> {
     }
 }
 
-impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
+impl Heuristic for SaturatedCostPartitioningHeuristic {
     fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         abstract_state_ids_into(
             &self.components,
@@ -325,7 +326,7 @@ impl HeuristicFeature for ScpFeature {
         } else {
             AbstractionPurpose::LabelCostPartitioning
         };
-        let components = build_components(&**context.task, &config.sources, purpose, deadline)?;
+        let components = build_components(context.task, &config.sources, purpose, deadline)?;
         remaining_construction_time(deadline)?;
         let heuristic = SaturatedCostPartitioningHeuristic::new(
             Some(context.name.clone()),

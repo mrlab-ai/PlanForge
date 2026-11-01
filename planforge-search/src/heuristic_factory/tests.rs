@@ -53,6 +53,6 @@ impl HeuristicFeature for Duplicate {
         _: &Self::Config,
         context: &BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        Ok(Box::new(BlindHeuristic::for_task(&**context.task)))
+        Ok(Box::new(BlindHeuristic::for_task(context.task)))
     }
 }

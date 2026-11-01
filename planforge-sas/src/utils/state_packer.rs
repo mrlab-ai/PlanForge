@@ -1,4 +1,5 @@
-use crate::numeric_task::{AbstractNumericTask, NumericType};
+use crate::numeric_task::NumericType;
+use crate::numeric_task::Task;
 
 #[cfg(test)]
 mod tests;
@@ -140,7 +141,7 @@ impl StatePacker {
     }
 
     /// Packer for the propositional variables of `task` alone.
-    pub fn propositional<T: AbstractNumericTask + ?Sized>(task: &T) -> Self {
+    pub fn propositional(task: &Task) -> Self {
         let ranges: Vec<u64> = task
             .variables()
             .iter()
@@ -150,10 +151,7 @@ impl StatePacker {
     }
 
     /// Packer for the *concrete* states of `task`.
-    pub fn from_abstract_task_with_numeric_range(
-        task: &dyn AbstractNumericTask,
-        numeric_range: u64,
-    ) -> Self {
+    pub fn from_abstract_task_with_numeric_range(task: &Task, numeric_range: u64) -> Self {
         let mut domain_sizes: Vec<u64> = task
             .variables()
             .iter()

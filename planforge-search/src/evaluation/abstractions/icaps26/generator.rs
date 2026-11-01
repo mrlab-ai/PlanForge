@@ -1,4 +1,5 @@
 use super::*;
+use planforge_sas::numeric_task::Task;
 
 pub struct Icaps26CartesianGenerator {
     config: Icaps26CartesianConfig,
@@ -11,7 +12,7 @@ impl Icaps26CartesianGenerator {
     }
 
     /// Refine from the task's initial state, as the artifact does.
-    pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<CartesianAbstraction> {
+    pub fn generate(&self, task: &Task) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
         let initial_region = semantics.trivial_region()?;
@@ -27,7 +28,7 @@ impl Icaps26CartesianGenerator {
             }
         }
         let state_packer = Arc::new(make_prop_state_packer(task));
-        let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
+        let axiom_evaluator = AxiomEvaluator::new(task, state_packer.clone());
         let (initial_propositions, initial_numeric) =
             get_initial_state(task, &state_packer, &axiom_evaluator)?;
         let refinement_root = ConcreteState {

@@ -30,6 +30,7 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::Task;
 use std::collections::BTreeSet;
 
 use planforge_cplex::{
@@ -37,7 +38,7 @@ use planforge_cplex::{
     assert_unrestricted_license,
 };
 use planforge_sas::numeric_task::NumericValue;
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::float_tolerance;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::info;
@@ -49,9 +50,9 @@ use crate::evaluation::state_value_cache::StateValueCache;
 use super::super::standalone_estimate;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 
-pub struct PostHocOptimizationHeuristic<'task> {
+pub struct PostHocOptimizationHeuristic {
     name: String,
-    components: Vec<AbstractionComponent<'task>>,
+    components: Vec<AbstractionComponent>,
     /// For each LP constraint, the (sorted, distinct) abstraction ids that
     /// appear with coefficient 1 in that constraint. Constraint right-hand
     /// side is uniformly 1.
@@ -63,14 +64,14 @@ pub struct PostHocOptimizationHeuristic<'task> {
     h_values: Vec<f64>,
 }
 
-impl<'task> PostHocOptimizationHeuristic<'task> {
+impl PostHocOptimizationHeuristic {
     /// Post-hoc optimization over `components`, which it reads only the
     /// goal distances and relevant operators of: components built for
     /// standalone use keep no transition data.
     pub fn new(
         name: Option<String>,
-        task: &dyn AbstractNumericTask,
-        components: Vec<AbstractionComponent<'task>>,
+        task: &Task,
+        components: Vec<AbstractionComponent>,
     ) -> Result<Self, String> {
         if components.is_empty() {
             return Err(
@@ -82,7 +83,7 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             .map(|component| component.relevant_operator_ids(task))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let original_costs: Vec<f64> = task.effective_operator_costs().iter().copied().collect();
+        let original_costs: Vec<f64> = task.effective_operator_costs().to_vec();
 
         let constraints = build_constraints(&relevant_operators, &original_costs);
 
@@ -215,7 +216,7 @@ fn lp_evaluation_error(error: planforge_cplex::Error) -> EvaluationError {
     EvaluationError::ComputationFailed(format!("posthoc_optimization CPLEX failure: {error}"))
 }
 
-impl Heuristic for PostHocOptimizationHeuristic<'_> {
+impl Heuristic for PostHocOptimizationHeuristic {
     fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
         if let Some(value) = self.state_value_cache.get(state_id) {

@@ -3,24 +3,22 @@ use crate::{
     numeric_conditions::ConditionValue,
     numeric_task::{
         AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-        ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-        NumericVariable, Operator, OperatorCost, VariableIndex,
+        ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator,
+        OperatorCost, Task, TaskParts, VariableIndex,
     },
 };
 
 /// The variable the fixture's comparison axiom writes.
 const CONDITION_VAR: usize = 2;
 
-pub(crate) fn get_root_task() -> NumericRootTask {
+pub(crate) fn get_root_task() -> Task {
     root_task_with_extra_preconditions(Vec::new())
 }
 
 /// The fixture task, optionally with extra preconditions on its single
 /// operator. Tests that need a fact on a specific variable to travel through
-/// `NumericRootTask::new` pass it here rather than rebuilding the task.
-pub(crate) fn root_task_with_extra_preconditions(
-    extra_preconditions: Vec<ExplicitFact>,
-) -> NumericRootTask {
+/// `Task::new` pass it here rather than rebuilding the task.
+pub(crate) fn root_task_with_extra_preconditions(extra_preconditions: Vec<ExplicitFact>) -> Task {
     let metric = Metric::new(true, Some(VariableIndex::new(1)));
     let variables = vec![
         ExplicitVariable::new(
@@ -63,7 +61,7 @@ pub(crate) fn root_task_with_extra_preconditions(
         NumericVariable::new(String::from("total_cost()"), NumericType::Cost, None),
     ];
     // `var10` on the table while the cost is still below one. Both goals go in
-    // untagged, as the parser hands them over, so `NumericRootTask::new` has to
+    // untagged, as the parser hands them over, so `Task::new` has to
     // recognise that the second one names a condition variable.
     let goals = vec![
         ExplicitFact::propositional(1, 5),
@@ -115,7 +113,7 @@ pub(crate) fn root_task_with_extra_preconditions(
     // numeric variables, and a self-referential definition has no fixpoint.
     let assignment_axioms = Vec::new();
     let global_constraint = Some(ExplicitFact::propositional(0, 0));
-    NumericRootTask::new(NumericRootTaskParts {
+    Task::new(TaskParts {
         metric,
         variables,
         numeric_variables,
@@ -134,9 +132,7 @@ pub(crate) fn root_task_with_extra_preconditions(
 #[cfg(test)]
 mod fact_namespace {
     use super::{CONDITION_VAR, get_root_task};
-    use crate::numeric_task::{
-        AbstractNumericTask, ExplicitFact, FactNamespace, VariableIndex, assert_fact_namespaces,
-    };
+    use crate::numeric_task::{ExplicitFact, FactNamespace, VariableIndex, assert_fact_namespaces};
 
     #[test]
     fn tag_survives_var_and_value() {
@@ -197,7 +193,7 @@ mod fact_namespace {
     }
 
     /// The parser cannot know the namespaces, so it hands facts over untagged
-    /// and `NumericRootTask::new` retags them. A fact on a condition variable
+    /// and `Task::new` retags them. A fact on a condition variable
     /// must come back out tagged even though it went in as propositional.
     #[test]
     fn construction_retags_facts_the_parser_could_not_tag() {

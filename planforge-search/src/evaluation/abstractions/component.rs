@@ -1,7 +1,8 @@
 use planforge_sas::explicit_state::StateValues;
+use planforge_sas::numeric_task::Task;
 use std::collections::BTreeSet;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 
 use crate::evaluation::abstractions::cartesian::CartesianAbstraction;
 use crate::evaluation::abstractions::common::abstraction::{
@@ -48,12 +49,12 @@ pub struct GoalFocusedMember {
 }
 
 /// An abstraction that collection heuristics combine.
-pub enum AbstractionComponent<'task> {
+pub enum AbstractionComponent {
     Cegar(Box<dyn CegarAbstraction>),
-    PatternDatabase(Box<PatternDatabase<'task>>),
+    PatternDatabase(Box<PatternDatabase>),
 }
 
-impl<'task> AbstractionComponent<'task> {
+impl AbstractionComponent {
     /// The component as an abstraction CEGAR built; `None` for a pattern
     /// database.
     pub fn cegar(&self) -> Option<&dyn CegarAbstraction> {
@@ -106,10 +107,7 @@ impl<'task> AbstractionComponent<'task> {
         }
     }
 
-    pub fn relevant_operator_ids(
-        &self,
-        task: &dyn AbstractNumericTask,
-    ) -> Result<BTreeSet<OperatorIndex>, String> {
+    pub fn relevant_operator_ids(&self, task: &Task) -> Result<BTreeSet<OperatorIndex>, String> {
         let ids: Vec<OperatorIndex> = match self {
             Self::Cegar(abstraction) => abstraction.relevant_operator_ids().to_vec(),
             Self::PatternDatabase(pdb) => pdb.relevant_operator_ids().to_vec(),
@@ -146,20 +144,20 @@ impl<'task> AbstractionComponent<'task> {
     }
 }
 
-impl<'task> From<DomainAbstraction> for AbstractionComponent<'task> {
+impl From<DomainAbstraction> for AbstractionComponent {
     fn from(abstraction: DomainAbstraction) -> Self {
         Self::Cegar(Box::new(abstraction))
     }
 }
 
-impl<'task> From<CartesianAbstraction> for AbstractionComponent<'task> {
+impl From<CartesianAbstraction> for AbstractionComponent {
     fn from(abstraction: CartesianAbstraction) -> Self {
         Self::Cegar(Box::new(abstraction))
     }
 }
 
-impl<'task> From<PatternDatabase<'task>> for AbstractionComponent<'task> {
-    fn from(pdb: PatternDatabase<'task>) -> Self {
+impl From<PatternDatabase> for AbstractionComponent {
+    fn from(pdb: PatternDatabase) -> Self {
         Self::PatternDatabase(Box::new(pdb))
     }
 }

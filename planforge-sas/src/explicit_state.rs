@@ -11,11 +11,12 @@
 #[cfg(test)]
 mod tests;
 
+use crate::numeric_task::Task;
 use std::sync::Arc;
 
 use crate::axioms::AxiomEvaluator;
 use crate::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, Operator, OperatorIndex,
+    ExplicitFact, ExplicitValueIndex, NumericValue, Operator, OperatorIndex,
 };
 use crate::utils::errors::AssignmentAxiomError;
 use crate::utils::state_packer::StatePacker;
@@ -137,15 +138,15 @@ impl<'a> From<&'a ExplicitState> for StateValues<'a> {
 /// Owns the axiom evaluator, compiled once, and the propositional layout the
 /// evaluator works on.
 pub struct ExplicitStateSpace<'task> {
-    task: &'task dyn AbstractNumericTask,
+    task: &'task Task,
     state_packer: Arc<StatePacker>,
-    axiom_evaluator: AxiomEvaluator<'task>,
+    axiom_evaluator: AxiomEvaluator,
 }
 
 impl<'task> ExplicitStateSpace<'task> {
-    pub fn new(task: &'task dyn AbstractNumericTask) -> Self {
+    pub fn new(task: &'task Task) -> Self {
         let state_packer = Arc::new(StatePacker::propositional(task));
-        let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
+        let axiom_evaluator = AxiomEvaluator::new(task, state_packer.clone());
         Self {
             task,
             state_packer,
@@ -153,7 +154,7 @@ impl<'task> ExplicitStateSpace<'task> {
         }
     }
 
-    pub fn task(&self) -> &'task dyn AbstractNumericTask {
+    pub fn task(&self) -> &'task Task {
         self.task
     }
 

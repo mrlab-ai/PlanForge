@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::numeric_task::{
-    ExplicitFact, ExplicitValueIndex, ExplicitVariable, NumericValue, NumericVariable, TaskRef,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, NumericValue, NumericVariable, Task,
     VariableIndex, ZERO_VALUE,
 };
 use crate::utils::errors::AssignmentAxiomError;
@@ -50,7 +50,7 @@ impl PropositionalAxiom {
         &self.conditions
     }
 
-    /// Only for `NumericRootTask::assign_fact_namespaces`, the single pass that
+    /// Only for `Task::assign_fact_namespaces`, the single pass that
     /// owns fact namespace assignment.
     pub(crate) fn conditions_mut(&mut self) -> &mut Vec<ExplicitFact> {
         &mut self.conditions
@@ -287,8 +287,10 @@ struct LiteralRef {
     value: ExplicitValueIndex,
 }
 
-pub struct AxiomEvaluator<'a> {
-    numeric_task: TaskRef<'a>,
+pub struct AxiomEvaluator {
+    /// The arithmetic axioms, in dependency-layer order.
+    assignment_axioms: Vec<AssignmentAxiom>,
+    comparison_axioms: Vec<ComparisonAxiom>,
     state_packer: Arc<StatePacker>,
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
@@ -323,14 +325,13 @@ thread_local! {
     };
 }
 
-impl<'a> AxiomEvaluator<'a> {
+impl AxiomEvaluator {
     /// Compiles the task's axioms into the tables the closure runs on.
     ///
     /// # Panics
     /// Panics if a derived propositional variable sits at or below the last
     /// arithmetic layer: the closure runs after the arithmetic axioms.
-    pub fn new(numeric_task: TaskRef<'a>, state_packer: Arc<StatePacker>) -> Self {
-        let task = &*numeric_task;
+    pub fn new(task: &Task, state_packer: Arc<StatePacker>) -> Self {
         let last_arithmetic_axiom_layer = task
             .numeric_variables()
             .iter()
@@ -412,7 +413,8 @@ impl<'a> AxiomEvaluator<'a> {
             has_numeric_axioms: !task.assignment_axioms().is_empty()
                 || !task.comparison_axioms().is_empty(),
             has_propositional_axioms: !task.axioms().is_empty(),
-            numeric_task,
+            assignment_axioms: task.assignment_axioms().to_vec(),
+            comparison_axioms: task.comparison_axioms().to_vec(),
             state_packer,
             axiom_literals,
             rules,
@@ -426,7 +428,7 @@ impl<'a> AxiomEvaluator<'a> {
         &self,
         numeric_state: &mut [NumericValue],
     ) -> Result<(), AssignmentAxiomError> {
-        for axiom in self.numeric_task.assignment_axioms() {
+        for axiom in &self.assignment_axioms {
             axiom.update_values(numeric_state)?;
         }
 
@@ -434,7 +436,7 @@ impl<'a> AxiomEvaluator<'a> {
     }
 
     pub fn evaluate_comparison_axioms(&self, buffer: &mut [u64], numeric_state: &[NumericValue]) {
-        for axiom in self.numeric_task.comparison_axioms() {
+        for axiom in &self.comparison_axioms {
             let is_hold = axiom.is_hold(numeric_state);
             self.state_packer
                 .set(buffer, axiom.get_affected_var_id().index(), !is_hold as u64);
