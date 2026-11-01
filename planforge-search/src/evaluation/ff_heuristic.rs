@@ -57,6 +57,7 @@
 //!   * Hoffmann, *The Metric-FF Planning System*, JAIR 2003.
 
 use planforge_sas::axioms::{AssignmentAxiom, NumericExpression};
+use planforge_sas::numeric_task::VariableKind;
 use std::collections::{HashSet, VecDeque};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -292,10 +293,7 @@ impl FactUniverse {
         let mut to_axiom: Vec<Option<AxiomIdx>> = Vec::new();
 
         for (var_id, variable) in task.variables().iter().enumerate() {
-            if task
-                .numeric_conditions()
-                .is_condition_var(VariableIndex::from_usize(var_id))
-            {
+            if task.variable_kind(VariableIndex::from_usize(var_id)) == VariableKind::Condition {
                 continue;
             }
             let offset = fact_id_offsets[var_id];

@@ -15,6 +15,17 @@ pub trait AbstractNumericTask: Send + Sync {
     fn variable(&self, var: VariableIndex) -> &ExplicitVariable {
         &self.variables()[var.index()]
     }
+
+    /// What determines the value of propositional variable `var`.
+    fn variable_kind(&self, var: VariableIndex) -> VariableKind {
+        if self.numeric_conditions().is_condition_var(var) {
+            VariableKind::Condition
+        } else if self.variable(var).axiom_layer().is_some() {
+            VariableKind::Derived
+        } else {
+            VariableKind::Regular
+        }
+    }
     fn assignment_axioms(&self) -> &[AssignmentAxiom];
     fn comparison_axioms(&self) -> &[ComparisonAxiom];
     /// The task's numeric conditions, one per comparison axiom, built once

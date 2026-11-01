@@ -265,7 +265,7 @@ impl DomainAbstractionFunction {
         let mut out: Vec<ExplicitFact> = Vec::new();
         for fact in task.goals() {
             let var = fact.var_index();
-            if self.numeric_conditions.is_condition_var(var) {
+            if fact.is_condition() {
                 out.push(*fact);
                 continue;
             }

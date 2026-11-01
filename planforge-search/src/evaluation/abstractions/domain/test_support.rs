@@ -1,5 +1,6 @@
 //! Domain abstractions the tests build by hand.
 
+use planforge_sas::numeric_task::VariableKind;
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, VariableIndex};
 
 use super::abstract_operators::DomainMapping;
@@ -14,7 +15,7 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
     for var_id in (0..num_vars).map(VariableIndex::from_usize) {
         let size = task.variables()[var_id.index()].domain_size();
-        if task.numeric_conditions().is_condition_var(var_id) {
+        if task.variable_kind(var_id) == VariableKind::Condition {
             domain_mapping.push(vec![ExplicitValueIndex::new(0); size]);
             domain_sizes.push(1);
         } else {

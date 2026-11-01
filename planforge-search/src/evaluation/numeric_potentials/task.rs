@@ -1,3 +1,4 @@
+use planforge_sas::numeric_task::VariableKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
@@ -121,10 +122,8 @@ impl PotentialTask {
             .iter()
             .map(|var| var.domain_size())
             .collect();
-        let derived_propositional: Vec<bool> = task
-            .variables()
-            .iter()
-            .map(|var| var.axiom_layer().is_some())
+        let derived_propositional: Vec<bool> = (0..task.variables().len())
+            .map(|var| task.variable_kind(VariableIndex::from_usize(var)) != VariableKind::Regular)
             .collect();
 
         // A comparison goal becomes the linear conditions materializing it; every

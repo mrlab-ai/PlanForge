@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::VariableKind;
 use std::sync::Arc;
 
 use anyhow::{Result, ensure};
@@ -100,9 +101,8 @@ impl DomainAbstractionFunction {
         for (var, &abs_size) in domain_sizes.iter().enumerate() {
             ensure!(
                 abs_size == 1
-                    || !task
-                        .numeric_conditions()
-                        .is_condition_var(VariableIndex::from_usize(var)),
+                    || task.variable_kind(VariableIndex::from_usize(var))
+                        != VariableKind::Condition,
                 "condition variable {var} has {abs_size} abstract values; conditions are derived from the numeric partitions"
             );
             let concrete_size = task.variables()[var].domain_size();
@@ -215,7 +215,7 @@ impl DomainAbstractionFunction {
                 ..
             } => {
                 ensure!(
-                    !task.numeric_conditions().is_condition_var(*var_id),
+                    task.variable_kind(*var_id) != VariableKind::Condition,
                     "split of condition variable {var_id}; conditions are derived from the numeric partitions"
                 );
                 let mapping = &mut self.domain_mapping[var_id.index()];

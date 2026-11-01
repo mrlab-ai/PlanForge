@@ -126,7 +126,7 @@ pub(crate) fn ensure_regressable(
         derived[axiom.var_id().index()] = true;
     }
     let check = |fact: &ExplicitFact, context: &dyn Fn() -> String| -> Result<()> {
-        if task.numeric_conditions().is_condition_var(fact.var_index()) {
+        if fact.is_condition() {
             ensure_supported!(
                 coordinates.requirement(fact).is_some(),
                 "regression flaws need conditions over one coordinate, but {} has {fact:?}; --restrict-task compiles every linear condition into one",
@@ -179,11 +179,10 @@ impl PartialState {
     fn require(
         &mut self,
         coordinates: &Coordinates<'_>,
-        task: &dyn AbstractNumericTask,
         facts: &[ExplicitFact],
     ) -> Result<Option<()>> {
         for fact in facts {
-            if task.numeric_conditions().is_condition_var(fact.var_index()) {
+            if fact.is_condition() {
                 let requirement = coordinates
                     .requirement(fact)
                     .with_context(|| format!("{fact:?} is not a condition over one coordinate"))?;
@@ -225,7 +224,7 @@ pub(crate) fn find_regression_flaws(
     );
     let mut partial = PartialState::unconstrained(task);
     ensure!(
-        partial.require(coordinates, task, task.goals())?.is_some(),
+        partial.require(coordinates, task.goals())?.is_some(),
         "the goal contradicts itself"
     );
     ensure!(
@@ -319,7 +318,7 @@ impl Regression<'_> {
         preconditions.clear();
         ensure!(
             preconditions
-                .require(coordinates, *task, op.preconditions())?
+                .require(coordinates, op.preconditions())?
                 .is_some(),
             "operator {op_id} ({}) has contradicting preconditions",
             op.name()

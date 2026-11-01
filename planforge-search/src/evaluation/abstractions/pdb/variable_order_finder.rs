@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::VariableKind;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
@@ -49,15 +50,7 @@ impl VariableOrderFinder {
             add_numeric_vars(task, &mut remaining_vars);
         }
         for var_id in 0..task.variables().len() {
-            if task
-                .variable(VariableIndex::from_usize(var_id))
-                .axiom_layer()
-                .is_none()
-                && !task
-                    .comparison_axioms()
-                    .iter()
-                    .any(|axiom| axiom.get_affected_var_id().index() == var_id)
-            {
+            if task.variable_kind(VariableIndex::from_usize(var_id)) == VariableKind::Regular {
                 remaining_vars.push((VariableIndex::from_usize(var_id), false));
             }
         }

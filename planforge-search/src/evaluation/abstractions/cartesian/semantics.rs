@@ -126,9 +126,7 @@ impl<'task> CartesianSemantics<'task> {
             }
             for effect in op.effects() {
                 let var_id = effect.var_id();
-                if !task.numeric_conditions().is_condition_var(var_id)
-                    && regions.axioms_for(var_id).is_empty()
-                {
+                if regions.is_operator_variable(var_id) {
                     dimensions.push(SplitDimension::Propositional(var_id));
                 }
             }

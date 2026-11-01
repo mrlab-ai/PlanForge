@@ -2,6 +2,8 @@
 mod tests;
 
 use planforge_sas::explicit_state::StateValues;
+use planforge_sas::numeric_task::VariableIndex;
+use planforge_sas::numeric_task::VariableKind;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -425,7 +427,7 @@ impl DenseStates {
         let mut variables = Vec::new();
         let mut num_slots = 1usize;
         for (projected, variable) in task.variables().iter().enumerate() {
-            if variable.axiom_layer().is_some() {
+            if task.variable_kind(VariableIndex::from_usize(projected)) != VariableKind::Regular {
                 continue;
             }
             variables.push(DenseVariable {

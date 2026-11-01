@@ -12,6 +12,7 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::VariableKind;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
@@ -90,10 +91,8 @@ impl<'task> RegionSemantics<'task> {
                 Ok(Some(default_value))
             })
             .collect::<Result<_>>()?;
-        let is_operator_variable = |var_id: VariableIndex| {
-            !task.numeric_conditions().is_condition_var(var_id)
-                && axioms_by_var[var_id.index()].is_empty()
-        };
+        let is_operator_variable =
+            |var_id: VariableIndex| task.variable_kind(var_id) == VariableKind::Regular;
         let successor_values = task
             .operators()
             .iter()
@@ -147,8 +146,7 @@ impl<'task> RegionSemantics<'task> {
     /// Whether `var_id` is written by operators, rather than derived by a
     /// comparison or by propositional axioms.
     pub(crate) fn is_operator_variable(&self, var_id: VariableIndex) -> bool {
-        !self.task.numeric_conditions().is_condition_var(var_id)
-            && self.axioms_by_var[var_id.index()].is_empty()
+        self.task.variable_kind(var_id) == VariableKind::Regular
     }
 
     /// The region of every state: all propositional values, unbounded

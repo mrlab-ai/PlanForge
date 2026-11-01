@@ -42,6 +42,18 @@ impl Metric {
     }
 }
 
+/// What determines the value of a propositional variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VariableKind {
+    /// Operators write it; no axiom does.
+    Regular,
+    /// The truth value of a numeric condition, which a comparison axiom
+    /// computes from the numeric variables.
+    Condition,
+    /// A derived predicate, which propositional axioms prove.
+    Derived,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExplicitVariable {
     pub(super) domain_size: usize,

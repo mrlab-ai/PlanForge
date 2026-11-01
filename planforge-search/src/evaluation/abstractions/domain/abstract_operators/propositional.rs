@@ -8,6 +8,7 @@ use planforge_sas::numeric_task::{
 use super::transition_vars_match;
 use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::evaluation::abstractions::domain::layout::StateLayout;
+use planforge_sas::numeric_task::VariableKind;
 
 /// The propositional part of an abstract operator: the prevail conditions,
 /// and the preconditions and effects of the variables it changes. Each list
@@ -82,7 +83,12 @@ impl<'a> PropositionalSkeletons<'a> {
             if self.variable_is_trivial(var_id) {
                 continue;
             }
-            debug_assert!(!task.numeric_conditions().is_condition_var(var_id));
+            assert_eq!(
+                task.variable_kind(var_id),
+                VariableKind::Regular,
+                "operator {} writes a variable no operator may write",
+                op.name()
+            );
             let abs_val = self.abstract_value(var_id, eff.value());
             let fact = ExplicitFact::propositional(var_id.index(), abs_val.index());
             match self.precondition_on_var[var_id.index()] {
