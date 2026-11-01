@@ -3,7 +3,7 @@ name = "planforge-search"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Search algorithms, heuristics, and task abstractions over PlanForge SAS+ tasks."
+description = "PlanForge's search core: search algorithms, the heuristic interface and registry, successor generation, task transformations."
 repository = "https://github.com/mrlab-ai/PlanForge"
 readme = "../README.md"
 keywords = ["planning", "heuristics", "search", "algorithms"]
@@ -26,6 +26,8 @@ planforge-cplex = { path = "../planforge-cplex", version = "0.1.0", optional = t
 [features]
 # Enables the native CPLEX backend used by every LP-based heuristic.
 cplex = ["dep:planforge-cplex", "planforge-cplex/cplex"]
+# Exposes the small tasks of the unit tests to the heuristics' tests.
+test-tasks = []
 
 [package.metadata.docs.rs]
 # Never ask docs.rs to build the proprietary native backend.

@@ -1,9 +1,8 @@
-//! Search algorithms and heuristics over PlanForge SAS+ tasks.
-//!
-//! This crate is the final stage of the PDDL translation → SAS+ task → search
-//! pipeline. It consumes [`planforge_sas::numeric_task::Task`]
-//! values and provides state-space search, heuristic evaluation, task
-//! restriction, and abstraction machinery.
+//! PlanForge's search core over [`planforge_sas::numeric_task::Task`]s:
+//! state-space search, the heuristic interface and registry, successor
+//! generation, the exact state space and task transformations. Blind search
+//! is its one heuristic; the others live in `planforge_heuristics`, which
+//! depends on this crate and on nothing above it.
 //!
 //! There are three supported Rust extension paths:
 //!
@@ -36,6 +35,6 @@ pub mod search;
 pub mod state_space;
 pub mod successor_generator;
 pub mod task_transformations;
-#[cfg(test)]
-mod test_tasks;
+#[cfg(any(test, feature = "test-tasks"))]
+pub mod test_tasks;
 pub mod unsupported;

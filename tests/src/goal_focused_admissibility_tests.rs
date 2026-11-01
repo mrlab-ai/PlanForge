@@ -11,25 +11,25 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric_task::Task;
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
-use planforge_search::evaluation::abstractions::cartesian::{
+use planforge_heuristics::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
 };
-use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
-use planforge_search::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
-use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
-use planforge_search::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
-use planforge_search::evaluation::abstractions::component::AbstractionComponent;
-use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
+use planforge_heuristics::abstractions::collections::strategy::CollectionStrategy;
+use planforge_heuristics::abstractions::common::abstraction::AbstractionHeuristic;
+use planforge_heuristics::abstractions::common::cegar::options::CegarOptions;
+use planforge_heuristics::abstractions::common::cegar::{FlawKind, FlawScope};
+use planforge_heuristics::abstractions::component::AbstractionComponent;
+use planforge_heuristics::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig,
 };
-use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
-use planforge_search::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
-use planforge_search::evaluation::abstractions::domain::config::{
+use planforge_heuristics::abstractions::domain::abstraction::DomainAbstraction;
+use planforge_heuristics::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
+use planforge_heuristics::abstractions::domain::config::{
     DomainAbstractionCollectionConfig, DomainAbstractionConfig,
 };
+use planforge_sas::numeric_task::Task;
+use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::evaluation::heuristic::Heuristic;

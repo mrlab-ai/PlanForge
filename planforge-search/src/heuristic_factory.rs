@@ -55,7 +55,7 @@ impl TaskRequirements {
     /// A task that is not restricted is a usage error, since `--restrict-task`
     /// would restrict it; a goal no abstraction can express is a task the
     /// heuristic does not support.
-    pub(crate) fn validate(self, task: &Task) -> Result<(), HeuristicBuildError> {
+    pub fn validate(self, task: &Task) -> Result<(), HeuristicBuildError> {
         if self.restricted {
             validate_restricted_task(task).map_err(HeuristicBuildError::Failure)?;
         }
@@ -352,7 +352,7 @@ pub enum HeuristicBuildError {
 impl HeuristicBuildError {
     /// The error building an abstraction source ended in, keeping whether
     /// the task was unsupported.
-    pub(crate) fn from_source(error: anyhow::Error, context: String) -> Self {
+    pub fn from_source(error: anyhow::Error, context: String) -> Self {
         let message = format!("{context}: {error:#}");
         if crate::unsupported::is_unsupported_task(&error) {
             Self::Unsupported(message)

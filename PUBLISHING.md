@@ -7,6 +7,7 @@ The crates.io release consists of these packages:
 - `planforge-translate`
 - `planforge-cplex`
 - `planforge-search`
+- `planforge-heuristics`
 - `planforge`
 
 Publish them in this order, waiting until each version is available from the
@@ -17,17 +18,20 @@ crates.io index before continuing:
 3. `planforge-translate`
 4. `planforge-cplex`
 5. `planforge-search`
-6. `planforge`
+6. `planforge-heuristics`
+7. `planforge`
 
 The primary pipeline order is `planforge-config-derive` → `planforge-sas` →
-`planforge-translate` → `planforge-search` → `planforge`. `planforge-cplex` precedes `planforge-search`, which optionally
+`planforge-translate` → `planforge-search` → `planforge-heuristics` →
+`planforge`. `planforge-cplex` precedes `planforge-search`, which optionally
 depends on it.
 
 `planforge-cplex` is safe to package and document without a local CPLEX
 installation because its native API is disabled by default. Enabling its
 `cplex` feature checks for the CPLEX headers and static library and fails with
-an installation-specific error if they are absent. The `planforge-search`
-`cplex` feature enables both the dependency and its native API.
+an installation-specific error if they are absent. The `planforge-heuristics`
+`cplex` feature enables both the dependency and its native API, and the
+search core's CPLEX check.
 
 The `planforge-py` package is distributed as a Python wheel and source archive
 through PyPI, not crates.io. The `tests` package and every package under

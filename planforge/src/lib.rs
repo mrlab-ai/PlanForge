@@ -88,14 +88,14 @@ pub fn init_logger(level: LevelFilter) {
 /// Registers PlanForge's heuristics unless they are registered already, for
 /// a program that uses the library rather than [`run_with_heuristics`].
 pub fn register_planforge_heuristics() {
-    ensure_heuristics_registered(planforge_search::evaluation::heuristics);
+    ensure_heuristics_registered(planforge_heuristics::heuristics);
 }
 
 /// Run the standard PlanForge CLI, with extra heuristics registered next to
 /// PlanForge's own. This is the supported way to ship your own heuristic
 /// inside the real binary.
 pub fn run_with_heuristics(extra: Vec<HeuristicEntry>) -> std::io::Result<()> {
-    let mut heuristics = planforge_search::evaluation::heuristics();
+    let mut heuristics = planforge_heuristics::heuristics();
     heuristics.extend(extra);
     register_heuristics(heuristics).map_err(std::io::Error::other)?;
 

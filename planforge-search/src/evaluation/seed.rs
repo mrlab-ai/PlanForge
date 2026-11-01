@@ -22,11 +22,11 @@ pub const DEFAULT_RANDOM_SEED: u64 = 0;
 /// `random_seed`, and the default `random_seed` of domain abstractions. Unlike
 /// [`DEFAULT_RANDOM_SEED`], it is not used by the other consumers of an unset
 /// seed.
-pub(crate) const RANDOM_SPLIT_SEED: u64 = 2011;
+pub const RANDOM_SPLIT_SEED: u64 = 2011;
 
 /// One step of SplitMix64: a bijection that spreads every input bit over the
 /// whole output.
-pub(crate) fn mix_seed(mut value: u64) -> u64 {
+pub fn mix_seed(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
     value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -35,14 +35,14 @@ pub(crate) fn mix_seed(mut value: u64) -> u64 {
 
 /// The 64-bit FNV-1a hash of `text`, a seed that does not depend on the
 /// process or the platform.
-pub(crate) fn stable_text_seed(text: &str) -> u64 {
+pub fn stable_text_seed(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
 
 /// The seed of variant `variant_id` of the member for goal `goal_id`.
-pub(crate) fn derive_variant_seed(base_seed: u64, goal_id: usize, variant_id: usize) -> u64 {
+pub fn derive_variant_seed(base_seed: u64, goal_id: usize, variant_id: usize) -> u64 {
     let goal = u64::try_from(goal_id).expect("goal id does not fit u64");
     let variant = u64::try_from(variant_id).expect("variant id does not fit u64");
     mix_seed(base_seed ^ goal.rotate_left(21) ^ variant.rotate_left(43))

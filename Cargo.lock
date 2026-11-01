@@ -360,6 +360,7 @@ dependencies = [
  "clap",
  "libc",
  "mimalloc",
+ "planforge-heuristics",
  "planforge-sas",
  "planforge-search",
  "planforge-translate",
@@ -382,9 +383,28 @@ name = "planforge-cplex"
 version = "0.1.0"
 
 [[package]]
+name = "planforge-heuristics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "itertools",
+ "ordered-float",
+ "planforge-config-derive",
+ "planforge-cplex",
+ "planforge-sas",
+ "planforge-search",
+ "planforge-translate",
+ "rand",
+ "rustc-hash",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "planforge-py"
 version = "0.1.0"
 dependencies = [
+ "planforge-heuristics",
  "planforge-sas",
  "planforge-search",
  "planforge-translate",
@@ -686,6 +706,7 @@ name = "tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "planforge-heuristics",
  "planforge-sas",
  "planforge-search",
  "planforge-translate",

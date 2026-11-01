@@ -1737,7 +1737,7 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
 #[pymodule]
 fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     planforge_search::heuristic_factory::ensure_heuristics_registered(
-        planforge_search::evaluation::heuristics,
+        planforge_heuristics::heuristics,
     );
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_class::<PySearchResult>()?;

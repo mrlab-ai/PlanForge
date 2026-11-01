@@ -1,53 +1,15 @@
-//! State evaluation and heuristic implementations.
+//! What every heuristic builds on: the [`Heuristic`] trait, the state it
+//! evaluates, and the shared helpers -- random walks, seeds and a per-state
+//! value cache. The heuristics themselves live in `planforge_heuristics`.
 
 use planforge_sas::numeric_task::Task;
-pub mod abstractions;
-pub mod check_admissible;
 pub mod evaluator;
-pub mod ff_heuristic;
 pub mod heuristic;
-pub(crate) mod maximal_cliques;
-pub mod maximum;
-pub mod numeric_landmarks;
-pub mod numeric_potentials;
-pub(crate) mod sampling;
+pub mod sampling;
 pub mod seed;
-pub(crate) mod state_value_cache;
+pub mod state_value_cache;
 pub use evaluator::{EvaluationError, EvaluationState};
 pub use heuristic::Heuristic;
-
-use crate::heuristic_factory::{HeuristicEntry, entry};
-use abstractions::cartesian::CartesianAbstractionCollectionConfig;
-use abstractions::domain::config::DomainAbstractionCollectionConfig;
-use abstractions::features::{CartesianFeature, DomainFeature, SourceFeature};
-use abstractions::icaps26::Icaps26CartesianConfig;
-use abstractions::sources::PdbSourceConfig;
-
-/// Every heuristic besides blind search, as a binary registers them.
-pub fn heuristics() -> Vec<HeuristicEntry> {
-    vec![
-        entry::<check_admissible::CheckAdmissibleFeature>(),
-        entry::<ff_heuristic::FfFeature>(),
-        entry::<numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericFeature>(),
-        entry::<numeric_potentials::NumericPotentialFeature>(),
-        entry::<DomainFeature>(),
-        entry::<CartesianFeature>(),
-        entry::<SourceFeature<DomainAbstractionCollectionConfig>>(),
-        entry::<SourceFeature<CartesianAbstractionCollectionConfig>>(),
-        entry::<SourceFeature<PdbSourceConfig>>(),
-        entry::<SourceFeature<Icaps26CartesianConfig>>(),
-        entry::<abstractions::cost_partitioning::max::MaxFeature>(),
-        entry::<abstractions::cost_partitioning::canonical::CanonicalFeature>(),
-        entry::<abstractions::cost_partitioning::saturated::ScpFeature>(),
-        entry::<abstractions::cost_partitioning::posthoc_optimization::PostHocFeature>(),
-    ]
-}
-
-/// Registers [`heuristics`] for a test process.
-#[cfg(test)]
-pub(crate) fn register_heuristics_for_tests() {
-    crate::heuristic_factory::ensure_heuristics_registered(heuristics);
-}
 
 /// Rejects a task whose goal an abstraction cannot express, naming the variable
 /// that makes it one.

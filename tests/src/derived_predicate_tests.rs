@@ -17,28 +17,28 @@
 //! proofs, whether its support graph is cyclic. That is what says the corpus
 //! reaches those code paths at all, rather than merely passing.
 
-use planforge_search::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use planforge_heuristics::abstractions::collections::generator::AbstractionGenerator;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use planforge_heuristics::abstractions::cartesian::{
+    CartesianAbstractionConfig, CartesianAbstractionGenerator,
+};
+use planforge_heuristics::abstractions::common::cegar::options::CegarOptions;
+use planforge_heuristics::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
+use planforge_heuristics::abstractions::domain::config::{
+    DomainAbstractionCollectionConfig, DomainAbstractionConfig,
+};
+use planforge_heuristics::landmarks::lm_cut_numeric_heuristic::{
+    LandmarkCutNumericHeuristic, LmCutNumericConfig,
+};
+use planforge_heuristics::relaxation::FfHeuristic;
 use planforge_sas::numeric_task::{Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::config::parse_call;
-use planforge_search::evaluation::abstractions::cartesian::{
-    CartesianAbstractionConfig, CartesianAbstractionGenerator,
-};
-use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
-use planforge_search::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
-use planforge_search::evaluation::abstractions::domain::config::{
-    DomainAbstractionCollectionConfig, DomainAbstractionConfig,
-};
-use planforge_search::evaluation::ff_heuristic::FfHeuristic;
 use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
-    LandmarkCutNumericHeuristic, LmCutNumericConfig,
-};
 use planforge_search::heuristic_factory::{BuildContext, HeuristicConfig};
 use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 
@@ -440,7 +440,7 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
     );
 
     planforge_search::heuristic_factory::ensure_heuristics_registered(
-        planforge_search::evaluation::heuristics,
+        planforge_heuristics::heuristics,
     );
     let task_ref: Arc<Task> = Arc::new(task.clone());
     let pdb = HeuristicConfig::from_spec(&parse_call("pdb(patterns=greedy())").unwrap())

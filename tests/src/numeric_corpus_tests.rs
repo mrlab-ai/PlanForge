@@ -10,15 +10,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use planforge_heuristics::landmarks::lm_cut_numeric_heuristic::{
+    LandmarkCutNumericHeuristic, LmCutNumericConfig,
+};
+use planforge_heuristics::landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericType, Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
-use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
-    LandmarkCutNumericHeuristic, LmCutNumericConfig,
-};
-use planforge_search::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
 
 use crate::corpus::{
