@@ -49,6 +49,12 @@ pub trait AbstractNumericTask: Send + Sync {
 
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool;
 
+    /// The mutex groups the translator found: within a group, at most one
+    /// fact holds in any reachable state. [`Self::are_facts_mutex`] answers
+    /// the pairwise question; a task derived from this one restricts the
+    /// groups to its own variables.
+    fn mutexes(&self) -> &[Vec<ExplicitFact>];
+
     fn operators(&self) -> &[Operator];
 
     fn goals(&self) -> &[ExplicitFact];
@@ -334,6 +340,10 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
         (**self).are_facts_mutex(fact1, fact2)
     }
+
+    fn mutexes(&self) -> &[Vec<ExplicitFact>] {
+        (**self).mutexes()
+    }
     fn operators(&self) -> &[Operator] {
         (**self).operators()
     }
@@ -431,7 +441,6 @@ pub fn debug_assert_fact_namespaces(task: &dyn AbstractNumericTask) {
 
 #[derive(Debug, PartialEq)]
 pub struct NumericRootTask {
-    version: u32,
     metric: Metric,
     variables: Vec<ExplicitVariable>,
     numeric_variables: Vec<NumericVariable>,
@@ -446,7 +455,7 @@ pub struct NumericRootTask {
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
     numeric_conditions: Arc<NumericConditions>,
-    global_constraint: ExplicitFact,
+    global_constraint: Option<ExplicitFact>,
 }
 
 /// Everything a root task is built from, before the invariants [`
@@ -460,7 +469,6 @@ pub struct NumericRootTask {
 /// variable ids, the numeric condition DAG, the fact namespaces and the axiom
 /// closure of the initial state, and none of those can be supplied.
 pub struct NumericRootTaskParts {
-    pub version: u32,
     pub metric: Metric,
     pub variables: Vec<ExplicitVariable>,
     pub numeric_variables: Vec<NumericVariable>,
@@ -474,13 +482,14 @@ pub struct NumericRootTaskParts {
     pub axioms: Vec<PropositionalAxiom>,
     pub comparison_axioms: Vec<ComparisonAxiom>,
     pub assignment_axioms: Vec<AssignmentAxiom>,
-    pub global_constraint: ExplicitFact,
+    /// The fact the translator requires to hold in every reachable state;
+    /// a task derived from another, such as a projection, has none.
+    pub global_constraint: Option<ExplicitFact>,
 }
 
 impl NumericRootTask {
     pub fn new(parts: NumericRootTaskParts) -> Self {
         let NumericRootTaskParts {
-            version,
             metric,
             variables,
             numeric_variables,
@@ -495,7 +504,6 @@ impl NumericRootTask {
             global_constraint,
         } = parts;
         let mut task = NumericRootTask {
-            version,
             metric,
             variables,
             numeric_variables,
@@ -646,7 +654,9 @@ impl NumericRootTask {
         for fact in self.mutexes.iter().flatten() {
             assert_task_fact(fact, "mutex");
         }
-        assert_task_fact(&self.global_constraint, "global constraint");
+        if let Some(global_constraint) = &self.global_constraint {
+            assert_task_fact(global_constraint, "global constraint");
+        }
 
         if !self.comparison_axioms.is_empty() {
             let last_arithmetic_layer = self
@@ -718,7 +728,7 @@ impl NumericRootTask {
         for axiom in &mut self.axioms {
             axiom.conditions_mut().iter_mut().for_each(retag);
         }
-        retag(&mut self.global_constraint);
+        self.global_constraint.iter_mut().for_each(retag);
     }
 
     /// Replace the initial state by its axiom closure.
@@ -743,24 +753,38 @@ impl NumericRootTask {
         self.numeric_state = numeric;
     }
 
-    /// The task's mutex groups.
-    ///
-    /// The search only ever asks whether two given facts are mutex, which is
-    /// what [`AbstractNumericTask::are_facts_mutex`] answers; this is for the
-    /// one caller that has to see the groups themselves rather than query them.
-    pub fn mutexes(&self) -> &[Vec<ExplicitFact>] {
-        &self.mutexes
-    }
-
     /// The fact that must hold in every reachable state.
     ///
-    /// The translator injects a global constraint into every task (see
-    /// `add_global_constraints`), so one is always present; for tasks without
-    /// real global constraints it is a derived atom that is unconditionally
-    /// true. The search engines never consult it, so a verifier that does is
-    /// strictly stronger than they are.
-    pub fn global_constraint(&self) -> &ExplicitFact {
-        &self.global_constraint
+    /// The translator injects a global constraint into every task it writes
+    /// (see `add_global_constraints`); for tasks without real global
+    /// constraints it is a derived atom that is unconditionally true. A task
+    /// derived from another, such as a projection, has none. The search
+    /// engines never consult it, so a verifier that does is strictly stronger
+    /// than they are.
+    pub fn global_constraint(&self) -> Option<&ExplicitFact> {
+        self.global_constraint.as_ref()
+    }
+
+    /// The task with `operator_costs` charged instead of the costs its metric
+    /// implies, for a task derived from another that keeps the other's costs
+    /// while dropping the variables its metric reads.
+    ///
+    /// # Panics
+    /// Panics unless there is one finite, non-negative cost per operator.
+    pub fn with_operator_costs(mut self, operator_costs: Vec<f64>) -> Self {
+        assert_eq!(
+            operator_costs.len(),
+            self.operators.len(),
+            "one cost per operator"
+        );
+        for (operator_id, &cost) in operator_costs.iter().enumerate() {
+            assert!(
+                cost.is_finite() && cost >= 0.0,
+                "operator {operator_id} costs {cost}, not a finite non-negative cost"
+            );
+        }
+        self.operator_costs = operator_costs;
+        self
     }
 
     pub fn from_file(file_name: impl AsRef<std::path::Path>) -> Self {
@@ -849,6 +873,10 @@ impl AbstractNumericTask for NumericRootTask {
             .fact_names
             .get(fact.value())
             .map_or("", String::as_str)
+    }
+
+    fn mutexes(&self) -> &[Vec<ExplicitFact>] {
+        &self.mutexes
     }
 
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
@@ -978,7 +1006,6 @@ mod root_task_invariants {
 
     fn valid_parts() -> NumericRootTaskParts {
         NumericRootTaskParts {
-            version: 4,
             metric: Metric::new(true, Some(VariableIndex::new(0))),
             variables: vec![ExplicitVariable::new(
                 2,
@@ -1003,7 +1030,7 @@ mod root_task_invariants {
             axioms: Vec::new(),
             comparison_axioms: Vec::new(),
             assignment_axioms: Vec::new(),
-            global_constraint: ExplicitFact::propositional(0, 0),
+            global_constraint: Some(ExplicitFact::propositional(0, 0)),
         }
     }
 
@@ -1075,7 +1102,7 @@ mod root_task_invariants {
     )]
     fn rejects_out_of_range_global_constraint_value() {
         let mut parts = valid_parts();
-        parts.global_constraint = ExplicitFact::propositional(0, 2);
+        parts.global_constraint = Some(ExplicitFact::propositional(0, 2));
         NumericRootTask::new(parts);
     }
 

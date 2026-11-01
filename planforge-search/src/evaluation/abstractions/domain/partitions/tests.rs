@@ -38,7 +38,6 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
     )];
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![condition_variable("x0 < c1", 0)],
         numeric_variables,
@@ -52,7 +51,7 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
         axioms: vec![],
         comparison_axioms,
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let conditions = task.numeric_conditions();
@@ -89,7 +88,6 @@ fn reachable_partitions_overlaps_result_interval() {
     ]];
 
     let dummy_task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -111,7 +109,7 @@ fn reachable_partitions_overlaps_result_interval() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let partitions = NumericPartitions::with_partitions(parts);
@@ -199,7 +197,6 @@ fn trivial_partitions_use_singletons_for_constants() {
     ];
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -217,7 +214,7 @@ fn trivial_partitions_use_singletons_for_constants() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let partitions = NumericPartitions::trivial(&task);
@@ -241,7 +238,6 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
     )];
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -259,7 +255,7 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let partitions = NumericPartitions::trivial(&task);
@@ -295,7 +291,6 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
     )];
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![condition_variable("d2 == x0", 1)],
         numeric_variables,
@@ -309,7 +304,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         axioms: vec![],
         comparison_axioms,
         assignment_axioms,
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     // x0 + x1 == x0 becomes the direct threshold x1 == 0.

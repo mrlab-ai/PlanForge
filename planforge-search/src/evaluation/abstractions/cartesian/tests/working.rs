@@ -5,7 +5,6 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 #[test]
 fn unchanged_transition_source_sets_share_state_dimensions() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -38,7 +37,7 @@ fn unchanged_transition_source_sets_share_state_dimensions() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let source = CartesianSet::with_all_props_constrained(
@@ -62,7 +61,6 @@ fn unchanged_transition_source_sets_share_state_dimensions() {
 #[test]
 fn finalized_abstractions_omit_zero_contribution_self_loops() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -86,7 +84,7 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 1),
+        global_constraint: Some(ExplicitFact::propositional(0, 1)),
     });
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         cegar: CegarOptions {
@@ -115,7 +113,6 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
 #[test]
 fn standalone_finalization_reuses_exact_distances_without_materializing_transitions() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -144,7 +141,7 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let generate = |keep_transitions| {
         CartesianAbstractionGenerator::new(CartesianAbstractionConfig {

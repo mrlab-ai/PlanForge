@@ -36,7 +36,6 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
         OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -64,7 +63,7 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
             VariableIndex::from_usize(0),
             VariableIndex::from_usize(1),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let restricted = build_restricted_task(&task)
@@ -162,7 +161,6 @@ fn a_unary_comparison_becomes_a_threshold_on_its_variable() {
         OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -188,7 +186,7 @@ fn a_unary_comparison_becomes_a_threshold_on_its_variable() {
             VariableIndex::from_usize(1),
             VariableIndex::from_usize(0),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     assert!(build_restricted_task(&task).unwrap().is_none());
@@ -257,7 +255,6 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
         OperatorCost::new(0),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, Some(VariableIndex::from_usize(4))),
         variables,
         numeric_variables,
@@ -285,7 +282,7 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
             VariableIndex::from_usize(1),
             VariableIndex::from_usize(0),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     assert!(build_restricted_task(&task).unwrap().is_none());
@@ -343,7 +340,6 @@ fn task_with_derived_metric() -> NumericRootTask {
         OperatorCost::new(0),
     );
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, Some(VariableIndex::from_usize(6))),
         variables,
         numeric_variables,
@@ -381,7 +377,7 @@ fn task_with_derived_metric() -> NumericRootTask {
                 VariableIndex::from_usize(5),
             ),
         ],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -423,7 +419,6 @@ fn restricted_task_returns_none_when_domain_has_no_derived_roots() {
         NumericVariable::new("limit".into(), NumericType::Constant, None),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -440,7 +435,7 @@ fn restricted_task_returns_none_when_domain_has_no_derived_roots() {
             ComparisonOperator::LessThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     assert!(build_restricted_task(&task).unwrap().is_none());
@@ -475,7 +470,6 @@ fn restricted_task_reports_unsupported_effect_as_error() {
         OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -502,7 +496,7 @@ fn restricted_task_reports_unsupported_effect_as_error() {
             VariableIndex::from_usize(0),
             VariableIndex::from_usize(1),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let error = build_restricted_task(&task).unwrap_err();

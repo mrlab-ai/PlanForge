@@ -99,7 +99,7 @@ fn unsatisfied_goals<T: AbstractNumericTask + ?Sized>(
 /// Replay `operators` from the task's initial state under exact semantics.
 ///
 /// Stops at the *first* state satisfying the goal and reports that prefix, so a
-/// sequence padded beyond the goal still verifies. `global_constraint` is
+/// sequence padded beyond the goal still verifies. A `global_constraint` is
 /// checked in every visited state, including the initial one.
 ///
 /// Errors are reserved for genuine failures of the state machinery (numeric
@@ -108,7 +108,7 @@ fn unsatisfied_goals<T: AbstractNumericTask + ?Sized>(
 pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
     task: &T,
     registry: &mut StateRegistry<'_>,
-    global_constraint: &ExplicitFact,
+    global_constraint: Option<&ExplicitFact>,
     operators: &[&Operator],
 ) -> Result<Replay, StateInsertError> {
     let initial = registry.get_initial_state();
@@ -122,7 +122,7 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
     for step in 0..=operators.len() {
         let current = &states[step];
 
-        if !global_constraint.is_held(registry.view(current)) {
+        if global_constraint.is_some_and(|constraint| !constraint.is_held(registry.view(current))) {
             return Ok(Replay {
                 outcome: ReplayOutcome::Rejected(PlanRejection::GlobalConstraintViolated { step }),
                 applied: states.len() - 1,

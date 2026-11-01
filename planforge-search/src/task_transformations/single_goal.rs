@@ -63,6 +63,10 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.are_facts_mutex(fact1, fact2)
     }
 
+    fn mutexes(&self) -> &[Vec<ExplicitFact>] {
+        self.base.mutexes()
+    }
+
     fn operators(&self) -> &[Operator] {
         self.base.operators()
     }

@@ -28,7 +28,6 @@ fn task_with_effects(
     metric_var: Option<VariableIndex>,
 ) -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, metric_var),
         variables: vec![ExplicitVariable::new(
             2,
@@ -62,7 +61,7 @@ fn task_with_effects(
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -174,7 +173,6 @@ fn effect_conditions_are_read_from_the_parent_state() {
     // one to `x`. The condition must be evaluated before the operator's own
     // propositional effect, so `x` stays 10.
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -219,7 +217,7 @@ fn effect_conditions_are_read_from_the_parent_state() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();

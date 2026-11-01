@@ -133,7 +133,6 @@ fn optimize_initial(task: NumericRootTask) -> (f64, f64) {
 #[test]
 fn one_step_classical_potential_equals_optimal_cost() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -162,7 +161,7 @@ fn one_step_classical_potential_equals_optimal_cost() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let (value, _) = optimize_initial(task);
     assert!((value - 1.0).abs() < 1e-7, "got {value}");
@@ -171,7 +170,6 @@ fn one_step_classical_potential_equals_optimal_cost() {
 #[test]
 fn additive_numeric_potential_equals_two_required_increments() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -214,7 +212,7 @@ fn additive_numeric_potential_equals_two_required_increments() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let (value, _) = optimize_initial(task);
     assert!((value - 2.0).abs() < 1e-7, "got {value}");
@@ -266,7 +264,6 @@ fn thirty_deterministic_random_duality_instances() {
             expected_ratio = expected_ratio.min(cost as f64 / delta);
         }
         let task = NumericRootTask::new(NumericRootTaskParts {
-            version: 4,
             metric: Metric::new(false, None),
             variables: vec![ExplicitVariable::new(
                 2,
@@ -289,7 +286,7 @@ fn thirty_deterministic_random_duality_instances() {
                 ComparisonOperator::GreaterThanOrEqual,
             )],
             assignment_axioms: vec![],
-            global_constraint: ExplicitFact::propositional(0, 0),
+            global_constraint: Some(ExplicitFact::propositional(0, 0)),
         });
         let (value, _) = optimize_initial(task);
         let expected = target * expected_ratio;
@@ -305,7 +302,6 @@ fn thirty_deterministic_random_duality_instances() {
 /// potential needs `x >= 2` and `y >= 3`, five unit increments.
 fn a_conjunctive_numeric_goal_keeps_its_comparisons_separate() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -398,7 +394,7 @@ fn a_conjunctive_numeric_goal_keeps_its_comparisons_separate() {
             ),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(2, 0),
+        global_constraint: Some(ExplicitFact::propositional(2, 0)),
     });
     let (value, _) = optimize_initial(task);
     assert!((value - 5.0).abs() < 1e-7, "got {value}");
@@ -425,7 +421,6 @@ fn a_multivariate_goal_comparison_is_a_feature() {
         )
     };
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -474,7 +469,7 @@ fn a_multivariate_goal_comparison_is_a_feature() {
             VariableIndex::new(0),
             VariableIndex::new(1),
         )],
-        global_constraint: ExplicitFact::propositional(1, 0),
+        global_constraint: Some(ExplicitFact::propositional(1, 0)),
     });
     let (value, _) = optimize_initial(task);
     assert!((value - 3.0).abs() < 1e-7, "got {value}");
@@ -483,7 +478,6 @@ fn a_multivariate_goal_comparison_is_a_feature() {
 #[test]
 fn classical_only_mode_ignores_numeric_action_conditions() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -532,7 +526,7 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(1, 0),
+        global_constraint: Some(ExplicitFact::propositional(1, 0)),
     }));
     let mut config = NumericPotentialConfig::default();
     config.ignore_numeric_variables = true;
@@ -553,7 +547,6 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
 #[test]
 fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -622,7 +615,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(1, 0),
+        global_constraint: Some(ExplicitFact::propositional(1, 0)),
     }));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
@@ -677,7 +670,6 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
         BoundsProvider::All,
     ] {
         let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-            version: 4,
             metric: Metric::new(false, None),
             variables: vec![ExplicitVariable::new(
                 2,
@@ -720,7 +712,7 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
                 ComparisonOperator::GreaterThanOrEqual,
             )],
             assignment_axioms: vec![],
-            global_constraint: ExplicitFact::propositional(0, 0),
+            global_constraint: Some(ExplicitFact::propositional(0, 0)),
         }));
         let mut registry = StateRegistry::for_task(task.clone());
         let initial = registry.get_initial_state();
@@ -740,7 +732,6 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
 #[test]
 fn exact_ray_certifies_numeric_dead_end() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -783,7 +774,7 @@ fn exact_ray_certifies_numeric_dead_end() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
@@ -810,7 +801,6 @@ fn exact_ray_certifies_numeric_dead_end() {
 #[test]
 fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -848,7 +838,7 @@ fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let potential_task =
         PotentialTask::build(&task, 1e-6, 0.0, false, BoundsProvider::Monotone, false).unwrap();
@@ -864,7 +854,6 @@ fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
 #[test]
 fn impossible_reachable_bounds_skip_the_ordinary_lp() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -907,7 +896,7 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let config = NumericPotentialConfig {
         bounds: BoundsProvider::Monotone,
@@ -932,7 +921,6 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
 /// effects: only increases, from `-2` in the initial state.
 fn an_affine_comparison_is_one_linear_feature() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![
             ExplicitVariable::new(
@@ -1048,7 +1036,7 @@ fn an_affine_comparison_is_one_linear_feature() {
                 VariableIndex::new(0),
             ),
         ],
-        global_constraint: ExplicitFact::propositional(1, 0),
+        global_constraint: Some(ExplicitFact::propositional(1, 0)),
     }));
     let potential_task =
         PotentialTask::build(&*task, 1e-6, 0.0, false, BoundsProvider::All, false).unwrap();

@@ -126,7 +126,9 @@ fn tagged_facts(task: &NumericRootTask) -> Vec<TaggedSection> {
     let mut sections = vec![("goals".to_owned(), tagged(task.goals()))];
     sections.push((
         "global constraint".to_owned(),
-        tagged(&[*task.global_constraint()]),
+        tagged(&[*task
+            .global_constraint()
+            .expect("a translated task has a global constraint")]),
     ));
     for (mutex_id, mutex) in task.mutexes().iter().enumerate() {
         sections.push((format!("mutex group {mutex_id}"), tagged(mutex)));

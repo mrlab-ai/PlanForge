@@ -20,7 +20,6 @@ fn binary_var(name: &str) -> ExplicitVariable {
 /// `open` sets the goal `door` and needs the `key`, which `fetch` gets.
 fn key_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![binary_var("key"), binary_var("door")],
         numeric_variables: vec![],
@@ -57,7 +56,7 @@ fn key_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

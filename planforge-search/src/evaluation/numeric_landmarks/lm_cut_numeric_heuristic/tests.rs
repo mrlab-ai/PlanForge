@@ -31,7 +31,6 @@ fn lmcutnumeric_config_defaults_match_fd_parser_defaults() {
 #[test]
 fn from_config_accepts_second_order_simple_flag() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 3,
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -43,7 +42,7 @@ fn from_config_accepts_second_order_simple_flag() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let config = LmCutNumericConfig {
         use_second_order_simple: true,
@@ -58,7 +57,6 @@ fn from_config_accepts_second_order_simple_flag() {
 #[test]
 fn from_config_accepts_irmax() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 3,
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -70,7 +68,7 @@ fn from_config_accepts_irmax() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let config = LmCutNumericConfig {
         irmax: true,
@@ -86,7 +84,6 @@ fn from_config_accepts_irmax() {
 #[test]
 fn from_config_accepts_disable_ma() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 3,
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -98,7 +95,7 @@ fn from_config_accepts_disable_ma() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let config = LmCutNumericConfig {
         disable_ma: true,
@@ -114,7 +111,6 @@ fn from_config_accepts_disable_ma() {
 #[test]
 fn from_config_accepts_constant_assignment() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 3,
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -126,7 +122,7 @@ fn from_config_accepts_constant_assignment() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let config = LmCutNumericConfig {
         use_constant_assignment: true,
@@ -142,7 +138,6 @@ fn from_config_accepts_constant_assignment() {
 #[test]
 fn from_config_accepts_bound_iterations() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 3,
         metric: Metric::new(true, None),
         variables: vec![simple_var("v0", &["zero", "one"], None)],
         numeric_variables: vec![],
@@ -154,7 +149,7 @@ fn from_config_accepts_bound_iterations() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let config = LmCutNumericConfig {
         bound_iterations: 1,

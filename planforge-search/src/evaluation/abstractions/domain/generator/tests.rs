@@ -71,7 +71,6 @@ fn one_dimensional_sailing_like_task() -> NumericRootTask {
     );
 
     NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -92,7 +91,7 @@ fn one_dimensional_sailing_like_task() -> NumericRootTask {
             ComparisonOperator::GreaterThan,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -132,7 +131,6 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
         OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -144,7 +142,7 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let config = DomainAbstractionConfig {
@@ -188,7 +186,6 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
         ExplicitValueIndex::new(0),
     )];
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -200,7 +197,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let outcome = refine_domain_abstraction(
@@ -230,7 +227,6 @@ fn blacklisted_propositional_vars_are_not_refined() {
         ExplicitValueIndex::new(0),
     )];
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -242,7 +238,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let scope = RefinementScope {
@@ -270,7 +266,6 @@ fn init_value_split_separates_the_initial_value() {
         ExplicitValueIndex::new(0),
     )];
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
@@ -282,7 +277,7 @@ fn init_value_split_separates_the_initial_value() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let config = DomainAbstractionConfig {
@@ -422,7 +417,6 @@ fn backward_splits_build_goal_side_partitions() {
 /// A counter `x` from `initial` with the goal `x >= 20` and a unit increment.
 fn counter_to_twenty(initial: f64) -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,
@@ -461,7 +455,7 @@ fn counter_to_twenty(initial: f64) -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

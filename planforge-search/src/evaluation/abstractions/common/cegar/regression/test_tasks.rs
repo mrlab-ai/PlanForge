@@ -55,7 +55,6 @@ fn compare(var: usize, left: usize, right: usize, op: ComparisonOperator) -> Com
 /// unconditionally. Numeric variables: `x`, `one`, `three`.
 pub(crate) fn jump_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-at-least-three"),
@@ -92,7 +91,7 @@ pub(crate) fn jump_task() -> NumericRootTask {
             compare(1, 0, 1, ComparisonOperator::GreaterThanOrEqual),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -102,7 +101,6 @@ pub(crate) fn jump_task() -> NumericRootTask {
 /// `x + y >= 1`; the coordinate `sum = x + y` does.
 pub(crate) fn linear_goal_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("sum-at-most-zero"),
@@ -159,7 +157,7 @@ pub(crate) fn linear_goal_task() -> NumericRootTask {
             VariableIndex::from_usize(0),
             VariableIndex::from_usize(1),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -169,7 +167,6 @@ pub(crate) fn linear_goal_task() -> NumericRootTask {
 /// violates. Numeric variables: `x`, `y`, `zero`, `one`, `two`.
 pub(crate) fn blocked_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("y-at-least-one"),
@@ -214,7 +211,7 @@ pub(crate) fn blocked_task() -> NumericRootTask {
             compare(2, 1, 2, ComparisonOperator::LessThanOrEqual),
         ],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -235,7 +232,6 @@ pub(crate) fn diagonal_task() -> NumericRootTask {
         )
     };
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             comparison_variable("x-equals-y"),
@@ -280,6 +276,6 @@ pub(crate) fn diagonal_task() -> NumericRootTask {
                 (VariableIndex::new(1), -ONE_VALUE),
             ],
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }

@@ -36,7 +36,6 @@ fn refines_through_a_comparison_goal() {
         OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -57,7 +56,7 @@ fn refines_through_a_comparison_goal() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
@@ -273,7 +272,6 @@ fn supports_multiplicative_numeric_effects() {
 
 fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -306,7 +304,7 @@ fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTa
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

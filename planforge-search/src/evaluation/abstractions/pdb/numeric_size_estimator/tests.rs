@@ -9,7 +9,6 @@ use super::*;
 #[test]
 fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             3,
@@ -47,7 +46,7 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let estimator = NumericSizeEstimator::new(&task);
@@ -62,7 +61,6 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
 #[should_panic(expected = "numeric PDB size estimation requires a restricted task")]
 fn rejects_unrestricted_numeric_conditions() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             3,
@@ -114,7 +112,7 @@ fn rejects_unrestricted_numeric_conditions() {
             VariableIndex::from_usize(2),
             VariableIndex::from_usize(3),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let _ = NumericSizeEstimator::new(&task);

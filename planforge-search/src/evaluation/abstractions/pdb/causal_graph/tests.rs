@@ -20,7 +20,6 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
 #[test]
 fn causal_graph_collects_operator_and_axiom_dependencies() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             simple_var("pre", None),
@@ -79,7 +78,7 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let graph = CausalGraph::new(&task).unwrap();
@@ -107,7 +106,6 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
 #[test]
 fn restricted_causal_graph_tracks_numeric_effect_sources() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("p", None)],
         numeric_variables: vec![
@@ -134,7 +132,7 @@ fn restricted_causal_graph_tracks_numeric_effect_sources() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let graph = CausalGraph::new(&task).unwrap();

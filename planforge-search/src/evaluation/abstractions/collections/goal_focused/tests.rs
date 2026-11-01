@@ -76,7 +76,6 @@ fn counter_task_parts(bounds: &[Bound]) -> NumericRootTaskParts {
         state.push(ExplicitValueIndex::from_usize(usize::from(!holds)));
     }
     NumericRootTaskParts {
-        version: 2,
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
@@ -102,7 +101,7 @@ fn counter_task_parts(bounds: &[Bound]) -> NumericRootTaskParts {
         axioms: vec![],
         comparison_axioms,
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }
 }
 

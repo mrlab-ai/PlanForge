@@ -27,7 +27,6 @@ fn default_matches_fd_default() {
 #[test]
 fn goal_cg_level_prefers_goal_numeric_variables() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![simple_var("cmp", Some(0))],
         numeric_variables: vec![
@@ -47,7 +46,7 @@ fn goal_cg_level_prefers_goal_numeric_variables() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
     let mut order = VariableOrderFinder::new(&task, GreedyVariableOrderType::GoalCgLevel, true, 0);
 

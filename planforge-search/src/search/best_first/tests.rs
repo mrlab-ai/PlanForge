@@ -34,7 +34,6 @@ fn solved_cost(result: &SearchResult) -> f64 {
 #[test]
 fn metric_operator_costs_are_the_constant_increments() {
     // Metric var 0 (cost), incremented by constants 1 and 2.
-    let version = 4;
     let metric = Metric::new(true, Some(VariableIndex::from_usize(0)));
 
     let variables = vec![ExplicitVariable::new(
@@ -79,7 +78,6 @@ fn metric_operator_costs_are_the_constant_increments() {
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version,
         metric,
         variables,
         numeric_variables,
@@ -95,7 +93,7 @@ fn metric_operator_costs_are_the_constant_increments() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let task: TaskRef = Arc::new(task);
@@ -152,7 +150,6 @@ impl Heuristic for FailingHeuristic {
 #[test]
 fn initial_evaluation_error_is_not_reported_as_no_solution() {
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             1,
@@ -170,7 +167,7 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let search = AStarSearch::new(
         task.clone(),

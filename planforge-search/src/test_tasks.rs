@@ -11,7 +11,6 @@ use planforge_sas::numeric_task::{
 /// goal `goal`, and one unit-cost operator `finish` from `start` to `goal`.
 pub(crate) fn one_step_task() -> TaskRef<'static> {
     Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(false, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -40,6 +39,6 @@ pub(crate) fn one_step_task() -> TaskRef<'static> {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }))
 }

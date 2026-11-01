@@ -10,7 +10,6 @@ use planforge_sas::{
 use std::sync::Arc;
 
 fn get_root_task() -> NumericRootTask {
-    let version = 4;
     let metric = Metric::new(true, Some(VariableIndex::from_usize(1)));
     let variables = vec![
         ExplicitVariable::new(
@@ -60,7 +59,6 @@ fn get_root_task() -> NumericRootTask {
     let assignment_axioms = Vec::new();
     let global_constraint = ExplicitFact::propositional(0, 0);
     NumericRootTask::new(NumericRootTaskParts {
-        version,
         metric,
         variables,
         numeric_variables,
@@ -72,7 +70,7 @@ fn get_root_task() -> NumericRootTask {
         axioms,
         comparison_axioms,
         assignment_axioms,
-        global_constraint,
+        global_constraint: Some(global_constraint),
     })
 }
 
@@ -103,7 +101,6 @@ fn immediate_list_straddling_task() -> NumericRootTask {
         )
     };
     NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables,
         numeric_variables: vec![NumericVariable::new(
@@ -123,7 +120,7 @@ fn immediate_list_straddling_task() -> NumericRootTask {
         axioms: Vec::new(),
         comparison_axioms: Vec::new(),
         assignment_axioms: Vec::new(),
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -332,7 +329,6 @@ fn one_condition_per_variable_task(n: usize) -> NumericRootTask {
         })
         .collect();
     NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
         metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables,
         numeric_variables: vec![NumericVariable::new(
@@ -348,7 +344,7 @@ fn one_condition_per_variable_task(n: usize) -> NumericRootTask {
         axioms: Vec::new(),
         comparison_axioms: Vec::new(),
         assignment_axioms: Vec::new(),
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

@@ -9,7 +9,6 @@ use super::*;
 /// `left` and changes nothing.
 fn prevail_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             2,
@@ -33,7 +32,7 @@ fn prevail_task() -> NumericRootTask {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 

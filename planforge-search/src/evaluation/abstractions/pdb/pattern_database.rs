@@ -2,8 +2,6 @@
 mod tests;
 
 use planforge_sas::explicit_state::StateValues;
-use planforge_sas::numeric_task::VariableIndex;
-use planforge_sas::numeric_task::VariableKind;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -12,7 +10,8 @@ use std::sync::Arc;
 
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericRootTask, NumericValue,
+    OperatorIndex, TaskRef, VariableIndex, VariableKind,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
@@ -98,7 +97,7 @@ pub struct PdbBuildConfig {
 /// at least the cheapest operator cost, as its distance. The goal distances
 /// then follow by backward Dijkstra from the goal and frontier states.
 pub struct PatternDatabase<'task> {
-    task: Arc<ProjectedTask<'task>>,
+    task: Arc<ProjectedTask>,
     states: AbstractStates<'task>,
     /// The goal distance of every abstract state, by id; infinite for a
     /// state from which neither a goal nor the frontier is reachable.
@@ -116,7 +115,7 @@ pub struct PatternDatabase<'task> {
 impl<'task> PatternDatabase<'task> {
     /// The pattern database over `task` with blind inner heuristics, keeping
     /// its transitions.
-    pub fn new(task: ProjectedTask<'task>, max_states: usize) -> Result<Self, String> {
+    pub fn new(task: ProjectedTask, max_states: usize) -> Result<Self, String> {
         Self::build(
             task,
             PdbBuildConfig {
@@ -127,9 +126,9 @@ impl<'task> PatternDatabase<'task> {
         )
     }
 
-    pub fn build(task: ProjectedTask<'task>, config: PdbBuildConfig) -> Result<Self, String> {
+    pub fn build(task: ProjectedTask, config: PdbBuildConfig) -> Result<Self, String> {
         let task = Arc::new(task);
-        let task_ref: TaskRef<'task> = task.clone();
+        let task_ref: TaskRef<'task> = task.task().clone();
         let mut registry = StateRegistry::for_task(task_ref.clone());
         let mut inner = InnerHeuristics {
             lmcut: config
@@ -144,7 +143,7 @@ impl<'task> PatternDatabase<'task> {
             usize::MAX
         };
         let exploration = explore(
-            &task,
+            task.task(),
             &mut registry,
             max_new_states,
             config.heuristics.exploration_heuristic,
@@ -162,7 +161,7 @@ impl<'task> PatternDatabase<'task> {
             .collect();
         for &state_id in &transitions.frontier {
             let state = ConcreteState::new(state_id);
-            if registry.view(&state).holds_all(task.goals()) {
+            if registry.view(&state).holds_all(task.task().goals()) {
                 seeds.push((state_id, 0.0));
             } else if let Some(h) =
                 inner.estimate(config.heuristics.frontier_heuristic, state_id, &registry)
@@ -170,8 +169,8 @@ impl<'task> PatternDatabase<'task> {
                 seeds.push((state_id, h.max(min_operator_cost)));
             }
         }
-        let distances =
-            transitions.backward_dijkstra(&seeds, |operator_id| task.operator_cost(operator_id));
+        let distances = transitions
+            .backward_dijkstra(&seeds, |operator_id| task.task().operator_cost(operator_id));
 
         let mut relevant_operator_ids: Vec<OperatorIndex> = if exhausted {
             transitions
@@ -257,7 +256,7 @@ impl<'task> PatternDatabase<'task> {
         if self.exhausted {
             return f64::INFINITY;
         }
-        if is_goal(self.task.goals(), &scratch.propositional) {
+        if is_goal(self.task.task().goals(), &scratch.propositional) {
             return 0.0;
         }
         match &self.failed_lookup {
@@ -416,7 +415,7 @@ impl DenseStates {
     /// The dense table of the states in `registry`, or `None` when the
     /// projection has numeric input variables or too many value combinations
     /// for its reached states.
-    fn new(task: &ProjectedTask<'_>, registry: &StateRegistry<'_>) -> Option<Self> {
+    fn new(task: &ProjectedTask, registry: &StateRegistry<'_>) -> Option<Self> {
         if task.has_regular_numeric_variables() {
             return None;
         }
@@ -426,8 +425,12 @@ impl DenseStates {
             .max(Self::MIN_SLOTS);
         let mut variables = Vec::new();
         let mut num_slots = 1usize;
-        for (projected, variable) in task.variables().iter().enumerate() {
-            if task.variable_kind(VariableIndex::from_usize(projected)) != VariableKind::Regular {
+        for (projected, variable) in task.task().variables().iter().enumerate() {
+            if task
+                .task()
+                .variable_kind(VariableIndex::from_usize(projected))
+                != VariableKind::Regular
+            {
                 continue;
             }
             variables.push(DenseVariable {
@@ -589,7 +592,7 @@ struct OpenEntry {
 /// state is pushed again whenever it is generated while not yet expanded, and
 /// a blind exploration orders by `g` alone.
 fn explore(
-    task: &ProjectedTask<'_>,
+    task: &NumericRootTask,
     registry: &mut StateRegistry<'_>,
     max_new_states: usize,
     heuristic: PdbInternalHeuristic,

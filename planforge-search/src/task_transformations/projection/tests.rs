@@ -23,7 +23,6 @@ fn variable(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
 
 fn restricted_sample_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             variable("p", None),
@@ -74,7 +73,7 @@ fn restricted_sample_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -90,14 +89,14 @@ fn projection_builds_a_compact_restricted_transition_system() {
     )
     .unwrap();
 
-    assert_eq!(projected.variables().len(), 2);
-    assert_eq!(projected.numeric_variables().len(), 2);
-    assert_eq!(projected.operators().len(), 1);
-    assert_eq!(projected.comparison_axioms().len(), 1);
-    assert_eq!(projected.axioms().len(), 0);
-    assert_eq!(projected.goals().len(), 1);
+    assert_eq!(projected.task().variables().len(), 2);
+    assert_eq!(projected.task().numeric_variables().len(), 2);
+    assert_eq!(projected.task().operators().len(), 1);
+    assert_eq!(projected.task().comparison_axioms().len(), 1);
+    assert_eq!(projected.task().axioms().len(), 0);
+    assert_eq!(projected.task().goals().len(), 1);
     assert_eq!(
-        projected.initial_numeric_values(),
+        projected.task().initial_numeric_values(),
         &[NumericValue::new(0.0), NumericValue::new(10.0)]
     );
 }
@@ -113,16 +112,16 @@ fn borrowed_task_extension_methods_preserve_projected_overrides() {
         },
     )
     .unwrap();
-    let task_object: &dyn AbstractNumericTask = &projected;
+    let task_object: &dyn AbstractNumericTask = &**projected.task();
     let forwarded: &dyn AbstractNumericTask = &task_object;
 
     assert_eq!(
         forwarded.evaluate_initial_state_values().unwrap(),
-        projected.evaluate_initial_state_values().unwrap()
+        projected.task().evaluate_initial_state_values().unwrap()
     );
     assert_eq!(
         forwarded.operator_cost(OperatorIndex::new(0)),
-        projected.operator_cost(OperatorIndex::new(0))
+        projected.task().operator_cost(OperatorIndex::new(0))
     );
 }
 
@@ -143,7 +142,6 @@ fn projection_rejects_an_unrestricted_task() {
         .map(|variable| variable.with_axiom_layer(variable.axiom_layer().map(|layer| layer + 1)))
         .collect();
     let unrestricted = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: task.metric().clone(),
         variables,
         numeric_variables,
@@ -169,7 +167,7 @@ fn projection_rejects_an_unrestricted_task() {
             VariableIndex::from_usize(1),
             VariableIndex::from_usize(1),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let result = ProjectedTask::new(
@@ -188,7 +186,6 @@ fn projection_rejects_an_unrestricted_task() {
 #[test]
 fn projection_rejects_derived_pattern_variables() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![variable("p", None)],
         numeric_variables: vec![
@@ -213,7 +210,7 @@ fn projection_rejects_derived_pattern_variables() {
             VariableIndex::from_usize(0),
             VariableIndex::from_usize(1),
         )],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let result = ProjectedTask::new(
@@ -235,7 +232,6 @@ fn projection_rejects_derived_pattern_variables() {
 #[test]
 fn projection_closes_over_numeric_effect_sources() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![variable("p", None)],
         numeric_variables: vec![
@@ -262,7 +258,7 @@ fn projection_closes_over_numeric_effect_sources() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let projected = ProjectedTask::new(
@@ -274,8 +270,8 @@ fn projection_closes_over_numeric_effect_sources() {
     )
     .unwrap();
 
-    assert_eq!(projected.numeric_variables().len(), 2);
-    let effect = &projected.operators()[0].assignment_effects()[0];
+    assert_eq!(projected.task().numeric_variables().len(), 2);
+    let effect = &projected.task().operators()[0].assignment_effects()[0];
     assert_eq!(effect.affected_var_id(), VariableIndex::from_usize(0));
     assert_eq!(effect.var_id(), VariableIndex::from_usize(1));
 }
@@ -283,7 +279,6 @@ fn projection_closes_over_numeric_effect_sources() {
 #[test]
 fn projection_computes_transitive_numeric_effect_source_closure() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![variable("p", None)],
         numeric_variables: vec![
@@ -330,7 +325,7 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let projected = ProjectedTask::new(
@@ -342,10 +337,10 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
     )
     .unwrap();
 
-    assert_eq!(projected.numeric_variables().len(), 3);
-    assert_eq!(projected.operators().len(), 2);
+    assert_eq!(projected.task().numeric_variables().len(), 3);
+    assert_eq!(projected.task().operators().len(), 2);
     assert_eq!(
-        projected.operators()[0].assignment_effects()[0].var_id(),
+        projected.task().operators()[0].assignment_effects()[0].var_id(),
         VariableIndex::from_usize(2)
     );
 }
@@ -353,7 +348,6 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
 #[test]
 fn projection_closes_over_selected_comparison_operands() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
             ConditionValue::DOMAIN_SIZE,
@@ -379,7 +373,7 @@ fn projection_closes_over_selected_comparison_operands() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let projected = ProjectedTask::new(
@@ -391,9 +385,9 @@ fn projection_closes_over_selected_comparison_operands() {
     )
     .unwrap();
 
-    assert_eq!(projected.numeric_variables().len(), 2);
-    assert_eq!(projected.comparison_axioms().len(), 1);
-    assert_eq!(projected.goals().len(), 1);
+    assert_eq!(projected.task().numeric_variables().len(), 2);
+    assert_eq!(projected.task().comparison_axioms().len(), 1);
+    assert_eq!(projected.task().goals().len(), 1);
 }
 
 /// A task whose comparison verdict is *false* in the initial state, read at that
@@ -410,7 +404,6 @@ fn projection_closes_over_selected_comparison_operands() {
 /// axiom closure, not by the goal.
 fn task_reading_a_failed_comparison() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             variable("global-constraint", None),
@@ -468,7 +461,7 @@ fn task_reading_a_failed_comparison() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -500,6 +493,7 @@ fn a_failed_comparison_verdict_reaches_the_horn_rules_once() {
     .unwrap();
     assert_eq!(
         projected
+            .task()
             .variables()
             .iter()
             .map(ExplicitVariable::axiom_layer)
@@ -509,7 +503,7 @@ fn a_failed_comparison_verdict_reaches_the_horn_rules_once() {
          excluding the deepest layer would already exclude the comparison"
     );
 
-    let (values, _numeric) = projected.evaluated_initial_state_values().unwrap();
+    let values = projected.task().initial_propositional_values();
     assert_eq!(
         values[1],
         ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
@@ -530,7 +524,6 @@ fn a_failed_comparison_verdict_reaches_the_horn_rules_once() {
 #[test]
 fn projected_axioms_drop_omitted_conditions_admissibly() {
     let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             variable("condition", None),
@@ -555,7 +548,7 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
         )],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     });
 
     let projected = ProjectedTask::new(
@@ -569,10 +562,10 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
 
     // Only `derived`: the pattern holds it, and the goal names `target`, which
     // the pattern omits, so the projected task keeps no goal at all.
-    assert_eq!(projected.variables().len(), 1);
-    assert_eq!(projected.goals().len(), 0);
-    assert_eq!(projected.axioms().len(), 1);
-    assert!(projected.axioms()[0].conditions().is_empty());
+    assert_eq!(projected.task().variables().len(), 1);
+    assert_eq!(projected.task().goals().len(), 0);
+    assert_eq!(projected.task().axioms().len(), 1);
+    assert!(projected.task().axioms()[0].conditions().is_empty());
 }
 
 #[test]
@@ -610,7 +603,6 @@ fn source_state_projection_is_a_direct_index_mapping() {
 /// `inc-x` raises `x`, and `use` needs `x >= limit` to reach the goal `p`.
 fn comparison_precondition_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
         metric: Metric::new(true, None),
         variables: vec![
             variable("p", None),
@@ -674,7 +666,7 @@ fn comparison_precondition_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
+        global_constraint: Some(ExplicitFact::propositional(0, 0)),
     })
 }
 
@@ -690,9 +682,10 @@ fn projection_keeps_preconditions_on_comparisons_over_its_numeric_variables() {
     )
     .unwrap();
 
-    assert_eq!(projected.variables().len(), 2);
-    assert_eq!(projected.comparison_axioms().len(), 1);
+    assert_eq!(projected.task().variables().len(), 2);
+    assert_eq!(projected.task().comparison_axioms().len(), 1);
     let use_operator = projected
+        .task()
         .operators()
         .iter()
         .find(|operator| operator.name() == "use")
@@ -709,7 +702,7 @@ fn projection_without_the_comparison_operand_drops_the_precondition() {
     )
     .unwrap();
 
-    assert_eq!(projected.variables().len(), 1);
-    assert!(projected.comparison_axioms().is_empty());
-    assert!(projected.operators()[0].preconditions().is_empty());
+    assert_eq!(projected.task().variables().len(), 1);
+    assert!(projected.task().comparison_axioms().is_empty());
+    assert!(projected.task().operators()[0].preconditions().is_empty());
 }
