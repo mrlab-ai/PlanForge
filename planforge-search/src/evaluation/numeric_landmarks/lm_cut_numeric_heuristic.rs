@@ -12,6 +12,7 @@ use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::state_value_cache::StateValueCache;
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
+use super::operator_conditions::ConditionTableLayout;
 
 /// The options of numeric LM-cut, with the defaults of numeric Fast
 /// Downward's option parser.
@@ -26,6 +27,9 @@ pub struct LmCutNumericConfig {
     pub bound_iterations: usize,
     pub precision: f64,
     pub epsilon: f64,
+    /// How the operator-condition table is stored; `sparse` saves memory on
+    /// tasks with many operators and numeric conditions.
+    pub condition_table: ConditionTableLayout,
 }
 
 impl Default for LmCutNumericConfig {
@@ -40,6 +44,7 @@ impl Default for LmCutNumericConfig {
             bound_iterations: 0,
             precision: 0.000_001,
             epsilon: 0.0,
+            condition_table: ConditionTableLayout::Dense,
         }
     }
 }
@@ -48,7 +53,7 @@ impl fmt::Display for LmCutNumericConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "ceiling_less_than_one={}, ignore_numeric={}, irmax={}, disable_ma={}, use_second_order_simple={}, use_constant_assignment={}, bound_iterations={}, precision={}, epsilon={}",
+            "ceiling_less_than_one={}, ignore_numeric={}, irmax={}, disable_ma={}, use_second_order_simple={}, use_constant_assignment={}, bound_iterations={}, precision={}, epsilon={}, condition_table={}",
             self.ceiling_less_than_one,
             self.ignore_numeric,
             self.irmax,
@@ -58,6 +63,7 @@ impl fmt::Display for LmCutNumericConfig {
             self.bound_iterations,
             self.precision,
             self.epsilon,
+            self.condition_table,
         )
     }
 }
