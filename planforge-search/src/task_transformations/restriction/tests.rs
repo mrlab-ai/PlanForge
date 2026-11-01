@@ -2,7 +2,7 @@ use planforge_sas::axioms::CalOperator;
 use planforge_sas::axioms::ComparisonOperator;
 use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::{
-    ExplicitValueIndex, ExplicitVariable, NumericValue, OperatorCost, VariableIndex,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, NumericValue, OperatorCost, VariableIndex,
 };
 
 use super::*;
@@ -103,34 +103,6 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
     assert!(
         build_restricted_task(transformed).unwrap().is_none(),
         "applying task restriction twice must be a no-op"
-    );
-
-    let icaps = build_icaps26_restricted_task(&task)
-        .unwrap()
-        .expect("ICAPS translation should materialize the multivariate condition");
-    let icaps = icaps.task();
-    let auxiliary_id = icaps
-        .numeric_variables()
-        .iter()
-        .position(|variable| variable.name() == "icaps26-condition-0")
-        .expect("ICAPS condition auxiliary is missing");
-    assert_eq!(
-        icaps.initial_numeric_values()[auxiliary_id],
-        NumericValue::new(-5.0)
-    );
-    assert_eq!(
-        icaps.comparison_axioms()[0].get_left_var_id(),
-        VariableIndex::from_usize(auxiliary_id)
-    );
-    let auxiliary_effect = icaps.operators()[0]
-        .assignment_effects()
-        .iter()
-        .find(|effect| effect.affected_var_id() == VariableIndex::from_usize(auxiliary_id))
-        .expect("operator must update the ICAPS condition auxiliary");
-    assert_eq!(auxiliary_effect.operation(), &AssignmentOperation::Plus);
-    assert_eq!(
-        icaps.initial_numeric_values()[auxiliary_effect.var_id().index()],
-        NumericValue::new(1.0)
     );
 }
 
@@ -409,14 +381,6 @@ fn restricted_task_preserves_derived_metric_cost() {
     let task = task_with_derived_metric();
     assert_eq!(task.operator_cost(OperatorIndex::new(0)), 2.0);
     let restricted = build_restricted_task(&task)
-        .unwrap()
-        .expect("task should be restricted");
-    assert_derived_metric_cost_preserved(restricted.task());
-}
-
-#[test]
-fn icaps26_restricted_task_preserves_derived_metric_cost() {
-    let restricted = build_icaps26_restricted_task(&task_with_derived_metric())
         .unwrap()
         .expect("task should be restricted");
     assert_derived_metric_cost_preserved(restricted.task());

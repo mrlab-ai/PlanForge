@@ -24,31 +24,56 @@ pub enum RequiredBackend {
 pub struct TaskRequirements {
     pub restricted: bool,
     pub abstractable_goal: bool,
-    pub icaps26_restriction: bool,
+    /// The transformation `--restrict-task` applies instead of the standard
+    /// restriction.
+    pub restriction: Option<TaskRestriction>,
 }
+
+/// A task transformation a heuristic brings along for `--restrict-task`
+/// because it needs another normal form than the standard restriction.
+#[derive(Debug, Clone, Copy)]
+pub struct TaskRestriction {
+    pub name: &'static str,
+    /// The transformed task; `None` when the task already has the form.
+    pub build: fn(&Task) -> anyhow::Result<Option<Task>>,
+}
+
+impl PartialEq for TaskRestriction {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for TaskRestriction {}
 
 impl TaskRequirements {
     pub const ANY: Self = Self {
         restricted: false,
         abstractable_goal: false,
-        icaps26_restriction: false,
+        restriction: None,
     };
     pub const ABSTRACTABLE_GOAL: Self = Self {
         restricted: false,
         abstractable_goal: true,
-        icaps26_restriction: false,
+        restriction: None,
     };
     pub const RESTRICTED_ABSTRACTABLE_GOAL: Self = Self {
         restricted: true,
         abstractable_goal: true,
-        icaps26_restriction: false,
+        restriction: None,
     };
 
     pub fn union(self, other: Self) -> Self {
         Self {
             restricted: self.restricted || other.restricted,
             abstractable_goal: self.abstractable_goal || other.abstractable_goal,
-            icaps26_restriction: self.icaps26_restriction || other.icaps26_restriction,
+            restriction: match (self.restriction, other.restriction) {
+                (Some(left), Some(right)) => {
+                    assert_eq!(left, right, "one search cannot apply two task restrictions");
+                    Some(left)
+                }
+                (left, right) => left.or(right),
+            },
         }
     }
 

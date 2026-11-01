@@ -103,7 +103,8 @@ impl AbstractionSource {
         TaskRequirements {
             restricted: matches!(self, Self::Pdb(_) | Self::Icaps26Cartesian(_)),
             abstractable_goal: true,
-            icaps26_restriction: matches!(self, Self::Icaps26Cartesian(_)),
+            restriction: matches!(self, Self::Icaps26Cartesian(_))
+                .then_some(crate::abstractions::icaps26::RESTRICTION),
         }
     }
 

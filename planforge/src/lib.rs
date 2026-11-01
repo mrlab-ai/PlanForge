@@ -34,9 +34,7 @@ use planforge_search::heuristic_factory::{
 };
 use planforge_search::search::{SearchConfig, SearchResult, solve_task};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
-use planforge_search::task_transformations::restriction::{
-    build_icaps26_restricted_task, build_restricted_task,
-};
+use planforge_search::task_transformations::restriction::{RestrictedTask, build_restricted_task};
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
@@ -511,10 +509,9 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     };
     if cli.restrict_task {
         let original_numeric_count = task.numeric_variables().len();
-        let restricted_task = if cli.search.requirements().icaps26_restriction {
-            build_icaps26_restricted_task(&task)
-        } else {
-            build_restricted_task(&task)
+        let restricted_task = match cli.search.requirements().restriction {
+            Some(restriction) => (restriction.build)(&task),
+            None => build_restricted_task(&task).map(|task| task.map(RestrictedTask::into_task)),
         };
         if let Some(restricted_task) = restricted_task.map_err(|err| {
             let kind = if planforge_search::unsupported::is_unsupported_task(&err) {
@@ -524,7 +521,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             };
             std::io::Error::new(kind, format!("failed to build restricted task: {err:#}"))
         })? {
-            task = restricted_task.into_task();
+            task = restricted_task;
             info!(
                 "restricted task: numeric variables {} -> {}",
                 original_numeric_count,
