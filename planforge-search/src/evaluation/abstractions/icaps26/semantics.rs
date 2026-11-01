@@ -130,7 +130,7 @@ impl<'task> CartesianSemantics<'task> {
             .numeric_variables()
             .iter()
             .enumerate()
-            .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
+            .filter(|(_, variable)| variable.numeric_type() == NumericType::Constant)
             .filter_map(|(numeric_var_id, _)| {
                 task.initial_numeric_values()
                     .get(numeric_var_id)
@@ -171,7 +171,7 @@ impl<'task> CartesianSemantics<'task> {
             }
             for effect in op.assignment_effects() {
                 let var_id = effect.affected_var_id();
-                if task.numeric_variables()[var_id.index()].get_type() == &NumericType::Regular {
+                if task.numeric_type(var_id) == NumericType::Regular {
                     numeric_dependencies[var_id.index()] = true;
                 }
             }

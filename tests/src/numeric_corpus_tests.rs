@@ -244,10 +244,10 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
         let layer = variable.axiom_layer();
         assert_eq!(
             layer.is_some(),
-            matches!(variable.get_type(), NumericType::Derived),
+            matches!(variable.numeric_type(), NumericType::Derived),
             "{name}: numeric variable {:?} of type {:?} has axiom layer {layer:?}",
             variable.name(),
-            variable.get_type()
+            variable.numeric_type()
         );
         numeric_layer_of.push(layer);
     }
@@ -389,12 +389,12 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
             );
             assert!(
                 matches!(
-                    task.numeric_variables()[affected.index()].get_type(),
+                    task.numeric_type(affected),
                     NumericType::Regular | NumericType::Cost
                 ),
                 "{name}: operator {:?} writes {:?} numeric variable {:?}",
                 operator.name(),
-                task.numeric_variables()[affected.index()].get_type(),
+                task.numeric_type(affected),
                 task.numeric_variables()[affected.index()].name()
             );
         }

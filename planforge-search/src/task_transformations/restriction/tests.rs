@@ -387,10 +387,7 @@ fn task_with_derived_metric() -> NumericRootTask {
 
 fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
     let metric_var_id = transformed.metric().var_id().unwrap();
-    assert_eq!(
-        transformed.numeric_variables()[metric_var_id.index()].get_type(),
-        &NumericType::Cost
-    );
+    assert_eq!(transformed.numeric_type(metric_var_id), NumericType::Cost);
     assert_eq!(transformed.operator_cost(OperatorIndex::new(0)), 2.0);
 }
 

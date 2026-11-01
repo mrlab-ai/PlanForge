@@ -1553,7 +1553,7 @@ fn is_constant_assignment_like_effect(
     if task
         .numeric_variables()
         .get(linear_effect.affected_var_id.index())
-        .map(|numeric_var| numeric_var.get_type() != &NumericType::Regular)
+        .map(|numeric_var| numeric_var.numeric_type() != NumericType::Regular)
         .unwrap_or(true)
     {
         return false;

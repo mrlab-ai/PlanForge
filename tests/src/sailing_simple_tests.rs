@@ -453,7 +453,7 @@ fn sailing_simple_assignment_gap() {
 fn regular_numeric_var_id(task: &NumericRootTask, suffix: &str) -> Option<usize> {
     task.numeric_variables()
         .iter()
-        .position(|var| var.get_type() == &NumericType::Regular && var.name().ends_with(suffix))
+        .position(|var| var.numeric_type() == NumericType::Regular && var.name().ends_with(suffix))
 }
 
 #[test]

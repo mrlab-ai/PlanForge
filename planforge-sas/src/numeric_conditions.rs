@@ -1016,7 +1016,7 @@ fn regular_leaf_dependencies(
         .filter_map(|node| match node {
             ConditionNode::Leaf { numeric_var_id } => numeric_variables
                 .get(numeric_var_id.index())
-                .filter(|variable| variable.get_type() == &NumericType::Regular)
+                .filter(|variable| variable.numeric_type() == NumericType::Regular)
                 .map(|_| *numeric_var_id),
             ConditionNode::Arith { .. } | ConditionNode::Linear { .. } => None,
         })

@@ -41,7 +41,7 @@ impl Coordinates<'_> {
                 .iter()
                 .enumerate()
                 .map(|(variable, value)| {
-                    self.task.numeric_variables()[variable].get_type() == &NumericType::Regular
+                    self.task.numeric_variables()[variable].numeric_type() == NumericType::Regular
                         && *value >= ZERO_VALUE
                         && value
                             .grid_units()
@@ -55,8 +55,8 @@ impl Coordinates<'_> {
             for effect in operator.assignment_effects() {
                 let target = effect.affected_var_id().index();
                 let source = effect.var_id().index();
-                let constant = (self.task.numeric_variables()[source].get_type()
-                    == &NumericType::Constant)
+                let constant = (self.task.numeric_variables()[source].numeric_type()
+                    == NumericType::Constant)
                     .then_some(initial[source]);
                 let delta = constant_effect_delta(self.task, effect);
                 invariant.changed[target] = true;

@@ -132,7 +132,7 @@ impl<'task> CartesianSemantics<'task> {
             }
             for effect in op.assignment_effects() {
                 let var_id = effect.affected_var_id();
-                if task.numeric_variables()[var_id.index()].get_type() == &NumericType::Regular {
+                if task.numeric_type(var_id) == NumericType::Regular {
                     dimensions.push(SplitDimension::Numeric(var_id));
                 }
             }

@@ -62,7 +62,7 @@ pub(crate) fn validate_abstraction_operator(
             operator.name(),
             effect.affected_var_id()
         );
-        let affected_type = numeric_variables[effect.affected_var_id().index()].get_type();
+        let affected_type = numeric_variables[effect.affected_var_id().index()].numeric_type();
         ensure_supported!(
             matches!(affected_type, NumericType::Regular | NumericType::Cost),
             "operator {operator_id} ({}) numeric effect {effect_id} targets {:?} variable {}",
@@ -78,10 +78,10 @@ pub(crate) fn validate_abstraction_operator(
             )
         })?;
         ensure_supported!(
-            rhs_variable.get_type() == &NumericType::Constant,
+            rhs_variable.numeric_type() == NumericType::Constant,
             "operator {operator_id} ({}) numeric effect {effect_id} has a {:?} argument, not a constant",
             operator.name(),
-            rhs_variable.get_type()
+            rhs_variable.numeric_type()
         );
         let rhs = *initial_numeric.get(rhs_var_id.index()).with_context(|| {
             format!("missing initial value for constant numeric variable {rhs_var_id}")

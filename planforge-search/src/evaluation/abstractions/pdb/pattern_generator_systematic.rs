@@ -287,7 +287,7 @@ fn is_pattern_numeric_candidate(
 ) -> bool {
     task.numeric_variables()
         .get(numeric_var_id.index())
-        .map(|numeric_var| numeric_var.get_type() == &NumericType::Regular)
+        .map(|numeric_var| numeric_var.numeric_type() == NumericType::Regular)
         .unwrap_or(false)
 }
 

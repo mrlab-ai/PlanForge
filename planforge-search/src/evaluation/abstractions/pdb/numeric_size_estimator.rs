@@ -103,8 +103,8 @@ fn build_numeric_condition(
     let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
     let left = comparison_axiom.get_left_var_id();
     let right = comparison_axiom.get_right_var_id();
-    let left_type = task.numeric_variables()[left.index()].get_type();
-    let right_type = task.numeric_variables()[right.index()].get_type();
+    let left_type = task.numeric_type(left);
+    let right_type = task.numeric_type(right);
 
     match (left_type, right_type) {
         (NumericType::Regular, NumericType::Constant | NumericType::Cost) => {
@@ -160,7 +160,7 @@ fn estimate_numeric_domain_size(
                 return usize::MAX;
             }
             let source_var_id = effect.var_id();
-            let source_type = task.numeric_variables()[source_var_id.index()].get_type();
+            let source_type = task.numeric_type(source_var_id);
             if !matches!(source_type, NumericType::Constant | NumericType::Cost) {
                 return usize::MAX;
             }

@@ -90,7 +90,7 @@ impl<'task> CegarSemantics<'task> {
             .numeric_variables()
             .iter()
             .enumerate()
-            .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
+            .filter(|(_, variable)| variable.numeric_type() == NumericType::Constant)
             .map(|(numeric_var_id, _)| task.initial_numeric_values()[numeric_var_id])
             .filter(|value| value.is_finite())
             .collect::<Vec<_>>();

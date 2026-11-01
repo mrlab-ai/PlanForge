@@ -288,7 +288,7 @@ fn folds_constant_subexpressions_inside_nonlinear_comparisons() {
         task.numeric_variables
             .iter()
             .zip(&task.numeric_state)
-            .any(|(var, value)| var.get_type() == &NumericType::Constant
+            .any(|(var, value)| var.numeric_type() == NumericType::Constant
                 && *value == NumericValue::new(5.0))
     );
 }

@@ -62,7 +62,7 @@ fn analyze_additive_numeric_view(
     definitions: &[Option<AxiomIndex>],
     numeric_var_id: VariableIndex,
 ) -> Option<AdditiveNumericView> {
-    if task.numeric_variables()[numeric_var_id.index()].get_type() != &NumericType::Derived {
+    if task.numeric_type(numeric_var_id) != NumericType::Derived {
         return None;
     }
     let definition = definitions[numeric_var_id.index()]?;
@@ -152,7 +152,7 @@ fn constant_effect_delta(
     task: &dyn AbstractNumericTask,
     effect: &AssignmentEffect,
 ) -> Option<NumericValue> {
-    if task.numeric_variables()[effect.var_id().index()].get_type() != &NumericType::Constant {
+    if task.numeric_type(effect.var_id()) != NumericType::Constant {
         return None;
     }
     let rhs = task.initial_numeric_values()[effect.var_id().index()];
@@ -353,7 +353,7 @@ fn is_coordinate(
     views: &[Option<AdditiveNumericView>],
     var_id: VariableIndex,
 ) -> bool {
-    match task.numeric_variables()[var_id.index()].get_type() {
+    match task.numeric_type(var_id) {
         NumericType::Regular => true,
         NumericType::Derived => views[var_id.index()].is_some(),
         NumericType::Constant | NumericType::Cost => false,
@@ -371,9 +371,7 @@ fn condition_requirement(
     let required_op = required_comparison_op(tree.op(), truth);
     let coordinate = tree.left_numeric_var_id();
     let threshold_var = tree.right_numeric_var_id();
-    if !is_coordinate(coordinate)
-        || task.numeric_variables()[threshold_var.index()].get_type() != &NumericType::Constant
-    {
+    if !is_coordinate(coordinate) || task.numeric_type(threshold_var) != NumericType::Constant {
         return None;
     }
     let threshold = task.initial_numeric_values()[threshold_var.index()];

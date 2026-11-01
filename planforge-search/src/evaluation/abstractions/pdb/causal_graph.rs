@@ -45,9 +45,7 @@ impl CausalGraph {
             .comparison_axioms()
             .iter()
             .map(|axiom| {
-                let regular = |id: VariableIndex| {
-                    task.numeric_variables()[id.index()].get_type() == &NumericType::Regular
-                };
+                let regular = |id: VariableIndex| task.numeric_type(id) == NumericType::Regular;
                 let (left, right) = (axiom.get_left_var_id(), axiom.get_right_var_id());
                 if regular(right) {
                     Some(right)
@@ -69,7 +67,7 @@ impl CausalGraph {
             }
         }
         for (var_id, variable) in task.numeric_variables().iter().enumerate() {
-            if variable.get_type() == &NumericType::Regular {
+            if variable.numeric_type() == NumericType::Regular {
                 graph.ensure_node(CausalGraphVariable::Numeric(VariableIndex::from_usize(
                     var_id,
                 )));
@@ -112,9 +110,7 @@ impl CausalGraph {
                 for source in graph.precondition_sources(task, effect.conditions()) {
                     graph.add_pre_eff_arc(source, target);
                 }
-                if task.numeric_variables()[effect.var_id().index()].get_type()
-                    == &NumericType::Regular
-                {
+                if task.numeric_type(effect.var_id()) == NumericType::Regular {
                     graph.add_pre_eff_arc(CausalGraphVariable::Numeric(effect.var_id()), target);
                 }
             }
@@ -212,7 +208,7 @@ fn numeric_effect_target(
     if task
         .numeric_variables()
         .get(effect.affected_var_id().index())
-        .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
+        .is_none_or(|variable| variable.numeric_type() != NumericType::Regular)
     {
         return None;
     }
@@ -222,7 +218,7 @@ fn numeric_effect_target(
     ) && task
         .numeric_variables()
         .get(effect.var_id().index())
-        .is_some_and(|variable| variable.get_type() == &NumericType::Constant)
+        .is_some_and(|variable| variable.numeric_type() == NumericType::Constant)
         && task
             .initial_numeric_values()
             .get(effect.var_id().index())

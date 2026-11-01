@@ -209,12 +209,12 @@ fn a_pure_strips_task_translates_without_numeric_planning() {
     for numeric in task.numeric_variables() {
         assert!(
             matches!(
-                numeric.get_type(),
+                numeric.numeric_type(),
                 NumericType::Constant | NumericType::Cost
             ),
             "unexpected numeric variable {:?} of type {:?}",
             numeric.name(),
-            numeric.get_type()
+            numeric.numeric_type()
         );
     }
 
@@ -234,7 +234,7 @@ fn a_pure_strips_task_translates_without_numeric_planning() {
         .numeric_variables()
         .iter()
         .enumerate()
-        .filter(|(_, v)| matches!(v.get_type(), NumericType::Cost))
+        .filter(|(_, v)| matches!(v.numeric_type(), NumericType::Cost))
         .map(|(id, _)| id)
         .collect();
     assert!(!cost_var_ids.is_empty(), "expected a total-cost variable");

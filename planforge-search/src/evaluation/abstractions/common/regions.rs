@@ -31,7 +31,7 @@ use super::transition_system::{AbstractOperatorSourceSets, LabelSourceSet};
 /// abstraction: a constant at its value, every other variable unbounded.
 pub(crate) fn trivial_interval(task: &dyn AbstractNumericTask, var_id: VariableIndex) -> Interval {
     let variable = &task.numeric_variables()[var_id.index()];
-    if variable.get_type() != &NumericType::Constant {
+    if variable.numeric_type() != NumericType::Constant {
         return Interval::unbounded();
     }
     let value = task.initial_numeric_values()[var_id.index()];
@@ -314,7 +314,7 @@ impl<'task> RegionSemantics<'task> {
         }
         for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
             let var_id = VariableIndex::from_usize(numeric_var_id);
-            let may_transition = match variable.get_type() {
+            let may_transition = match variable.numeric_type() {
                 NumericType::Constant => {
                     source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id])
                 }
@@ -357,7 +357,7 @@ impl<'task> RegionSemantics<'task> {
         let mut source_set = source.clone();
         for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
             let var_id = VariableIndex::from_usize(numeric_var_id);
-            let preimage = match variable.get_type() {
+            let preimage = match variable.numeric_type() {
                 NumericType::Constant => {
                     if !source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id]) {
                         return Ok(None);

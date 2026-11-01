@@ -209,7 +209,7 @@ fn add_numeric_vars(
         let is_regular = task
             .numeric_variables()
             .get(numeric_var_id)
-            .map(|numeric_var| numeric_var.get_type() == &NumericType::Regular)
+            .map(|numeric_var| numeric_var.numeric_type() == NumericType::Regular)
             .unwrap_or(false);
         if is_regular {
             remaining_vars.push((VariableIndex::from_usize(numeric_var_id), true));

@@ -143,8 +143,8 @@ impl NumericVariable {
         &self.name
     }
 
-    pub fn get_type(&self) -> &NumericType {
-        &self.numeric_type
+    pub fn numeric_type(&self) -> NumericType {
+        self.numeric_type
     }
 
     pub fn axiom_layer(&self) -> Option<usize> {

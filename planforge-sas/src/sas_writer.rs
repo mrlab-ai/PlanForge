@@ -120,7 +120,7 @@ pub fn write_sas<W: Write>(parts: &SasTaskParts, out: &mut W) -> io::Result<()> 
             writeln!(
                 out,
                 "{} {} {}",
-                variable.get_type().as_sas(),
+                variable.numeric_type().as_sas(),
                 optional_value_to_sas(variable.axiom_layer()),
                 variable.name()
             )
