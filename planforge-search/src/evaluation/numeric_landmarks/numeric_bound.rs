@@ -36,18 +36,67 @@ pub struct NumericBound {
     variable_has_lb: Vec<bool>,
     variable_ub: Vec<f64>,
     variable_lb: Vec<f64>,
-    effect_has_ub: Vec<Vec<bool>>,
-    effect_has_lb: Vec<Vec<bool>>,
-    effect_ub: Vec<Vec<f64>>,
-    effect_lb: Vec<Vec<f64>>,
-    assignment_has_ub: Vec<Vec<bool>>,
-    assignment_has_lb: Vec<Vec<bool>>,
-    assignment_ub: Vec<Vec<f64>>,
-    assignment_lb: Vec<Vec<f64>>,
-    variable_before_action_has_ub: Vec<Vec<bool>>,
-    variable_before_action_has_lb: Vec<Vec<bool>>,
-    variable_before_action_ub: Vec<Vec<f64>>,
-    variable_before_action_lb: Vec<Vec<f64>>,
+    /// The bounds of each operator's effect on each variable.
+    effect: Table<Bounds>,
+    /// The bounds of each operator's assignment to each variable.
+    assignment: Table<Bounds>,
+    /// The bounds of each variable before each operator, by variable.
+    variable_before_action: Table<Bounds>,
+}
+
+/// An interval whose ends are known only where their flag says so; an
+/// unknown end holds `f64::MAX` or `f64::MIN`.
+#[derive(Debug, Clone, Copy)]
+struct Bounds {
+    has_ub: bool,
+    has_lb: bool,
+    ub: f64,
+    lb: f64,
+}
+
+impl Default for Bounds {
+    fn default() -> Self {
+        Self {
+            has_ub: false,
+            has_lb: false,
+            ub: f64::MAX,
+            lb: f64::MIN,
+        }
+    }
+}
+
+/// A row-major table indexed by `(row, column)`: one allocation instead of
+/// one per row, which matters with a row per operator.
+#[derive(Debug, Clone, Default)]
+struct Table<T> {
+    columns: usize,
+    cells: Vec<T>,
+}
+
+impl<T: Clone + Default> Table<T> {
+    fn new(rows: usize, columns: usize) -> Self {
+        Self {
+            columns,
+            cells: vec![T::default(); rows * columns],
+        }
+    }
+}
+
+impl<T> std::ops::Index<(usize, usize)> for Table<T> {
+    type Output = T;
+    #[inline]
+    fn index(&self, (row, column): (usize, usize)) -> &T {
+        debug_assert!(column < self.columns);
+        &self.cells[row * self.columns + column]
+    }
+}
+
+impl<T> std::ops::IndexMut<(usize, usize)> for Table<T> {
+    #[inline]
+    fn index_mut(&mut self, (row, column): (usize, usize)) -> &mut T {
+        debug_assert!(column < self.columns);
+        &mut self.cells[row * self.columns + column]
+    }
 }
 
 impl NumericBound {
@@ -94,22 +143,9 @@ impl NumericBound {
         self.variable_has_lb = vec![false; self.num_numeric_variables];
         self.variable_ub = vec![f64::MAX; self.num_numeric_variables];
         self.variable_lb = vec![f64::MIN; self.num_numeric_variables];
-        self.effect_has_ub = vec![vec![false; self.num_numeric_variables]; self.num_actions];
-        self.effect_has_lb = vec![vec![false; self.num_numeric_variables]; self.num_actions];
-        self.effect_ub = vec![vec![f64::MAX; self.num_numeric_variables]; self.num_actions];
-        self.effect_lb = vec![vec![f64::MIN; self.num_numeric_variables]; self.num_actions];
-        self.assignment_has_ub = vec![vec![false; self.num_numeric_variables]; self.num_actions];
-        self.assignment_has_lb = vec![vec![false; self.num_numeric_variables]; self.num_actions];
-        self.assignment_ub = vec![vec![f64::MAX; self.num_numeric_variables]; self.num_actions];
-        self.assignment_lb = vec![vec![f64::MIN; self.num_numeric_variables]; self.num_actions];
-        self.variable_before_action_has_ub =
-            vec![vec![false; self.num_actions]; self.num_numeric_variables];
-        self.variable_before_action_has_lb =
-            vec![vec![false; self.num_actions]; self.num_numeric_variables];
-        self.variable_before_action_ub =
-            vec![vec![f64::MAX; self.num_actions]; self.num_numeric_variables];
-        self.variable_before_action_lb =
-            vec![vec![f64::MIN; self.num_actions]; self.num_numeric_variables];
+        self.effect = Table::new(self.num_actions, self.num_numeric_variables);
+        self.assignment = Table::new(self.num_actions, self.num_numeric_variables);
+        self.variable_before_action = Table::new(self.num_numeric_variables, self.num_actions);
         self.initialized = true;
         self.precision = precision;
         self.epsilon = epsilon;
@@ -146,7 +182,7 @@ impl NumericBound {
         var_id: VariableIndex,
         op_id: OperatorIndex,
     ) -> bool {
-        self.variable_before_action_has_ub[var_id.index()][op_id.index()]
+        self.variable_before_action[(var_id.index(), op_id.index())].has_ub
     }
 
     pub fn get_variable_before_action_has_lb(
@@ -154,7 +190,7 @@ impl NumericBound {
         var_id: VariableIndex,
         op_id: OperatorIndex,
     ) -> bool {
-        self.variable_before_action_has_lb[var_id.index()][op_id.index()]
+        self.variable_before_action[(var_id.index(), op_id.index())].has_lb
     }
 
     pub fn get_variable_before_action_ub(
@@ -162,7 +198,7 @@ impl NumericBound {
         var_id: VariableIndex,
         op_id: OperatorIndex,
     ) -> f64 {
-        self.variable_before_action_ub[var_id.index()][op_id.index()]
+        self.variable_before_action[(var_id.index(), op_id.index())].ub
     }
 
     pub fn get_variable_before_action_lb(
@@ -170,39 +206,39 @@ impl NumericBound {
         var_id: VariableIndex,
         op_id: OperatorIndex,
     ) -> f64 {
-        self.variable_before_action_lb[var_id.index()][op_id.index()]
+        self.variable_before_action[(var_id.index(), op_id.index())].lb
     }
 
     pub fn get_effect_has_ub(&self, op_id: OperatorIndex, var_id: VariableIndex) -> bool {
-        self.effect_has_ub[op_id.index()][var_id.index()]
+        self.effect[(op_id.index(), var_id.index())].has_ub
     }
 
     pub fn get_effect_has_lb(&self, op_id: OperatorIndex, var_id: VariableIndex) -> bool {
-        self.effect_has_lb[op_id.index()][var_id.index()]
+        self.effect[(op_id.index(), var_id.index())].has_lb
     }
 
     pub fn get_effect_ub(&self, op_id: OperatorIndex, var_id: VariableIndex) -> f64 {
-        self.effect_ub[op_id.index()][var_id.index()]
+        self.effect[(op_id.index(), var_id.index())].ub
     }
 
     pub fn get_effect_lb(&self, op_id: OperatorIndex, var_id: VariableIndex) -> f64 {
-        self.effect_lb[op_id.index()][var_id.index()]
+        self.effect[(op_id.index(), var_id.index())].lb
     }
 
     pub fn get_assignment_has_ub(&self, op_id: OperatorIndex, var_id: VariableIndex) -> bool {
-        self.assignment_has_ub[op_id.index()][var_id.index()]
+        self.assignment[(op_id.index(), var_id.index())].has_ub
     }
 
     pub fn get_assignment_has_lb(&self, op_id: OperatorIndex, var_id: VariableIndex) -> bool {
-        self.assignment_has_lb[op_id.index()][var_id.index()]
+        self.assignment[(op_id.index(), var_id.index())].has_lb
     }
 
     pub fn get_assignment_ub(&self, op_id: OperatorIndex, var_id: VariableIndex) -> f64 {
-        self.assignment_ub[op_id.index()][var_id.index()]
+        self.assignment[(op_id.index(), var_id.index())].ub
     }
 
     pub fn get_assignment_lb(&self, op_id: OperatorIndex, var_id: VariableIndex) -> f64 {
-        self.assignment_lb[op_id.index()][var_id.index()]
+        self.assignment[(op_id.index(), var_id.index())].lb
     }
 
     pub fn has_no_increasing_assignment_effect(
@@ -237,42 +273,42 @@ impl NumericBound {
 
         for op_id in 0..self.num_actions {
             for var_id in 0..self.num_numeric_variables {
-                self.effect_has_ub[op_id][var_id] = true;
-                self.effect_has_lb[op_id][var_id] = true;
-                self.effect_ub[op_id][var_id] = 0.0;
-                self.effect_lb[op_id][var_id] = 0.0;
-                self.assignment_has_ub[op_id][var_id] = false;
-                self.assignment_has_lb[op_id][var_id] = false;
-                self.assignment_ub[op_id][var_id] = f64::MAX;
-                self.assignment_lb[op_id][var_id] = f64::MIN;
+                self.effect[(op_id, var_id)].has_ub = true;
+                self.effect[(op_id, var_id)].has_lb = true;
+                self.effect[(op_id, var_id)].ub = 0.0;
+                self.effect[(op_id, var_id)].lb = 0.0;
+                self.assignment[(op_id, var_id)].has_ub = false;
+                self.assignment[(op_id, var_id)].has_lb = false;
+                self.assignment[(op_id, var_id)].ub = f64::MAX;
+                self.assignment[(op_id, var_id)].lb = f64::MIN;
 
                 if let Some(simple_effect) = self.prepared_simple_effects[op_id][var_id]
                     && simple_effect.abs() >= self.precision
                 {
-                    self.effect_ub[op_id][var_id] = simple_effect;
-                    self.effect_lb[op_id][var_id] = simple_effect;
+                    self.effect[(op_id, var_id)].ub = simple_effect;
+                    self.effect[(op_id, var_id)].lb = simple_effect;
                 }
             }
 
             for linear_effect in &self.prepared_linear_effects[op_id] {
                 let lhs = linear_effect.lhs;
-                self.effect_has_ub[op_id][lhs.index()] = false;
-                self.effect_has_lb[op_id][lhs.index()] = false;
-                self.effect_ub[op_id][lhs.index()] = f64::MAX;
-                self.effect_lb[op_id][lhs.index()] = f64::MIN;
-                self.assignment_has_ub[op_id][lhs.index()] = false;
-                self.assignment_has_lb[op_id][lhs.index()] = false;
-                self.assignment_ub[op_id][lhs.index()] = f64::MAX;
-                self.assignment_lb[op_id][lhs.index()] = f64::MIN;
+                self.effect[(op_id, lhs.index())].has_ub = false;
+                self.effect[(op_id, lhs.index())].has_lb = false;
+                self.effect[(op_id, lhs.index())].ub = f64::MAX;
+                self.effect[(op_id, lhs.index())].lb = f64::MIN;
+                self.assignment[(op_id, lhs.index())].has_ub = false;
+                self.assignment[(op_id, lhs.index())].has_lb = false;
+                self.assignment[(op_id, lhs.index())].ub = f64::MAX;
+                self.assignment[(op_id, lhs.index())].lb = f64::MIN;
             }
         }
 
         for var_id in 0..self.num_numeric_variables {
             for op_id in 0..self.num_actions {
-                self.variable_before_action_has_ub[var_id][op_id] = false;
-                self.variable_before_action_has_lb[var_id][op_id] = false;
-                self.variable_before_action_ub[var_id][op_id] = f64::MAX;
-                self.variable_before_action_lb[var_id][op_id] = f64::MIN;
+                self.variable_before_action[(var_id, op_id)].has_ub = false;
+                self.variable_before_action[(var_id, op_id)].has_lb = false;
+                self.variable_before_action[(var_id, op_id)].ub = f64::MAX;
+                self.variable_before_action[(var_id, op_id)].lb = f64::MIN;
             }
         }
     }
@@ -311,17 +347,17 @@ impl NumericBound {
 
                         let another_weight = condition.coefficients[another_id];
                         if another_weight >= self.precision {
-                            if self.variable_before_action_has_ub[another_id][op_id] {
+                            if self.variable_before_action[(another_id, op_id)].has_ub {
                                 k += another_weight
-                                    * self.variable_before_action_ub[another_id][op_id];
+                                    * self.variable_before_action[(another_id, op_id)].ub;
                             } else {
                                 condition_bounded = false;
                                 break;
                             }
                         } else if another_weight <= -self.precision {
-                            if self.variable_before_action_has_lb[another_id][op_id] {
+                            if self.variable_before_action[(another_id, op_id)].has_lb {
                                 k += another_weight
-                                    * self.variable_before_action_lb[another_id][op_id];
+                                    * self.variable_before_action[(another_id, op_id)].lb;
                             } else {
                                 condition_bounded = false;
                                 break;
@@ -349,23 +385,23 @@ impl NumericBound {
                 }
 
                 if upper_bounded
-                    && (!self.variable_before_action_has_ub[var_id][op_id]
-                        || (self.variable_before_action_ub[var_id][op_id] - ub).abs()
+                    && (!self.variable_before_action[(var_id, op_id)].has_ub
+                        || (self.variable_before_action[(var_id, op_id)].ub - ub).abs()
                             >= self.precision)
                 {
                     change = true;
-                    self.variable_before_action_has_ub[var_id][op_id] = true;
-                    self.variable_before_action_ub[var_id][op_id] = ub;
+                    self.variable_before_action[(var_id, op_id)].has_ub = true;
+                    self.variable_before_action[(var_id, op_id)].ub = ub;
                 }
 
                 if lower_bounded
-                    && (!self.variable_before_action_has_lb[var_id][op_id]
-                        || (self.variable_before_action_lb[var_id][op_id] - lb).abs()
+                    && (!self.variable_before_action[(var_id, op_id)].has_lb
+                        || (self.variable_before_action[(var_id, op_id)].lb - lb).abs()
                             >= self.precision)
                 {
                     change = true;
-                    self.variable_before_action_has_lb[var_id][op_id] = true;
-                    self.variable_before_action_lb[var_id][op_id] = lb;
+                    self.variable_before_action[(var_id, op_id)].has_lb = true;
+                    self.variable_before_action[(var_id, op_id)].lb = lb;
                 }
             }
         }
@@ -394,21 +430,21 @@ impl NumericBound {
                     let mut has_effect = false;
                     let mut local_ub = f64::MAX;
 
-                    if self.effect_has_ub[op_id][var_id] {
-                        let increment = self.effect_ub[op_id][var_id];
+                    if self.effect[(op_id, var_id)].has_ub {
+                        let increment = self.effect[(op_id, var_id)].ub;
                         if increment < self.precision {
                             upper_bounded = true;
-                        } else if self.variable_before_action_has_ub[var_id][op_id] {
+                        } else if self.variable_before_action[(var_id, op_id)].has_ub {
                             upper_bounded = true;
                             has_effect = true;
-                            local_ub = increment + self.variable_before_action_ub[var_id][op_id];
+                            local_ub = increment + self.variable_before_action[(var_id, op_id)].ub;
                         }
                     }
 
-                    if (!upper_bounded || has_effect) && self.assignment_has_ub[op_id][var_id] {
+                    if (!upper_bounded || has_effect) && self.assignment[(op_id, var_id)].has_ub {
                         upper_bounded = true;
                         has_effect = true;
-                        local_ub = local_ub.min(self.assignment_ub[op_id][var_id]);
+                        local_ub = local_ub.min(self.assignment[(op_id, var_id)].ub);
                     }
 
                     if has_effect {
@@ -424,21 +460,21 @@ impl NumericBound {
                     let mut has_effect = false;
                     let mut local_lb = f64::MIN;
 
-                    if self.effect_has_lb[op_id][var_id] {
-                        let increment = self.effect_lb[op_id][var_id];
+                    if self.effect[(op_id, var_id)].has_lb {
+                        let increment = self.effect[(op_id, var_id)].lb;
                         if increment > -self.precision {
                             lower_bounded = true;
-                        } else if self.variable_before_action_has_lb[var_id][op_id] {
+                        } else if self.variable_before_action[(var_id, op_id)].has_lb {
                             lower_bounded = true;
                             has_effect = true;
-                            local_lb = increment + self.variable_before_action_lb[var_id][op_id];
+                            local_lb = increment + self.variable_before_action[(var_id, op_id)].lb;
                         }
                     }
 
-                    if (!lower_bounded || has_effect) && self.assignment_has_lb[op_id][var_id] {
+                    if (!lower_bounded || has_effect) && self.assignment[(op_id, var_id)].has_lb {
                         lower_bounded = true;
                         has_effect = true;
-                        local_lb = local_lb.max(self.assignment_lb[op_id][var_id]);
+                        local_lb = local_lb.max(self.assignment[(op_id, var_id)].lb);
                     }
 
                     if has_effect {
@@ -500,13 +536,13 @@ impl NumericBound {
 
                     if has_ub {
                         if weight >= self.precision
-                            && self.variable_before_action_has_ub[var_id][op_id]
+                            && self.variable_before_action[(var_id, op_id)].has_ub
                         {
-                            ub += weight * self.variable_before_action_ub[var_id][op_id];
+                            ub += weight * self.variable_before_action[(var_id, op_id)].ub;
                         } else if weight <= -self.precision
-                            && self.variable_before_action_has_lb[var_id][op_id]
+                            && self.variable_before_action[(var_id, op_id)].has_lb
                         {
-                            ub += weight * self.variable_before_action_lb[var_id][op_id];
+                            ub += weight * self.variable_before_action[(var_id, op_id)].lb;
                         } else if weight.abs() >= self.precision {
                             has_ub = false;
                         }
@@ -514,13 +550,13 @@ impl NumericBound {
 
                     if has_lb {
                         if weight >= self.precision
-                            && self.variable_before_action_has_lb[var_id][op_id]
+                            && self.variable_before_action[(var_id, op_id)].has_lb
                         {
-                            lb += weight * self.variable_before_action_lb[var_id][op_id];
+                            lb += weight * self.variable_before_action[(var_id, op_id)].lb;
                         } else if weight <= -self.precision
-                            && self.variable_before_action_has_ub[var_id][op_id]
+                            && self.variable_before_action[(var_id, op_id)].has_ub
                         {
-                            lb += weight * self.variable_before_action_ub[var_id][op_id];
+                            lb += weight * self.variable_before_action[(var_id, op_id)].ub;
                         } else if weight.abs() >= self.precision {
                             has_lb = false;
                         }
@@ -545,19 +581,19 @@ impl NumericBound {
                         new_assignment_has_ub = true;
                         new_assignment_ub = ub;
                     } else if coefficients[lhs.index()] >= self.precision
-                        && self.variable_before_action_has_ub[lhs.index()][op_id]
+                        && self.variable_before_action[(lhs.index(), op_id)].has_ub
                     {
                         new_assignment_has_ub = true;
                         new_assignment_ub = ub
                             + coefficients[lhs.index()]
-                                * self.variable_before_action_ub[lhs.index()][op_id];
+                                * self.variable_before_action[(lhs.index(), op_id)].ub;
                     } else if coefficients[lhs.index()] <= -self.precision
-                        && self.variable_before_action_has_lb[lhs.index()][op_id]
+                        && self.variable_before_action[(lhs.index(), op_id)].has_lb
                     {
                         new_assignment_has_ub = true;
                         new_assignment_ub = ub
                             + coefficients[lhs.index()]
-                                * self.variable_before_action_lb[lhs.index()][op_id];
+                                * self.variable_before_action[(lhs.index(), op_id)].lb;
                     }
 
                     let increment_coefficient = coefficients[lhs.index()] - 1.0;
@@ -565,7 +601,7 @@ impl NumericBound {
                         new_effect_has_ub = true;
                         new_effect_ub = ub;
                     } else if increment_coefficient >= self.precision
-                        && self.variable_before_action_has_ub[lhs.index()][op_id]
+                        && self.variable_before_action[(lhs.index(), op_id)].has_ub
                     {
                         new_effect_has_ub = true;
                         // PARITY(numeric-fd): the reference implementation uses the boolean
@@ -573,14 +609,16 @@ impl NumericBound {
                         // rather than the numeric upper bound itself.
                         new_effect_ub = ub
                             + increment_coefficient
-                                * f64::from(self.variable_before_action_has_ub[lhs.index()][op_id]);
+                                * f64::from(
+                                    self.variable_before_action[(lhs.index(), op_id)].has_ub,
+                                );
                     } else if increment_coefficient <= -self.precision
-                        && self.variable_before_action_has_lb[lhs.index()][op_id]
+                        && self.variable_before_action[(lhs.index(), op_id)].has_lb
                     {
                         new_effect_has_ub = true;
                         new_effect_ub = ub
                             + increment_coefficient
-                                * self.variable_before_action_lb[lhs.index()][op_id];
+                                * self.variable_before_action[(lhs.index(), op_id)].lb;
                     }
                 }
 
@@ -589,19 +627,19 @@ impl NumericBound {
                         new_assignment_has_lb = true;
                         new_assignment_lb = lb;
                     } else if coefficients[lhs.index()] >= self.precision
-                        && self.variable_before_action_has_lb[lhs.index()][op_id]
+                        && self.variable_before_action[(lhs.index(), op_id)].has_lb
                     {
                         new_assignment_has_lb = true;
                         new_assignment_lb = lb
                             + coefficients[lhs.index()]
-                                * self.variable_before_action_lb[lhs.index()][op_id];
+                                * self.variable_before_action[(lhs.index(), op_id)].lb;
                     } else if coefficients[lhs.index()] <= -self.precision
-                        && self.variable_before_action_has_ub[lhs.index()][op_id]
+                        && self.variable_before_action[(lhs.index(), op_id)].has_ub
                     {
                         new_assignment_has_lb = true;
                         new_assignment_lb = lb
                             + coefficients[lhs.index()]
-                                * self.variable_before_action_ub[lhs.index()][op_id];
+                                * self.variable_before_action[(lhs.index(), op_id)].ub;
                     }
 
                     let increment_coefficient = coefficients[lhs.index()] - 1.0;
@@ -609,7 +647,7 @@ impl NumericBound {
                         new_effect_has_lb = true;
                         new_effect_lb = lb;
                     } else if increment_coefficient >= self.precision
-                        && self.variable_before_action_has_lb[lhs.index()][op_id]
+                        && self.variable_before_action[(lhs.index(), op_id)].has_lb
                     {
                         new_effect_has_lb = true;
                         // PARITY(numeric-fd): same reference quirk as the upper-bound branch:
@@ -617,14 +655,16 @@ impl NumericBound {
                         // instead of the numeric lower bound value.
                         new_effect_lb = lb
                             + increment_coefficient
-                                * f64::from(self.variable_before_action_has_lb[lhs.index()][op_id]);
+                                * f64::from(
+                                    self.variable_before_action[(lhs.index(), op_id)].has_lb,
+                                );
                     } else if increment_coefficient <= -self.precision
-                        && self.variable_before_action_has_ub[lhs.index()][op_id]
+                        && self.variable_before_action[(lhs.index(), op_id)].has_ub
                     {
                         new_effect_has_lb = true;
                         new_effect_lb = lb
                             + increment_coefficient
-                                * self.variable_before_action_ub[lhs.index()][op_id];
+                                * self.variable_before_action[(lhs.index(), op_id)].ub;
                     }
                 }
 
@@ -657,43 +697,43 @@ impl NumericBound {
                 }
 
                 if new_assignment_has_ub
-                    && (!self.assignment_has_ub[op_id][lhs.index()]
-                        || (new_assignment_ub - self.assignment_ub[op_id][lhs.index()]).abs()
+                    && (!self.assignment[(op_id, lhs.index())].has_ub
+                        || (new_assignment_ub - self.assignment[(op_id, lhs.index())].ub).abs()
                             >= self.precision)
                 {
                     change = true;
-                    self.assignment_has_ub[op_id][lhs.index()] = true;
-                    self.assignment_ub[op_id][lhs.index()] = new_assignment_ub;
+                    self.assignment[(op_id, lhs.index())].has_ub = true;
+                    self.assignment[(op_id, lhs.index())].ub = new_assignment_ub;
                 }
 
                 if new_assignment_has_lb
-                    && (!self.assignment_has_lb[op_id][lhs.index()]
-                        || (new_assignment_lb - self.assignment_lb[op_id][lhs.index()]).abs()
+                    && (!self.assignment[(op_id, lhs.index())].has_lb
+                        || (new_assignment_lb - self.assignment[(op_id, lhs.index())].lb).abs()
                             >= self.precision)
                 {
                     change = true;
-                    self.assignment_has_lb[op_id][lhs.index()] = true;
-                    self.assignment_lb[op_id][lhs.index()] = new_assignment_lb;
+                    self.assignment[(op_id, lhs.index())].has_lb = true;
+                    self.assignment[(op_id, lhs.index())].lb = new_assignment_lb;
                 }
 
                 if new_effect_has_ub
-                    && (!self.effect_has_ub[op_id][lhs.index()]
-                        || (new_effect_ub - self.effect_ub[op_id][lhs.index()]).abs()
+                    && (!self.effect[(op_id, lhs.index())].has_ub
+                        || (new_effect_ub - self.effect[(op_id, lhs.index())].ub).abs()
                             >= self.precision)
                 {
                     change = true;
-                    self.effect_has_ub[op_id][lhs.index()] = true;
-                    self.effect_ub[op_id][lhs.index()] = new_effect_ub;
+                    self.effect[(op_id, lhs.index())].has_ub = true;
+                    self.effect[(op_id, lhs.index())].ub = new_effect_ub;
                 }
 
                 if new_effect_has_lb
-                    && (!self.effect_has_lb[op_id][lhs.index()]
-                        || (new_effect_lb - self.effect_lb[op_id][lhs.index()]).abs()
+                    && (!self.effect[(op_id, lhs.index())].has_lb
+                        || (new_effect_lb - self.effect[(op_id, lhs.index())].lb).abs()
                             >= self.precision)
                 {
                     change = true;
-                    self.effect_has_lb[op_id][lhs.index()] = true;
-                    self.effect_lb[op_id][lhs.index()] = new_effect_lb;
+                    self.effect[(op_id, lhs.index())].has_lb = true;
+                    self.effect[(op_id, lhs.index())].lb = new_effect_lb;
                 }
             }
         }

@@ -311,7 +311,9 @@ pub struct LandmarkCutLandmarks<'task> {
     cut_scratch: Vec<OperatorIndex>,
     multiplier_scratch: Vec<(f64, f64)>,
     second_exploration_queue_scratch: Vec<usize>,
-    numeric_bound: NumericBound,
+    /// The variable bounds before each operator; built only with
+    /// `bound_iterations > 0`, the only case anything reads them.
+    bounds: Option<NumericBound>,
     /// Every rule the relaxation reads: the task's axioms, which only ever
     /// *prove* a derived variable, followed by the rules describing how one takes
     /// its default value.
@@ -343,12 +345,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .cloned()
             .chain(default_value_axioms.iter().cloned())
             .collect();
-        let numeric_bound = NumericBound::new(
-            &*task,
-            &default_value_axioms,
-            config.precision,
-            config.epsilon,
-        );
+        let bounds = use_bounds.then(|| {
+            NumericBound::new(
+                &*task,
+                &default_value_axioms,
+                config.precision,
+                config.epsilon,
+            )
+        });
         let numeric_helper = NumericTaskHelper::new_lmcut(
             &*task,
             &default_value_axioms,
@@ -411,7 +415,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             cut_scratch: Vec::new(),
             multiplier_scratch: Vec::new(),
             second_exploration_queue_scratch: Vec::new(),
-            numeric_bound,
+            bounds,
             relaxed_axioms,
             use_bounds,
             initialized: false,
@@ -469,7 +473,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
         // Operator costs read the bounds of the variables before each operator.
         if self.use_bounds {
             let initial_numeric_values = self.task.initial_numeric_values();
-            self.numeric_bound
+            self.bounds
+                .as_mut()
+                .expect("bounds are built with bound_iterations > 0")
                 .calculate_bounds(initial_numeric_values, self.config.bound_iterations);
         }
         self.build_relaxed_operators();
@@ -1341,6 +1347,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
     }
 
+    /// The bounds, which are read only with `bound_iterations > 0`.
+    fn numeric_bound(&self) -> &NumericBound {
+        self.bounds
+            .as_ref()
+            .expect("bounds are read only with bound_iterations > 0")
+    }
+
     fn mark_goal_plateau(
         &mut self,
         propositional_values: &[ExplicitValueIndex],
@@ -1806,24 +1819,24 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
             for (numeric_var_id, &weight) in coefficients.iter().enumerate() {
                 if weight >= self.config.precision
-                    && self.numeric_bound.get_variable_before_action_has_lb(
+                    && self.numeric_bound().get_variable_before_action_has_lb(
                         VariableIndex::from_usize(numeric_var_id),
                         operator_id,
                     )
                 {
                     operator_cost += weight
-                        * self.numeric_bound.get_variable_before_action_lb(
+                        * self.numeric_bound().get_variable_before_action_lb(
                             VariableIndex::from_usize(numeric_var_id),
                             operator_id,
                         );
                 } else if weight <= -self.config.precision
-                    && self.numeric_bound.get_variable_before_action_has_ub(
+                    && self.numeric_bound().get_variable_before_action_has_ub(
                         VariableIndex::from_usize(numeric_var_id),
                         operator_id,
                     )
                 {
                     operator_cost += weight
-                        * self.numeric_bound.get_variable_before_action_ub(
+                        * self.numeric_bound().get_variable_before_action_ub(
                             VariableIndex::from_usize(numeric_var_id),
                             operator_id,
                         );
@@ -2121,40 +2134,40 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if use_bounded_linear
                 && weight >= self.config.precision
                 && self
-                    .numeric_bound
+                    .numeric_bound()
                     .get_effect_has_ub(original_operator_id, local_var_id)
                 && (!self.config.use_constant_assignment
                     || !self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_assignment_has_ub(original_operator_id, local_var_id))
             {
                 contribution = weight
                     * self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_effect_ub(original_operator_id, local_var_id);
             } else if use_bounded_linear
                 && weight <= -self.config.precision
                 && self
-                    .numeric_bound
+                    .numeric_bound()
                     .get_effect_has_lb(original_operator_id, local_var_id)
                 && (!self.config.use_constant_assignment
                     || !self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_assignment_has_lb(original_operator_id, local_var_id))
             {
                 contribution = weight
                     * self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_effect_lb(original_operator_id, local_var_id);
             } else if use_bounded_linear
                 && self.config.use_constant_assignment
                 && ((weight >= self.config.precision
                     && self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_assignment_has_ub(original_operator_id, local_var_id))
                     || (weight <= -self.config.precision
                         && self
-                            .numeric_bound
+                            .numeric_bound()
                             .get_assignment_has_lb(original_operator_id, local_var_id)))
             {
                 contribution = 0.0;
@@ -2437,21 +2450,21 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         let regular_var_id = VariableIndex::from_usize(regular_var_id);
                         if weight >= self.config.precision
                             && self
-                                .numeric_bound
+                                .numeric_bound()
                                 .get_variable_before_action_has_ub(regular_var_id, op2_id)
                         {
                             upper_bound += weight
                                 * self
-                                    .numeric_bound
+                                    .numeric_bound()
                                     .get_variable_before_action_ub(regular_var_id, op2_id);
                         } else if weight <= -self.config.precision
                             && self
-                                .numeric_bound
+                                .numeric_bound()
                                 .get_variable_before_action_has_lb(regular_var_id, op2_id)
                         {
                             upper_bound += weight
                                 * self
-                                    .numeric_bound
+                                    .numeric_bound()
                                     .get_variable_before_action_lb(regular_var_id, op2_id);
                         } else if weight.abs() >= self.config.precision {
                             has_bound = false;
@@ -2580,11 +2593,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if weight >= self.config.precision {
                 let blocked_by_upper_bound = local_var_id
                     .map(|var_id| {
-                        self.numeric_bound
+                        self.numeric_bound()
                             .get_effect_has_ub(original_operator_id, var_id)
                             || (self.config.use_constant_assignment
                                 && self
-                                    .numeric_bound
+                                    .numeric_bound()
                                     .get_assignment_has_ub(original_operator_id, var_id))
                     })
                     .unwrap_or(false);
@@ -2597,11 +2610,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if weight <= -self.config.precision {
                 let blocked_by_lower_bound = local_var_id
                     .map(|var_id| {
-                        self.numeric_bound
+                        self.numeric_bound()
                             .get_effect_has_lb(original_operator_id, var_id)
                             || (self.config.use_constant_assignment
                                 && self
-                                    .numeric_bound
+                                    .numeric_bound()
                                     .get_assignment_has_lb(original_operator_id, var_id))
                     })
                     .unwrap_or(false);
@@ -2671,10 +2684,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if self.use_bounds
                 && ((weight >= self.config.precision
                     && self
-                        .numeric_bound
+                        .numeric_bound()
                         .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
                     || (weight <= -self.config.precision
-                        && self.numeric_bound.has_no_decreasing_assignment_effect(
+                        && self.numeric_bound().has_no_decreasing_assignment_effect(
                             original_operator_id,
                             local_var_id,
                         )))
@@ -2702,10 +2715,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if self.use_bounds
                 && ((weight >= self.config.precision
                     && self
-                        .numeric_bound
+                        .numeric_bound()
                         .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
                     || (weight <= -self.config.precision
-                        && self.numeric_bound.has_no_decreasing_assignment_effect(
+                        && self.numeric_bound().has_no_decreasing_assignment_effect(
                             original_operator_id,
                             local_var_id,
                         )))
@@ -2726,19 +2739,19 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .unwrap_or(0.0);
                 if (weight >= self.config.precision
                     && self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_assignment_has_ub(original_operator_id, local_var_id)
                     && (!self.use_bounds
-                        || !self.numeric_bound.has_no_increasing_assignment_effect(
+                        || !self.numeric_bound().has_no_increasing_assignment_effect(
                             original_operator_id,
                             local_var_id,
                         )))
                     || (weight <= -self.config.precision
                         && self
-                            .numeric_bound
+                            .numeric_bound()
                             .get_assignment_has_lb(original_operator_id, local_var_id)
                         && (!self.use_bounds
-                            || !self.numeric_bound.has_no_decreasing_assignment_effect(
+                            || !self.numeric_bound().has_no_decreasing_assignment_effect(
                                 original_operator_id,
                                 local_var_id,
                             )))
@@ -2796,12 +2809,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
             }
             if self.use_bounds
                 && ((weight >= self.config.precision
-                    && self.numeric_bound.has_no_increasing_assignment_effect(
+                    && self.numeric_bound().has_no_increasing_assignment_effect(
                         original_operator_id,
                         VariableIndex::from_usize(local_var_id),
                     ))
                     || (weight <= -self.config.precision
-                        && self.numeric_bound.has_no_decreasing_assignment_effect(
+                        && self.numeric_bound().has_no_decreasing_assignment_effect(
                             original_operator_id,
                             VariableIndex::from_usize(local_var_id),
                         )))
@@ -2838,10 +2851,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if self.use_bounds
                 && ((weight >= self.config.precision
                     && self
-                        .numeric_bound
+                        .numeric_bound()
                         .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
                     || (weight <= -self.config.precision
-                        && self.numeric_bound.has_no_decreasing_assignment_effect(
+                        && self.numeric_bound().has_no_decreasing_assignment_effect(
                             original_operator_id,
                             local_var_id,
                         )))
@@ -2872,12 +2885,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .unwrap_or(0.0);
                 if self.use_bounds
                     && ((weight >= self.config.precision
-                        && self.numeric_bound.has_no_increasing_assignment_effect(
+                        && self.numeric_bound().has_no_increasing_assignment_effect(
                             original_operator_id,
                             local_var_id,
                         ))
                         || (weight <= -self.config.precision
-                            && self.numeric_bound.has_no_decreasing_assignment_effect(
+                            && self.numeric_bound().has_no_decreasing_assignment_effect(
                                 original_operator_id,
                                 local_var_id,
                             )))
@@ -2887,11 +2900,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
                 if weight >= self.config.precision
                     && self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_assignment_has_ub(original_operator_id, local_var_id)
                 {
                     let mut contribution = (self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_assignment_ub(original_operator_id, local_var_id)
                         - numeric_values
                             .get(actual_var_id.index())
@@ -2899,22 +2912,22 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             .unwrap_or(0.0))
                     .max(0.0);
                     if self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_effect_has_ub(original_operator_id, local_var_id)
                     {
                         contribution = contribution.min(
-                            self.numeric_bound
+                            self.numeric_bound()
                                 .get_effect_ub(original_operator_id, local_var_id),
                         );
                     }
                     net += weight * contribution;
                 } else if weight <= -self.config.precision
                     && self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_assignment_has_lb(original_operator_id, local_var_id)
                 {
                     let mut contribution = (self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_assignment_lb(original_operator_id, local_var_id)
                         - numeric_values
                             .get(actual_var_id.index())
@@ -2922,11 +2935,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             .unwrap_or(0.0))
                     .min(0.0);
                     if self
-                        .numeric_bound
+                        .numeric_bound()
                         .get_effect_has_lb(original_operator_id, local_var_id)
                     {
                         contribution = contribution.max(
-                            self.numeric_bound
+                            self.numeric_bound()
                                 .get_effect_lb(original_operator_id, local_var_id),
                         );
                     }
