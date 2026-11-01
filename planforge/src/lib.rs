@@ -218,6 +218,8 @@ impl GroundingOptions {
 pub enum PlanforgeCommand {
     /// Enumerate the complete reachable state space and write standard CSV files.
     Enumerate(EnumerateCli),
+    /// List every heuristic with its options and their defaults.
+    Heuristics,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -249,6 +251,13 @@ pub fn run_command(
 ) -> std::io::Result<()> {
     match command {
         PlanforgeCommand::Enumerate(arguments) => run_enumeration(arguments, grounding_limits),
+        PlanforgeCommand::Heuristics => {
+            print!(
+                "{}",
+                planforge_search::heuristic_factory::heuristic_reference()
+            );
+            Ok(())
+        }
     }
 }
 

@@ -21,6 +21,10 @@
 //!   `flatten` per struct; positional arguments fill the struct's own
 //!   positional fields.
 //!
+//! It also emits `describe_options`, listing each option with its value in
+//! `self` as the default and the field's `///` documentation; a flattened
+//! field lists its own options in its place.
+//!
 //! The trait, primitive `FromOptionValue` impls, and `for_each_option`
 //! helper live in `planforge_search::config`. The emitted code references
 //! them via absolute `::planforge_search::config::…` paths.
@@ -64,7 +68,9 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
     };
 
     let mut order_keys: Vec<String> = Vec::new();
+    let mut own_keys: Vec<String> = Vec::new();
     let mut arms: Vec<TokenStream2> = Vec::new();
+    let mut docs: Vec<TokenStream2> = Vec::new();
     let mut flatten_field: Option<&syn::Ident> = None;
 
     for field in fields.iter() {
@@ -89,15 +95,42 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                 ));
             }
             flatten_field = Some(field_ident);
+            // The struct's own options shadow the flattened ones of the same
+            // name, as `apply_options` matches its own first.
+            docs.push(quote! {
+                {
+                    let mut flattened = ::std::vec::Vec::new();
+                    ::planforge_search::config::ApplyOptions::describe_options(
+                        &self.#field_ident,
+                        &mut flattened,
+                    );
+                    out.extend(
+                        flattened
+                            .into_iter()
+                            .filter(|option| !OWN.contains(&option.name.as_str())),
+                    );
+                }
+            });
             continue;
         }
 
         // Plain assignment field.
         let key = attrs.rename.unwrap_or_else(|| field_ident.to_string());
+        own_keys.push(key.clone());
         if attrs.positional {
             order_keys.push(key.clone());
         }
         let key_lit = syn::LitStr::new(&key, field_span(field));
+        let doc_lit = syn::LitStr::new(&doc_comment(field), field_span(field));
+        let positional = attrs.positional;
+        docs.push(quote! {
+            out.push(::planforge_search::config::OptionDoc {
+                name: #key_lit.to_string(),
+                positional: #positional,
+                default: ::planforge_search::config::FromOptionValue::option_text(&self.#field_ident),
+                doc: #doc_lit.to_string(),
+            });
+        });
 
         arms.push(quote! {
             #key_lit => {
@@ -127,6 +160,10 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
         }
     };
 
+    let own_lits: Vec<syn::LitStr> = own_keys
+        .iter()
+        .map(|s| syn::LitStr::new(s, proc_macro2::Span::call_site()))
+        .collect();
     let order_lits: Vec<syn::LitStr> = order_keys
         .iter()
         .map(|s| syn::LitStr::new(s, proc_macro2::Span::call_site()))
@@ -147,6 +184,11 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                         #catchall
                     }
                 })
+            }
+
+            fn describe_options(&self, out: &mut ::std::vec::Vec<::planforge_search::config::OptionDoc>) {
+                const OWN: &[&str] = &[ #(#own_lits),* ];
+                #(#docs)*
             }
         }
     })
@@ -209,6 +251,25 @@ fn string_value(nv: &syn::MetaNameValue) -> Result<String, Error> {
     }
 }
 
+/// The field's `///` documentation, its lines joined by spaces.
+fn doc_comment(field: &Field) -> String {
+    field
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .filter_map(|attr| match &attr.meta {
+            Meta::NameValue(nv) => match &nv.value {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: Lit::Str(s), ..
+                }) => Some(s.value().trim().to_string()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn field_span(field: &Field) -> proc_macro2::Span {
     syn::spanned::Spanned::span(field)
 }
@@ -232,6 +293,7 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
     };
     let ty = &input.ident;
     let mut arms = Vec::new();
+    let mut text_arms = Vec::new();
     let mut names = Vec::new();
     for variant in &data.variants {
         let mut name = None;
@@ -262,14 +324,22 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
         let body = match &variant.fields {
             Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
                 let config = &fields.unnamed[0].ty;
+                text_arms.push(quote! {
+                    Self::#ident(config) => format!(
+                        "{}({})", #name, ::planforge_search::config::options_text(config)
+                    )
+                });
                 quote! { Ok(Self::#ident(::planforge_search::config::configure(
                     name, <#config as ::std::default::Default>::default(), args,
                 )?)) }
             }
-            Fields::Unit => quote! {
-                if args.is_empty() { Ok(Self::#ident) }
-                else { Err(format!("`{name}` does not accept arguments").into()) }
-            },
+            Fields::Unit => {
+                text_arms.push(quote! { Self::#ident => format!("{}()", #name) });
+                quote! {
+                    if args.is_empty() { Ok(Self::#ident) }
+                    else { Err(format!("`{name}` does not accept arguments").into()) }
+                }
+            }
             _ => {
                 return Err(Error::new_spanned(
                     variant,
@@ -291,6 +361,12 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                 match name.to_ascii_lowercase().as_str() {
                     #(#arms,)*
                     _ => Err(format!("unknown {} `{name}`; expected one of {}", stringify!(#ty), [#(#names),*].join(", ")).into()),
+                }
+            }
+
+            fn option_text(&self) -> ::std::string::String {
+                match self {
+                    #(#text_arms,)*
                 }
             }
         }

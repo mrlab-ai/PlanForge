@@ -84,4 +84,37 @@ impl planforge_search::config::ApplyOptions for Icaps26CartesianConfig {
         }
         Ok(())
     }
+
+    fn describe_options(&self, out: &mut Vec<planforge_search::config::OptionDoc>) {
+        use planforge_search::config::{FromOptionValue, TimeLimit};
+
+        let pick = match self.pick {
+            Icaps26SplitSelection::Random => "random",
+            Icaps26SplitSelection::MinUnwanted => "min_unwanted",
+            Icaps26SplitSelection::MaxUnwanted => "max_unwanted",
+        };
+        for (name, default, doc) in [
+            (
+                "pick",
+                pick.to_string(),
+                "split selector: random, min_unwanted or max_unwanted",
+            ),
+            ("max_states", self.max_states.option_text(), ""),
+            ("max_time", TimeLimit::from(self.max_time).option_text(), ""),
+            (
+                "random_seed",
+                u64::from(self.random_seed).option_text(),
+                "seed of the artifact's std::mt19937, read by pick=random",
+            ),
+            ("combine_labels", self.combine_labels.option_text(), ""),
+            ("debug", self.debug.option_text(), ""),
+        ] {
+            out.push(planforge_search::config::OptionDoc {
+                name: name.to_string(),
+                positional: false,
+                default,
+                doc: doc.to_string(),
+            });
+        }
+    }
 }
