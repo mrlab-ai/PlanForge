@@ -2,7 +2,8 @@ use super::*;
 
 use crate::numeric_conditions::ConditionValue;
 use crate::numeric_task::{
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable,
+    AbstractNumericTask, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+    NumericType, NumericVariable,
 };
 use crate::tests::*;
 
@@ -30,45 +31,9 @@ fn assignment_axiom_reports_division_by_zero_distinctly() {
     );
 }
 
-#[test]
-fn assignment_axiom_reports_the_invalid_right_operand() {
-    let axiom = AssignmentAxiom::new(
-        VariableIndex::new(1),
-        CalOperator::Sum,
-        VariableIndex::new(0),
-        VariableIndex::new(3),
-    );
-    let mut values = [NumericValue::new(4.0), NumericValue::new(0.0)];
-
-    let error = axiom
-        .update_values(&mut values)
-        .expect_err("right operand is out of bounds");
-
-    assert!(
-        format!("{error:?}").contains("index: 3"),
-        "unexpected error: {error:?}"
-    );
-}
-
-#[test]
-fn comparison_axiom_reports_the_invalid_right_operand() {
-    let axiom = ComparisonAxiom::new(
-        VariableIndex::new(0),
-        VariableIndex::new(0),
-        VariableIndex::new(3),
-        ComparisonOperator::Equal,
-    );
-
-    let error = axiom
-        .is_hold(&[NumericValue::new(4.0), NumericValue::new(0.0)])
-        .expect_err("right operand is out of bounds");
-
-    assert_eq!(error.index, 3);
-}
-
-#[test]
-fn complete_evaluation_runs_arithmetic_before_comparisons() {
-    let problem = std::sync::Arc::new(NumericRootTask::new(NumericRootTaskParts {
+/// A task whose condition "left + right > zero" reads the derived sum.
+fn sum_condition_task_parts() -> NumericRootTaskParts {
+    NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
         variables: vec![ExplicitVariable::new(
@@ -111,7 +76,33 @@ fn complete_evaluation_runs_arithmetic_before_comparisons() {
             VariableIndex::new(1),
         )],
         global_constraint: ExplicitFact::condition(0, ConditionValue::True.as_usize()),
-    }));
+    }
+}
+
+#[test]
+#[should_panic(expected = "assignment axiom 2 names numeric variable 7")]
+fn task_rejects_an_assignment_axiom_operand_out_of_range() {
+    let mut parts = sum_condition_task_parts();
+    parts.assignment_axioms[0] = AssignmentAxiom::new(
+        VariableIndex::new(2),
+        CalOperator::Sum,
+        VariableIndex::new(0),
+        VariableIndex::new(7),
+    );
+    NumericRootTask::new(parts);
+}
+
+#[test]
+#[should_panic(expected = "comparison axiom 0 names numeric variable 7")]
+fn task_rejects_a_comparison_axiom_operand_out_of_range() {
+    let mut parts = sum_condition_task_parts();
+    parts.comparison_axioms[0].right_hand_side = VariableIndex::new(7);
+    NumericRootTask::new(parts);
+}
+
+#[test]
+fn complete_evaluation_runs_arithmetic_before_comparisons() {
+    let problem = std::sync::Arc::new(NumericRootTask::new(sum_condition_task_parts()));
     let state_packer = std::sync::Arc::new(StatePacker::new(&[ConditionValue::DOMAIN_SIZE as u64]));
     let result_var = problem.comparison_axioms()[0].get_left_var_id();
     let mut numeric_state = problem.initial_numeric_values().to_vec();

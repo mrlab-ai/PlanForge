@@ -17,7 +17,7 @@ use crate::axioms::AxiomEvaluator;
 use crate::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, Operator, OperatorIndex,
 };
-use crate::utils::errors::AxiomEvalError;
+use crate::utils::errors::AssignmentAxiomError;
 use crate::utils::state_packer::StatePacker;
 
 /// The propositional and numeric values of a state, closed under the axioms of
@@ -83,7 +83,7 @@ impl<'task> ExplicitStateSpace<'task> {
 
     /// The task's initial state, with numeric values canonical as in the
     /// registry.
-    pub fn initial_state(&self) -> Result<ExplicitState, AxiomEvalError> {
+    pub fn initial_state(&self) -> Result<ExplicitState, AssignmentAxiomError> {
         let mut state = ExplicitState {
             propositional: self.task.initial_propositional_values().to_vec(),
             numeric: self.task.initial_numeric_values().to_vec(),
@@ -97,7 +97,7 @@ impl<'task> ExplicitStateSpace<'task> {
         &self,
         state: &ExplicitState,
         operator: &Operator,
-    ) -> Result<ExplicitState, AxiomEvalError> {
+    ) -> Result<ExplicitState, AssignmentAxiomError> {
         let mut successor = ExplicitState {
             propositional: Vec::with_capacity(state.propositional.len()),
             numeric: Vec::with_capacity(state.numeric.len()),
@@ -113,7 +113,7 @@ impl<'task> ExplicitStateSpace<'task> {
         state: &ExplicitState,
         operator: &Operator,
         successor: &mut ExplicitState,
-    ) -> Result<(), AxiomEvalError> {
+    ) -> Result<(), AssignmentAxiomError> {
         assert!(
             state.is_applicable(operator),
             "operator {} is inapplicable in {state:?}",
@@ -130,7 +130,7 @@ impl<'task> ExplicitStateSpace<'task> {
         state: &ExplicitState,
         operator: &Operator,
         successor: &mut ExplicitState,
-    ) -> Result<(), AxiomEvalError> {
+    ) -> Result<(), AssignmentAxiomError> {
         self.assert_layout(state);
         operator.apply_to_explicit_state(
             &state.propositional,
@@ -147,7 +147,7 @@ impl<'task> ExplicitStateSpace<'task> {
         &self,
         state: &ExplicitState,
         plan: &[OperatorIndex],
-    ) -> Result<ExplicitState, AxiomEvalError> {
+    ) -> Result<ExplicitState, AssignmentAxiomError> {
         let operators = self.task.operators();
         let mut current = state.clone();
         let mut successor = state.clone();
@@ -179,7 +179,10 @@ impl<'task> ExplicitStateSpace<'task> {
 
     /// Re-derives the axiom variables of `state` from its other values. The
     /// other values are taken as they are, without canonicalization.
-    pub fn close_under_axioms(&self, state: &mut ExplicitState) -> Result<(), AxiomEvalError> {
+    pub fn close_under_axioms(
+        &self,
+        state: &mut ExplicitState,
+    ) -> Result<(), AssignmentAxiomError> {
         self.assert_layout(state);
         let mut packed = vec![0u64; self.state_packer.num_bins()];
         for (var_id, value) in state.propositional.iter().enumerate() {
