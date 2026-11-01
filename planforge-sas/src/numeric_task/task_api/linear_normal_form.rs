@@ -3,19 +3,21 @@ use crate::axioms::{ComparisonOperator, NumericExpression};
 use crate::utils::linear_effects::LinearizationError;
 
 impl TaskData {
-    /// Hoffmann's linear normal form, established before any task consumer.
-    /// PDDL arithmetic is real arithmetic. We approximate the algebraically
-    /// equivalent comparison in f64: canonical coefficients and threshold,
-    /// and one canonicalization after evaluating the shared linear sum.
-    /// Differences from operation-by-operation rounding within the existing
-    /// canonicalization tolerance are intentional; the tolerance itself is
-    /// unchanged. Nonlinear comparisons keep their expression definitions.
-    /// Terms are ordered by variable. A multivariate part is divided by the
-    /// magnitude of its leading coefficient, leaving that coefficient +1 or
-    /// -1; its orientation is retained. If that scale cannot retain all terms
-    /// as finite nonzero canonical coefficients, use the smallest coefficient
-    /// magnitude as the unit instead. A unary part becomes its
-    /// regular variable, reversing the comparison for a negative coefficient.
+    /// Hoffmann's linear normal form, established before any task consumer:
+    /// `sum c_i x_i op t` over regular variables, its terms ordered by
+    /// variable. PDDL arithmetic is real arithmetic; the linear sum is
+    /// evaluated in f64 and rounded once to the canonical grid, so
+    /// differences from operation-by-operation rounding below the grid are
+    /// intentional. Nonlinear comparisons keep their expression definitions.
+    ///
+    /// Only exact steps are taken, so a comparison that holds with equality
+    /// keeps holding with equality: coefficients and threshold are never
+    /// divided. Dividing by the leading coefficient rounds both to the grid
+    /// and can flip a strict comparison at its boundary (`1.5 x + y > 140`
+    /// holding at `x + 0.666666666667 y > 93.333333333333`). A unary part
+    /// with coefficient 1 becomes its regular variable, one with coefficient
+    /// -1 its negated threshold with the comparison reversed. Every other part
+    /// is a linear sum, shared by the comparisons with the same terms.
     pub(super) fn normalize_linear_comparisons(&mut self) {
         self.fold_arithmetic_constants();
         let mut parts = std::collections::HashMap::new();
@@ -41,11 +43,7 @@ impl TaskData {
         }
         for axiom in &self.assignment_axioms {
             if let NumericExpression::Linear(terms) = &axiom.expression {
-                let key: Vec<_> = terms
-                    .iter()
-                    .map(|(var, coefficient)| (*var, *coefficient))
-                    .collect();
-                parts.entry(key).or_insert(axiom.affected_var_id);
+                parts.entry(terms.clone()).or_insert(axiom.affected_var_id);
             }
         }
         let mut constants = std::collections::HashMap::new();
@@ -105,27 +103,12 @@ impl TaskData {
                 "comparison {id} has non-finite linear coefficients"
             );
             let mut operator = comparison.operator.clone();
-            let leading = terms
-                .first()
-                .map_or(ONE_VALUE, |(_, coefficient)| *coefficient);
-            let mut scale = if terms.len() == 1 {
-                leading
-            } else {
-                leading.abs()
-            };
-            if terms.len() > 1
-                && terms.iter().any(|(_, coefficient)| {
-                    let normalized = *coefficient / scale;
-                    normalized == ZERO_VALUE || !normalized.is_finite()
-                })
+            let mut threshold = NumericValue::new(-expression.constant);
+            if let [(_, coefficient)] = terms.as_mut_slice()
+                && *coefficient == -ONE_VALUE
             {
-                scale = terms
-                    .iter()
-                    .map(|(_, coefficient)| coefficient.abs())
-                    .min()
-                    .expect("a multivariate part has terms");
-            }
-            if scale < ZERO_VALUE {
+                *coefficient = ONE_VALUE;
+                threshold = -threshold;
                 operator = match operator {
                     ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,
                     ComparisonOperator::LessThanOrEqual => ComparisonOperator::GreaterThanOrEqual,
@@ -134,41 +117,21 @@ impl TaskData {
                     other => other,
                 };
             }
-            // Multivariate parts preserve orientation and identify positive
-            // scalar multiples. Unary coefficients are eliminated entirely.
-            for (_, coefficient) in &mut terms {
-                *coefficient /= scale;
-                assert!(
-                    *coefficient != ZERO_VALUE && coefficient.is_finite(),
-                    "normalizing comparison {id} loses a term"
-                );
-            }
-            let threshold = NumericValue::new(-expression.constant) / scale;
-            assert!(
-                threshold.is_finite(),
-                "comparison {id} has non-finite threshold"
-            );
             let left = match terms.as_slice() {
                 [] => self.normal_form_constant(ZERO_VALUE, &mut constants),
-                [(variable, _)] => *variable,
-                _ => {
-                    let key: Vec<_> = terms
-                        .iter()
-                        .map(|(var, coefficient)| (*var, *coefficient))
-                        .collect();
-                    *parts.entry(key).or_insert_with(|| {
-                        let variable = VariableIndex::from_usize(self.numeric_variables.len());
-                        self.numeric_variables.push(NumericVariable::new(
-                            format!("linear-part-{}", variable.index()),
-                            NumericType::Derived,
-                            Some(0),
-                        ));
-                        self.numeric_state.push(ZERO_VALUE);
-                        self.assignment_axioms
-                            .push(AssignmentAxiom::linear(variable, terms));
-                        variable
-                    })
-                }
+                [(variable, coefficient)] if *coefficient == ONE_VALUE => *variable,
+                _ => *parts.entry(terms.clone()).or_insert_with(|| {
+                    let variable = VariableIndex::from_usize(self.numeric_variables.len());
+                    self.numeric_variables.push(NumericVariable::new(
+                        format!("linear-part-{}", variable.index()),
+                        NumericType::Derived,
+                        Some(0),
+                    ));
+                    self.numeric_state.push(ZERO_VALUE);
+                    self.assignment_axioms
+                        .push(AssignmentAxiom::linear(variable, terms));
+                    variable
+                }),
             };
             let right = self.normal_form_constant(threshold, &mut constants);
             let comparison = &mut self.comparison_axioms[id];
