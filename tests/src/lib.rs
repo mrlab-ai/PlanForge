@@ -26,6 +26,8 @@ mod numeric_corpus_tests;
 #[cfg(test)]
 mod sailing_simple_tests;
 #[cfg(test)]
+mod search_snapshot_tests;
+#[cfg(test)]
 mod strips_corpus_tests;
 #[cfg(test)]
 mod task_equivalence_tests;
