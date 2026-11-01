@@ -33,6 +33,8 @@ pub const UNBOUNDED_INTERVAL: Interval = Interval {
 };
 
 impl Interval {
+    /// The interval between the endpoints, empty when they admit no value
+    /// (see [`Self::is_empty`]); infinite endpoints are open.
     #[inline]
     pub fn new(
         lower: NumericValue,
@@ -289,9 +291,6 @@ impl Interval {
         if self.upper == INF_VALUE {
             self.upper_closed = false;
         }
-
-        // TODO: Does not work at the moment because it is used in can_split(). Fix that in future releases cause assertions are our friend
-        // debug_assert!(!self.is_empty());
 
         self
     }

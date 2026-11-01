@@ -162,7 +162,7 @@ fn assert_optimum_survives_restriction(instance: &str, expected: f64) {
 
     let restricted = build_restricted_task(&task)
         .expect("sailing-simple restricted task construction must not fail")
-        .map_or(task, |restricted| restricted.into_task());
+        .unwrap_or(task);
     assert_eq!(
         blind_astar_cost(&restricted, instance),
         expected,
@@ -332,7 +332,7 @@ fn scp_initial_h_with_config(
     let (task, _scratch) = sailing_task(instance);
     let task = build_restricted_task(&task)
         .expect("sailing-simple restricted task construction must not fail")
-        .map_or(task, |restricted| restricted.into_task());
+        .unwrap_or(task);
     let generator = DomainAbstractionCollectionGenerator::new(collection_config.clone())
         .expect("the domain collection configuration is valid");
     let abstractions = generator
@@ -377,7 +377,7 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
     let (task, _scratch) = sailing_task(instance);
     let task = build_restricted_task(&task)
         .expect("sailing-simple restricted task construction must not fail")
-        .map_or(task, |restricted| restricted.into_task());
+        .unwrap_or(task);
     let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1))
         .expect("the domain collection configuration is valid");
     let abstractions = generator

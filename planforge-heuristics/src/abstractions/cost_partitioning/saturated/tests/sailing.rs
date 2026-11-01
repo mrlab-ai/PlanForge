@@ -58,8 +58,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
     let task = translated_sailing_2_2_task();
     let restricted_task = build_restricted_task(&task)
         .expect("sailing task should support restricted task")
-        .expect("sailing task should have promotable roots")
-        .into_task();
+        .expect("sailing task should have promotable roots");
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
@@ -208,8 +207,7 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     let task = translated_sailing_2_2_task();
     let restricted_task = build_restricted_task(&task)
         .expect("sailing task should support restricted task")
-        .expect("sailing task should have promotable roots")
-        .into_task();
+        .expect("sailing task should have promotable roots");
     let transformed_task = &restricted_task;
     let specs = handcrafted_full_task_specs(transformed_task);
     assert_eq!(specs.len(), 4);

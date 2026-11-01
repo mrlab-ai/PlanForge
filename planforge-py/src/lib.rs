@@ -1051,7 +1051,7 @@ fn restrict_numeric_task(
         return Ok(task);
     }
     match build_restricted_task(&task).map_err(|err| format!("{err:#}"))? {
-        Some(restricted_task) => Ok(restricted_task.into_task()),
+        Some(restricted_task) => Ok(restricted_task),
         None => Ok(task),
     }
 }

@@ -70,7 +70,7 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
     let restricted = build_restricted_task(&task)
         .unwrap()
         .expect("task should be restricted");
-    let transformed = restricted.task();
+    let transformed = &restricted;
 
     assert_eq!(transformed.numeric_variables().len(), 3);
     let comparison = &transformed.comparison_axioms()[0];
@@ -383,7 +383,7 @@ fn restricted_task_preserves_derived_metric_cost() {
     let restricted = build_restricted_task(&task)
         .unwrap()
         .expect("task should be restricted");
-    assert_derived_metric_cost_preserved(restricted.task());
+    assert_derived_metric_cost_preserved(&restricted);
 }
 
 #[test]

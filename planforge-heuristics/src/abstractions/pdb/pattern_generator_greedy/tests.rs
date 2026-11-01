@@ -319,8 +319,7 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
     });
 
     let restricted = build_restricted_task(&task).unwrap().unwrap();
-    let pattern =
-        generate_greedy_pattern(restricted.task(), GreedyPatternGeneratorConfig::default());
+    let pattern = generate_greedy_pattern(&restricted, GreedyPatternGeneratorConfig::default());
 
     assert!(pattern.numeric.contains(&VariableIndex::from_usize(1)));
 }
@@ -329,8 +328,7 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
 fn greedy_pattern_collects_operator_comparison_support_after_restriction() {
     let task = operator_comparison_predecessor_task();
     let restricted = build_restricted_task(&task).unwrap().unwrap();
-    let pattern =
-        generate_greedy_pattern(restricted.task(), GreedyPatternGeneratorConfig::default());
+    let pattern = generate_greedy_pattern(&restricted, GreedyPatternGeneratorConfig::default());
 
     assert!(pattern.regular.contains(&VariableIndex::from_usize(0)));
     assert!(pattern.numeric.contains(&VariableIndex::from_usize(1)));
