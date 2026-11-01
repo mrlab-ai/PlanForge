@@ -299,15 +299,25 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
 }
 
 /// Settlers: the metric is a sum of fluents, derived by an assignment
-/// axiom, rather than a `total-cost` variable the operators increase.
+/// axiom, rather than a `total-cost` variable the operators increase. A
+/// translator mutex group spans the comparison's head and a location.
 fn task_with_derived_metric() -> NumericRootTask {
-    let variables = vec![ExplicitVariable::new(
-        2,
-        "cmp".into(),
-        vec!["true".into(), "false".into()],
-        Some(1),
-        ExplicitValueIndex::new(1),
-    )];
+    let variables = vec![
+        ExplicitVariable::new(
+            2,
+            "cmp".into(),
+            vec!["true".into(), "false".into()],
+            Some(1),
+            ExplicitValueIndex::new(1),
+        ),
+        ExplicitVariable::new(
+            2,
+            "location".into(),
+            vec!["mine".into(), "town".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        ),
+    ];
     let numeric_variables = vec![
         NumericVariable::new("fuel".into(), NumericType::Regular, None),
         NumericVariable::new("capacity".into(), NumericType::Constant, None),
@@ -344,8 +354,11 @@ fn task_with_derived_metric() -> NumericRootTask {
         variables,
         numeric_variables,
         goals: vec![ExplicitFact::propositional(0, 0)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(1)],
+        mutexes: vec![vec![
+            ExplicitFact::propositional(1, 0),
+            ExplicitFact::propositional(1, 1),
+        ]],
+        state: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(0)],
         numeric_state: vec![
             NumericValue::new(4.0),
             NumericValue::new(6.0),
@@ -381,7 +394,10 @@ fn task_with_derived_metric() -> NumericRootTask {
     })
 }
 
+/// The restriction keeps the metric's cost and, since it keeps every
+/// propositional variable id, the translator's mutex groups unchanged.
 fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
+    assert_eq!(transformed.mutexes(), task_with_derived_metric().mutexes());
     let metric_var_id = transformed.metric().var_id().unwrap();
     assert_eq!(transformed.numeric_type(metric_var_id), NumericType::Cost);
     assert_eq!(transformed.operator_cost(OperatorIndex::new(0)), 2.0);

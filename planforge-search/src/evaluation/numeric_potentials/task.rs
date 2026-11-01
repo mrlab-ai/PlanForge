@@ -1,9 +1,11 @@
 use planforge_sas::numeric_task::VariableKind;
 use std::collections::{BTreeMap, BTreeSet};
+use tracing::info;
 
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use planforge_sas::axioms::{CalOperator, ComparisonOperator, NumericExpression};
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericTaskExt,
     NumericType, NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
@@ -94,6 +96,7 @@ impl PotentialTask {
         ignore_numeric_variables: bool,
         bounds_provider: BoundsProvider,
         simple_action_bounds: bool,
+        goal_strengthening: bool,
     ) -> Result<Self, String> {
         validate_abstractable_goal(task)?;
         for (operator_id, operator) in task.operators().iter().enumerate() {
@@ -145,23 +148,21 @@ impl PotentialTask {
         }
         propositional_goals.sort_unstable();
         propositional_goals.dedup();
-        // A propositional goal that is mutex with the false value of a
-        // comparison axiom implies that comparison in every concrete goal
-        // state. Preserve this numeric-fd goal invariant as an additional
-        // numeric goal interval.
-        for prop_goal in &propositional_goals {
-            for comparison in task.comparison_axioms() {
-                let false_fact =
-                    ExplicitFact::propositional(comparison.get_affected_var_id().index(), 1);
-                if prop_goal.var() != false_fact.var()
-                    && task.are_facts_mutex(prop_goal, &false_fact)
-                {
-                    numeric_conditions.extend(helper.comparison_fact_materialized_conditions(
-                        comparison.get_affected_var_id(),
-                        ExplicitValueIndex::new(0),
-                    ));
-                }
-            }
+        // A comparison every reachable goal state satisfies joins the goal.
+        let implied_comparisons = if goal_strengthening {
+            goal_implied_comparisons(task, &helper, &propositional_goals)?
+        } else {
+            Vec::new()
+        };
+        info!(
+            "Numeric potential goal-implied comparisons: {}",
+            implied_comparisons.len()
+        );
+        for &comparison_var in &implied_comparisons {
+            numeric_conditions.extend(helper.comparison_fact_materialized_conditions(
+                comparison_var,
+                ExplicitValueIndex::from_usize(ConditionValue::True.as_usize()),
+            ));
         }
 
         let numeric_count = task.numeric_variables().len();
@@ -169,7 +170,7 @@ impl PotentialTask {
         // weight columns and the numeric goal-awareness row still exist, but
         // all weights are fixed to zero because no numeric goal interval is
         // registered below.
-        let features = build_cpp_numeric_features(task)?;
+        let features = build_cpp_numeric_features(task, &implied_comparisons)?;
         let mut feature_keys: BTreeMap<Vec<(VariableIndex, NumericValue)>, usize> = BTreeMap::new();
         for (feature_id, feature) in features.iter().enumerate() {
             if !feature.affine || feature.coefficients.is_empty() {
@@ -517,6 +518,117 @@ impl PotentialTask {
     }
 }
 
+/// The comparisons every reachable state satisfying some propositional goal
+/// satisfies too, which the goal may therefore be strengthened by (the
+/// mutex-based goal strengthening of Fišer, Horčík, and Komenda 2020).
+///
+/// The translator's mutex groups never name a comparison, so the implication
+/// "goal fact `g` implies comparison `c`" is proven an inductive invariant
+/// from the operators: it holds initially (`g` false or `c` true), an
+/// operator that makes `g` true requires `c` and cannot lower it, and an
+/// operator that can lower `c` requires `g` false or makes it false.
+fn goal_implied_comparisons(
+    task: &dyn AbstractNumericTask,
+    helper: &NumericTaskHelper,
+    propositional_goals: &[ExplicitFact],
+) -> Result<Vec<VariableIndex>, String> {
+    let numeric_count = task.numeric_variables().len();
+    // Per operator, the constant change of every numeric variable, and the
+    // variables it assigns or changes by a state-dependent amount: those can
+    // take any value afterwards.
+    let mut deltas = Vec::with_capacity(task.operators().len());
+    let mut unbounded_changes = Vec::with_capacity(task.operators().len());
+    for (operator_id, operator) in task.operators().iter().enumerate() {
+        let mut operator_deltas = vec![0.0; numeric_count];
+        let mut operator_unbounded = vec![false; numeric_count];
+        let effects = task
+            .linearized_assignment_effects(OperatorIndex::from_usize(operator_id))
+            .map_err(|error| {
+                format!(
+                    "numeric_potential cannot linearize numeric effects of operator {operator_id} (`{}`): {error}",
+                    operator.name()
+                )
+            })?;
+        for effect in effects {
+            let var = effect.affected_var_id.index();
+            match effect.operation {
+                AssignmentOperation::Plus | AssignmentOperation::Minus
+                    if effect.delta.is_constant() =>
+                {
+                    operator_deltas[var] += effect.delta.constant;
+                }
+                _ => operator_unbounded[var] = true,
+            }
+        }
+        deltas.push(operator_deltas);
+        unbounded_changes.push(operator_unbounded);
+    }
+    // Whether the operator can make a linear condition of `c` false.
+    let may_lower = |operator_id: usize, conditions: &[LinearNumericCondition]| {
+        conditions.iter().any(|condition| {
+            let coefficients = condition.coefficients.iter().enumerate();
+            coefficients.clone().any(|(var, &coefficient)| {
+                coefficient != 0.0 && unbounded_changes[operator_id][var]
+            }) || coefficients
+                .map(|(var, &coefficient)| coefficient * deltas[operator_id][var])
+                .sum::<f64>()
+                < 0.0
+        })
+    };
+    let true_value = ExplicitValueIndex::from_usize(ConditionValue::True.as_usize());
+    let initial = task.initial_propositional_values();
+    let mut implied = Vec::new();
+    for comparison in task.comparison_axioms() {
+        let comparison_var = comparison.get_affected_var_id();
+        let conditions = helper.comparison_fact_materialized_conditions(comparison_var, true_value);
+        if conditions.is_empty() {
+            continue;
+        }
+        let initially_true = initial[comparison_var.index()] == true_value;
+        let implied_by = |goal: &ExplicitFact| {
+            let holds_initially = initially_true || initial[goal.var()] != goal.value_index();
+            holds_initially
+                && task
+                    .operators()
+                    .iter()
+                    .enumerate()
+                    .all(|(operator_id, operator)| {
+                        let precondition_on_goal_var = operator
+                            .preconditions()
+                            .iter()
+                            .find(|precondition| precondition.var_index() == goal.var_index());
+                        let effect_on_goal_var = operator
+                            .effects()
+                            .iter()
+                            .find(|effect| effect.var_id() == goal.var_index());
+                        let requires_goal = precondition_on_goal_var == Some(goal);
+                        let goal_false_after = effect_on_goal_var
+                            .map(|effect| effect.value() != goal.value_index())
+                            .unwrap_or_else(|| {
+                                precondition_on_goal_var.is_some() && !requires_goal
+                            });
+                        let makes_goal_true = effect_on_goal_var
+                            .is_some_and(|effect| effect.value() == goal.value_index())
+                            && !requires_goal;
+                        let lowers = may_lower(operator_id, &conditions);
+                        if makes_goal_true {
+                            !lowers
+                                && operator.preconditions().iter().any(|precondition| {
+                                    precondition.var_index() == comparison_var
+                                        && precondition.value_index() == true_value
+                                })
+                        } else {
+                            !lowers || goal_false_after
+                        }
+                    })
+        };
+        if propositional_goals.iter().any(implied_by) {
+            implied.push(comparison_var);
+        }
+    }
+    Ok(implied)
+}
+
 #[derive(Clone)]
 struct ParsedNumericExpression {
     coefficients: Vec<(VariableIndex, f64)>,
@@ -527,6 +639,7 @@ struct ParsedNumericExpression {
 
 fn build_cpp_numeric_features(
     task: &dyn AbstractNumericTask,
+    implied_comparisons: &[VariableIndex],
 ) -> Result<Vec<NumericFeature>, String> {
     let mut features = Vec::new();
     for (numeric_var_id, variable) in task.numeric_variables().iter().enumerate() {
@@ -581,18 +694,11 @@ fn build_cpp_numeric_features(
             record_fact(goal);
         }
     }
-    // The optimizer also materializes comparison facts implied by a
-    // propositional-goal mutex.
-    for goal in task.goals() {
-        for comparison in task.comparison_axioms() {
-            let false_fact =
-                ExplicitFact::propositional(comparison.get_affected_var_id().index(), 1);
-            if goal.var() != false_fact.var()
-                && task.are_facts_mutex(goal, &false_fact)
-                && seen_comparisons.insert(comparison.get_affected_var_id())
-            {
-                used_comparison_vars.push(comparison.get_affected_var_id());
-            }
+    // The comparisons the goal implies enter the goal, so they need features
+    // too.
+    for &comparison_var in implied_comparisons {
+        if seen_comparisons.insert(comparison_var) {
+            used_comparison_vars.push(comparison_var);
         }
     }
 

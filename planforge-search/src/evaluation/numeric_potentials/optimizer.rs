@@ -60,6 +60,7 @@ impl NumericPotentialOptimizer {
             config.ignore_numeric_variables,
             config.bounds,
             config.simple_action_bounds,
+            config.goal_strengthening,
         )?;
         if task.goal_unsatisfiable {
             return Ok(Self {
