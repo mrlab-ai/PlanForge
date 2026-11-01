@@ -270,6 +270,6 @@ fn comparison_preconditions_admit(
     let conditions = task.numeric_conditions();
     !preconditions
         .iter()
-        .filter(|precondition| conditions.is_condition_var(precondition.var_index()))
+        .filter(|precondition| precondition.is_condition())
         .any(|precondition| conditions.precondition_is_contradicted(precondition, source_intervals))
 }

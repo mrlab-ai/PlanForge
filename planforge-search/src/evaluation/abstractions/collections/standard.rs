@@ -13,6 +13,7 @@
 //! concrete plan, or its initial state is an abstract dead end, and no further
 //! member can help the search.
 
+use planforge_sas::numeric_task::VariableKind;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -210,14 +211,12 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
 fn initial_split_candidates(task: &dyn AbstractNumericTask) -> Vec<InitialSplitVar> {
     let goal_var_ids: HashSet<VariableIndex> =
         task.goals().iter().map(ExplicitFact::var_index).collect();
-    let axiom_var_ids: HashSet<VariableIndex> =
-        task.axioms().iter().map(|axiom| axiom.var_id()).collect();
     let propositional = (0..task.variables().len())
         .map(VariableIndex::from_usize)
-        .filter(|var_id| {
-            !axiom_var_ids.contains(var_id)
-                && (!task.numeric_conditions().is_condition_var(*var_id)
-                    || goal_var_ids.contains(var_id))
+        .filter(|&var_id| match task.variable_kind(var_id) {
+            VariableKind::Regular => true,
+            VariableKind::Condition => goal_var_ids.contains(&var_id),
+            VariableKind::Derived => false,
         })
         .map(InitialSplitVar::Propositional);
     let numeric = task

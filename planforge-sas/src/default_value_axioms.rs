@@ -36,7 +36,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use crate::axioms::PropositionalAxiom;
 use crate::numeric_task::{
-    AbstractNumericTask, AxiomIndex, ExplicitFact, ExplicitValueIndex, VariableIndex,
+    AbstractNumericTask, AxiomIndex, ExplicitFact, ExplicitValueIndex, VariableIndex, VariableKind,
 };
 use crate::utils::scc::Scc;
 
@@ -68,14 +68,12 @@ struct DerivedVariables {
 
 impl DerivedVariables {
     fn of(task: &dyn AbstractNumericTask) -> Self {
-        let conditions = task.numeric_conditions();
         let num_variables = task.variables().len();
         let mut is_derived = Vec::with_capacity(num_variables);
         let mut default_value = Vec::with_capacity(num_variables);
         for var in 0..num_variables as u32 {
             let var_index = VariableIndex::new(var);
-            let layer = task.variable(var_index).axiom_layer();
-            let derived = layer.is_some() && !conditions.is_condition_var(var_index);
+            let derived = task.variable_kind(var_index) == VariableKind::Derived;
             if derived {
                 // The negation is stated as one rule per default value, and
                 // `other_value` needs the complement to be unique, so a derived

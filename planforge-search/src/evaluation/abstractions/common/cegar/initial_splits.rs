@@ -7,6 +7,7 @@
 //! `init_value` initial splits of the numeric Fast Downward collections this
 //! ports.
 
+use planforge_sas::numeric_task::VariableKind;
 use planforge_sas::utils::value_lattice::ValueLattice;
 use std::collections::HashSet;
 
@@ -112,7 +113,7 @@ pub(crate) fn initial_splits(
         Some(InitialSplitVar::Propositional(var)) => var,
     };
     let task = semantics.task();
-    if !task.numeric_conditions().is_condition_var(var) {
+    if task.variable_kind(var) != VariableKind::Condition {
         if scope.blacklisted_prop_var_ids.contains(&var) {
             return Vec::new();
         }

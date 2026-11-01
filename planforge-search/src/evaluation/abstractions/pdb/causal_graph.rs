@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::numeric_task::VariableKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use planforge_sas::numeric_task::{
@@ -234,6 +235,5 @@ fn numeric_effect_target(
 }
 
 fn is_regular_propositional_var(task: &dyn AbstractNumericTask, var_id: VariableIndex) -> bool {
-    task.variable(var_id).axiom_layer().is_none()
-        && !task.numeric_conditions().is_condition_var(var_id)
+    task.variable_kind(var_id) == VariableKind::Regular
 }

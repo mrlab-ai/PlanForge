@@ -733,7 +733,7 @@ fn additive_view_filters_false_equality_precondition() {
         &task,
         &function,
         OperatorIndex::new(0),
-        &[ExplicitFact::propositional(0, 0)],
+        &[ExplicitFact::condition(0, 0)],
         &[],
         Deadline::NONE,
     )
