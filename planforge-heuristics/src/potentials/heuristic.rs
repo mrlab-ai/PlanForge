@@ -1056,15 +1056,15 @@ fn within_fraction(start: Instant, seconds: f64, fraction: f64) -> bool {
     !seconds.is_finite() || start.elapsed().as_secs_f64() < seconds * fraction
 }
 
-fn average_operator_cost(task: &PotentialTask) -> f64 {
-    if task.operators.is_empty() {
-        return 0.0;
-    }
-    task.operators
-        .iter()
-        .map(|operator| operator.cost)
-        .sum::<f64>()
-        / task.operators.len() as f64
+/// `None` for a task without operators, whose average is undefined.
+fn average_operator_cost(task: &PotentialTask) -> Option<f64> {
+    (!task.operators.is_empty()).then(|| {
+        task.operators
+            .iter()
+            .map(|operator| operator.cost)
+            .sum::<f64>()
+            / task.operators.len() as f64
+    })
 }
 
 fn function_value(

@@ -32,13 +32,14 @@ pub(crate) struct RandomWalkSampler {
     expander: RegistryExpander,
     rng: CppMt19937,
     initial_h: f64,
-    average_operator_cost: f64,
+    average_operator_cost: Option<f64>,
 }
 
 impl RandomWalkSampler {
     /// Walks scaled to the initial estimate `initial_h` of `task`, whose
-    /// operators cost `average_operator_cost` on average.
-    pub(crate) fn new(task: Arc<Task>, initial_h: f64, average_operator_cost: f64) -> Self {
+    /// operators cost `average_operator_cost` on average (`None`: the task
+    /// has no operators).
+    pub(crate) fn new(task: Arc<Task>, initial_h: f64, average_operator_cost: Option<f64>) -> Self {
         Self {
             expander: RegistryExpander::new(&task),
             task,
@@ -50,16 +51,20 @@ impl RandomWalkSampler {
 
     /// The coin flips a walk length is the number of successes of.
     fn trials(&self) -> Result<usize, String> {
+        // Without operators every walk ends where it starts.
+        let Some(average_operator_cost) = self.average_operator_cost else {
+            return Ok(0);
+        };
         if self.initial_h == 0.0 {
             return Ok(10);
         }
-        if !self.initial_h.is_finite() || self.average_operator_cost == 0.0 {
+        if !self.initial_h.is_finite() || average_operator_cost == 0.0 {
             return Err(format!(
                 "numeric_potential random walks need a finite h(s0) and a nonzero average operator cost, got h(s0) = {} and {}",
-                self.initial_h, self.average_operator_cost
+                self.initial_h, average_operator_cost
             ));
         }
-        Ok(4 * ((self.initial_h / self.average_operator_cost) + 0.5) as usize)
+        Ok(4 * ((self.initial_h / average_operator_cost) + 0.5) as usize)
     }
 
     fn sample(
