@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, Task};
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_sas::state_registry::{ConcreteState, ConcreteStateView, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use tracing::{debug, info, warn};
 
@@ -89,122 +89,20 @@ impl NumericPotentialHeuristic {
             .then(|| RayGenerator::new(&optimizer, config.ray_epsilon))
             .transpose()?;
         let mut rays = Vec::new();
-        let mut ray_certified_initial_state = if config.rays > 0 {
-            let generator = ray_generator
-                .as_mut()
-                .expect("a positive ray count builds the verifier up front");
-            if let Some(ray) =
-                generator.try_certify(&mut optimizer, registry.view(&initial_state))?
-            {
-                if generator.emit_certificate(
-                    &ray,
-                    &mut optimizer,
-                    registry.view(&initial_state),
-                    Path::new(&config.ray_certificate_file),
-                )? {
-                    rays.push(ray);
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        let ray_certified_before_optimization = ray_certified_initial_state;
+        let initial = solve_initial_state(
+            &mut optimizer,
+            &mut ray_generator,
+            &mut rays,
+            registry.view(&initial_state),
+            &config,
+        )?;
+        let dead_end_certified = initial.dead_end_certified;
 
-        // C++ always solves the initial-state objective first. Besides
-        // seeding portfolios, this is the pre-search unboundedness check.
-        let initial_outcome = if ray_certified_initial_state {
-            None
-        } else {
-            Some(optimizer.optimize_for_state(registry.view(&initial_state))?)
-        };
-        let (initial_function, dead_end_certified, initial_value, initial_was_optimal) =
-            match initial_outcome {
-                None => (optimizer.zero_function(), true, f64::INFINITY, false),
-                Some(OptimizationOutcome::Optimal { value, function }) => {
-                    (function, false, value.max(0.0), true)
-                }
-                Some(OptimizationOutcome::Unbounded { primal_ray }) => {
-                    let generator =
-                        exact_verifier(&mut ray_generator, &optimizer, config.ray_epsilon)?;
-                    let mut candidate = if primal_ray.is_empty() {
-                        None
-                    } else {
-                        generator.certify_native(
-                            &mut optimizer,
-                            primal_ray,
-                            registry.view(&initial_state),
-                        )?
-                    };
-                    if candidate.is_none() {
-                        candidate =
-                            generator.try_certify(&mut optimizer, registry.view(&initial_state))?;
-                    }
-                    if let Some(ray) = candidate {
-                        if generator.emit_certificate(
-                            &ray,
-                            &mut optimizer,
-                            registry.view(&initial_state),
-                            Path::new(&config.ray_certificate_file),
-                        )? {
-                            rays.push(ray);
-                            ray_certified_initial_state = true;
-                            (optimizer.zero_function(), true, f64::INFINITY, false)
-                        } else {
-                            warn!(
-                                "numeric potential exact ray artifact validation failed; retaining the admissible zero potential"
-                            );
-                            (optimizer.zero_function(), false, 0.0, false)
-                        }
-                    } else {
-                        warn!(
-                            "numeric potential unboundedness had no exact ray; retaining the admissible zero potential"
-                        );
-                        (optimizer.zero_function(), false, 0.0, false)
-                    }
-                }
-                Some(OptimizationOutcome::Infeasible) => {
-                    warn!(
-                        "numeric potential LP was infeasible; retaining the certified zero potential"
-                    );
-                    (optimizer.zero_function(), false, 0.0, false)
-                }
-                Some(OptimizationOutcome::ResourceLimit(status)) => {
-                    warn!(
-                        "numeric potential LP stopped with {status:?}; retaining the certified zero potential"
-                    );
-                    (optimizer.zero_function(), false, 0.0, false)
-                }
-            };
-        if ray_generator.is_some() {
-            info!(
-                "Numeric ray s_0 certificate: {}",
-                if ray_certified_initial_state {
-                    "yes"
-                } else {
-                    "no"
-                }
-            );
-        }
-        if config.validate_duality && initial_was_optimal {
-            let (optimum, columns, rows) = optimizer.validate_duality(
-                registry.view(&initial_state),
-                initial_value,
-                float_tolerance::LP_EPSILON,
-            )?;
-            info!(
-                "Numeric potential duality validation: h_pot(s_0)={initial_value}, operator-counting optimum={optimum} ({columns} columns, {rows} rows)"
-            );
-        }
-
+        // The stages below share one random-walk sampler, in this order.
         let mut space = SampleSpace {
             sampler: RandomWalkSampler::new(
                 task_ref.clone(),
-                initial_value,
+                initial.value,
                 average_operator_cost(&potential_task),
             ),
             registry,
@@ -213,11 +111,11 @@ impl NumericPotentialHeuristic {
         let functions = if dead_end_certified {
             potential_task
                 .goal_unsatisfiable
-                .then_some(initial_function)
+                .then_some(initial.function)
                 .into_iter()
                 .collect()
         } else {
-            build_static_portfolio(&mut optimizer, &mut space, &config, initial_function)?
+            build_static_portfolio(&mut optimizer, &mut space, &config, initial.function)?
         };
         let conditioned_groups = if dead_end_certified || !config.goal_conditioned {
             Vec::new()
@@ -228,47 +126,17 @@ impl NumericPotentialHeuristic {
             && config.rays > rays.len()
             && config.max_ray_generation_time.seconds() > 0.0
         {
-            optimizer.prepare_for_ordinary_potential()?;
-            let ray_start = Instant::now();
-            let mut ray_samples = Vec::new();
-            while ray_samples.len() < config.num_samples
-                && ray_start.elapsed().as_secs_f64() < config.max_ray_generation_time.seconds()
-            {
-                let chunk = (config.num_samples - ray_samples.len()).min(16);
-                ray_samples.extend(space.sample(chunk)?);
-            }
             let generator = ray_generator
                 .as_mut()
                 .expect("positive ray count must construct a ray generator");
-            for state in ray_samples {
-                if rays.len() >= config.rays
-                    || ray_start.elapsed().as_secs_f64() >= config.max_ray_generation_time.seconds()
-                {
-                    break;
-                }
-                let covered = rays
-                    .iter()
-                    .map(|ray| {
-                        ray.value(
-                            space.registry.view(&state),
-                            &potential_task,
-                            &mut Vec::new(),
-                            &mut Vec::new(),
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .any(|value| value > config.ray_epsilon);
-                if covered {
-                    continue;
-                }
-                if let Some(candidate) =
-                    generator.try_certify(&mut optimizer, space.registry.view(&state))?
-                    && !generator.is_duplicate(&candidate, &rays, &potential_task)
-                {
-                    rays.push(candidate);
-                }
-            }
+            generate_ray_portfolio(
+                &mut optimizer,
+                generator,
+                &mut rays,
+                &mut space,
+                &potential_task,
+                &config,
+            )?;
         }
         let goal_cost_partitions = if dead_end_certified
             || !config.goal_cost_partitioning
@@ -284,113 +152,31 @@ impl NumericPotentialHeuristic {
                 goal_group_has_additive_share[group_id] |= *share > 0.0;
             }
         }
-        let mut max_initial_value = functions
-            .iter()
-            .map(|function| {
-                function_value(
-                    function,
-                    space.registry.view(&space.initial_state),
-                    &potential_task,
-                )
-                .map(|value| value.max(0.0))
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .fold(0.0_f64, f64::max);
-        let mut initial_group_values = Vec::with_capacity(conditioned_groups.len());
-        for group in &conditioned_groups {
-            let group_value = group
-                .iter()
-                .map(|function| {
-                    function_value(
-                        function,
-                        space.registry.view(&space.initial_state),
-                        &potential_task,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .fold(f64::INFINITY, f64::min)
-                .max(0.0);
-            initial_group_values.push(group_value);
-            max_initial_value = max_initial_value.max(group_value);
-        }
-        for partition in &goal_cost_partitions {
-            max_initial_value = max_initial_value.max(
-                partition
-                    .iter()
-                    .zip(&initial_group_values)
-                    .map(|(share, value)| share * value)
-                    .sum(),
-            );
-        }
+        let max_initial_value = initial_portfolio_value(
+            &functions,
+            &conditioned_groups,
+            &goal_cost_partitions,
+            &space,
+            &potential_task,
+        )?;
         let enable_online =
             config.opt == OptimizeFor::DiverseSamples && config.max_online_functions > 0;
         if enable_online {
             optimizer.prepare_for_ordinary_potential()?;
         }
-        if !ray_certified_before_optimization {
-            info!("Numeric potential LP: {ordinary_columns} columns, {ordinary_rows} rows");
-        }
-        info!(
-            "Numeric bounds statistics: provider={} finite_lower={} finite_upper={} finite_both={}",
-            config.bounds,
-            potential_task
-                .global_feature_bounds
-                .iter()
-                .filter(|bounds| bounds.lower.is_finite())
-                .count(),
-            potential_task
-                .global_feature_bounds
-                .iter()
-                .filter(|bounds| bounds.upper.is_finite())
-                .count(),
-            potential_task
-                .global_feature_bounds
-                .iter()
-                .filter(|bounds| bounds.lower.is_finite() && bounds.upper.is_finite())
-                .count()
+        log_construction(
+            &potential_task,
+            &config,
+            ConstructionSummary {
+                lp_columns: ordinary_columns,
+                lp_rows: ordinary_rows,
+                certified_before_optimization: initial.certified_before_optimization,
+                functions: functions.len(),
+                conditioned_functions: conditioned_groups.iter().map(Vec::len).sum(),
+                max_initial_value,
+                rays: rays.len(),
+            },
         );
-        info!(
-            "Numeric bounds dropped action rows: {}",
-            potential_task
-                .operators
-                .iter()
-                .filter(|operator| !operator.reachable)
-                .count()
-        );
-        if !ray_certified_before_optimization {
-            info!(
-                "Exact signed-column numeric invariants: {}",
-                potential_task.global_linear_equalities.len()
-            );
-            for (feature_id, feature) in potential_task.features.iter().enumerate() {
-                debug!(
-                    "Numeric potential feature {feature_id}: `{}` coefficients={:?} goal=[{}, {}]",
-                    feature.name,
-                    feature.coefficients,
-                    potential_task.feature_goal_bounds[feature_id].lower,
-                    potential_task.feature_goal_bounds[feature_id].upper
-                );
-            }
-            for (operator_id, operator) in potential_task.operators.iter().enumerate() {
-                for &(feature_id, bounds) in &operator.numeric_precondition_bounds {
-                    debug!(
-                        "Numeric potential operator {operator_id} feature {feature_id} bounds=[{}, {}]",
-                        bounds.lower, bounds.upper
-                    );
-                }
-            }
-            info!(
-                "Numeric potential functions: {} ({} conditioned); max-ensemble h(s_0): {}",
-                functions.len() + conditioned_groups.iter().map(Vec::len).sum::<usize>(),
-                conditioned_groups.iter().map(Vec::len).sum::<usize>(),
-                max_initial_value
-            );
-        }
-        if config.rays > 0 {
-            info!("Numeric rays generated: {}", rays.len());
-        }
         let ray_count = rays.len();
         Ok(Self {
             task: potential_task,
@@ -409,35 +195,314 @@ impl NumericPotentialHeuristic {
                 && config.cache_estimates,
             dead_end_certified,
             online_optimizer: enable_online.then_some(optimizer),
-            online_state: OnlineState {
-                max_functions: if enable_online {
-                    config.max_online_functions
-                } else {
-                    0
-                },
-                base_interval: config.online_reoptimization_interval,
-                current_interval: config.online_reoptimization_interval,
-                max_consecutive_misses: config.max_consecutive_online_misses,
-                max_misses: config.max_online_misses,
-                max_lp_solves: config.max_online_lp_solves,
-                new_states_only: config.online_reoptimization_on_new_states_only,
-                seen_states: HashSet::new(),
-                evaluations_since_solve: 0,
-                consecutive_misses: 0,
-                misses: 0,
-                lp_solves: 0,
-                functions_added: 0,
-                trigger_states: 0,
-                dead_end_certificates: 0,
-                clean_cache_states: HashSet::new(),
-                cache_invalidations: 0,
-                cache_entries_examined: 0,
-                cache_entries_invalidated: 0,
-            },
+            online_state: OnlineState::new(&config, enable_online),
             revision: 0,
             prop_scratch: Vec::new(),
             numeric_scratch: Vec::new(),
         })
+    }
+}
+
+impl OnlineState {
+    fn new(config: &NumericPotentialConfig, enabled: bool) -> Self {
+        Self {
+            max_functions: if enabled {
+                config.max_online_functions
+            } else {
+                0
+            },
+            base_interval: config.online_reoptimization_interval,
+            current_interval: config.online_reoptimization_interval,
+            max_consecutive_misses: config.max_consecutive_online_misses,
+            max_misses: config.max_online_misses,
+            max_lp_solves: config.max_online_lp_solves,
+            new_states_only: config.online_reoptimization_on_new_states_only,
+            seen_states: HashSet::new(),
+            evaluations_since_solve: 0,
+            consecutive_misses: 0,
+            misses: 0,
+            lp_solves: 0,
+            functions_added: 0,
+            trigger_states: 0,
+            dead_end_certificates: 0,
+            clean_cache_states: HashSet::new(),
+            cache_invalidations: 0,
+            cache_entries_examined: 0,
+            cache_entries_invalidated: 0,
+        }
+    }
+}
+
+/// The potential optimized for the initial state, or the proof that the
+/// initial state is a dead end.
+struct InitialSolve {
+    function: NumericPotentialFunction,
+    /// An exact ray proves the initial state a dead end.
+    dead_end_certified: bool,
+    /// The function's value in the initial state, at least zero.
+    value: f64,
+    /// A ray certified the initial state before any LP was solved.
+    certified_before_optimization: bool,
+}
+
+/// Solves the potential LP for the initial state, which is also the pre-search
+/// dead-end check: an unbounded LP is a dead end only once an exact ray
+/// verifies it, and is written out as a certificate. With rays requested, a
+/// ray is sought before the LP is solved at all.
+fn solve_initial_state(
+    optimizer: &mut NumericPotentialOptimizer,
+    ray_generator: &mut Option<RayGenerator>,
+    rays: &mut Vec<Ray>,
+    initial_state: ConcreteStateView<'_>,
+    config: &NumericPotentialConfig,
+) -> Result<InitialSolve, String> {
+    let certificate_path = Path::new(&config.ray_certificate_file);
+    let mut certified = false;
+    if config.rays > 0 {
+        let generator = ray_generator
+            .as_mut()
+            .expect("a positive ray count builds the verifier up front");
+        if let Some(ray) = generator.try_certify(optimizer, initial_state)?
+            && generator.emit_certificate(&ray, optimizer, initial_state, certificate_path)?
+        {
+            rays.push(ray);
+            certified = true;
+        }
+    }
+    let certified_before_optimization = certified;
+
+    // C++ always solves the initial-state objective first. Besides seeding
+    // portfolios, this is the pre-search unboundedness check.
+    let outcome = if certified {
+        None
+    } else {
+        Some(optimizer.optimize_for_state(initial_state)?)
+    };
+    let (function, dead_end_certified, value, was_optimal) = match outcome {
+        None => (optimizer.zero_function(), true, f64::INFINITY, false),
+        Some(OptimizationOutcome::Optimal { value, function }) => {
+            (function, false, value.max(0.0), true)
+        }
+        Some(OptimizationOutcome::Unbounded { primal_ray }) => {
+            let generator = exact_verifier(ray_generator, optimizer, config.ray_epsilon)?;
+            let mut candidate = if primal_ray.is_empty() {
+                None
+            } else {
+                generator.certify_native(optimizer, primal_ray, initial_state)?
+            };
+            if candidate.is_none() {
+                candidate = generator.try_certify(optimizer, initial_state)?;
+            }
+            if let Some(ray) = candidate {
+                if generator.emit_certificate(&ray, optimizer, initial_state, certificate_path)? {
+                    rays.push(ray);
+                    certified = true;
+                    (optimizer.zero_function(), true, f64::INFINITY, false)
+                } else {
+                    warn!(
+                        "numeric potential exact ray artifact validation failed; retaining the admissible zero potential"
+                    );
+                    (optimizer.zero_function(), false, 0.0, false)
+                }
+            } else {
+                warn!(
+                    "numeric potential unboundedness had no exact ray; retaining the admissible zero potential"
+                );
+                (optimizer.zero_function(), false, 0.0, false)
+            }
+        }
+        Some(OptimizationOutcome::Infeasible) => {
+            warn!("numeric potential LP was infeasible; retaining the certified zero potential");
+            (optimizer.zero_function(), false, 0.0, false)
+        }
+        Some(OptimizationOutcome::ResourceLimit(status)) => {
+            warn!(
+                "numeric potential LP stopped with {status:?}; retaining the certified zero potential"
+            );
+            (optimizer.zero_function(), false, 0.0, false)
+        }
+    };
+    if ray_generator.is_some() {
+        info!(
+            "Numeric ray s_0 certificate: {}",
+            if certified { "yes" } else { "no" }
+        );
+    }
+    if config.validate_duality && was_optimal {
+        let (optimum, columns, rows) =
+            optimizer.validate_duality(initial_state, value, float_tolerance::LP_EPSILON)?;
+        info!(
+            "Numeric potential duality validation: h_pot(s_0)={value}, operator-counting optimum={optimum} ({columns} columns, {rows} rows)"
+        );
+    }
+    Ok(InitialSolve {
+        function,
+        dead_end_certified,
+        value,
+        certified_before_optimization,
+    })
+}
+
+/// Adds to `rays` exact rays from sampled states no ray covers yet, until
+/// `config.rays` rays or the ray generation time.
+fn generate_ray_portfolio(
+    optimizer: &mut NumericPotentialOptimizer,
+    generator: &mut RayGenerator,
+    rays: &mut Vec<Ray>,
+    space: &mut SampleSpace,
+    potential_task: &PotentialTask,
+    config: &NumericPotentialConfig,
+) -> Result<(), String> {
+    optimizer.prepare_for_ordinary_potential()?;
+    let ray_start = Instant::now();
+    let out_of_time =
+        || ray_start.elapsed().as_secs_f64() >= config.max_ray_generation_time.seconds();
+    let mut ray_samples = Vec::new();
+    while ray_samples.len() < config.num_samples && !out_of_time() {
+        let chunk = (config.num_samples - ray_samples.len()).min(16);
+        ray_samples.extend(space.sample(chunk)?);
+    }
+    for state in ray_samples {
+        if rays.len() >= config.rays || out_of_time() {
+            break;
+        }
+        let covered = rays
+            .iter()
+            .map(|ray| {
+                ray.value(
+                    space.registry.view(&state),
+                    potential_task,
+                    &mut Vec::new(),
+                    &mut Vec::new(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .any(|value| value > config.ray_epsilon);
+        if covered {
+            continue;
+        }
+        if let Some(candidate) = generator.try_certify(optimizer, space.registry.view(&state))?
+            && !generator.is_duplicate(&candidate, rays, potential_task)
+        {
+            rays.push(candidate);
+        }
+    }
+    Ok(())
+}
+
+/// The portfolio's estimate for the initial state: the maximum over its
+/// functions, its goal groups' minima and its partitions' sums.
+fn initial_portfolio_value(
+    functions: &[NumericPotentialFunction],
+    conditioned_groups: &[Vec<NumericPotentialFunction>],
+    goal_cost_partitions: &[Vec<f64>],
+    space: &SampleSpace,
+    potential_task: &PotentialTask,
+) -> Result<f64, String> {
+    let initial = || space.registry.view(&space.initial_state);
+    let mut max_value = functions
+        .iter()
+        .map(|function| function_value(function, initial(), potential_task).map(|v| v.max(0.0)))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .fold(0.0_f64, f64::max);
+    let mut group_values = Vec::with_capacity(conditioned_groups.len());
+    for group in conditioned_groups {
+        let group_value = group
+            .iter()
+            .map(|function| function_value(function, initial(), potential_task))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .fold(f64::INFINITY, f64::min)
+            .max(0.0);
+        group_values.push(group_value);
+        max_value = max_value.max(group_value);
+    }
+    for partition in goal_cost_partitions {
+        max_value = max_value.max(
+            partition
+                .iter()
+                .zip(&group_values)
+                .map(|(share, value)| share * value)
+                .sum(),
+        );
+    }
+    Ok(max_value)
+}
+
+/// What the construction log reports besides the task's own statistics.
+struct ConstructionSummary {
+    lp_columns: usize,
+    lp_rows: usize,
+    certified_before_optimization: bool,
+    functions: usize,
+    conditioned_functions: usize,
+    max_initial_value: f64,
+    rays: usize,
+}
+
+fn log_construction(
+    potential_task: &PotentialTask,
+    config: &NumericPotentialConfig,
+    summary: ConstructionSummary,
+) {
+    if !summary.certified_before_optimization {
+        info!(
+            "Numeric potential LP: {} columns, {} rows",
+            summary.lp_columns, summary.lp_rows
+        );
+    }
+    let bounds = &potential_task.global_feature_bounds;
+    info!(
+        "Numeric bounds statistics: provider={} finite_lower={} finite_upper={} finite_both={}",
+        config.bounds,
+        bounds.iter().filter(|b| b.lower.is_finite()).count(),
+        bounds.iter().filter(|b| b.upper.is_finite()).count(),
+        bounds
+            .iter()
+            .filter(|b| b.lower.is_finite() && b.upper.is_finite())
+            .count()
+    );
+    info!(
+        "Numeric bounds dropped action rows: {}",
+        potential_task
+            .operators
+            .iter()
+            .filter(|operator| !operator.reachable)
+            .count()
+    );
+    if !summary.certified_before_optimization {
+        info!(
+            "Exact signed-column numeric invariants: {}",
+            potential_task.global_linear_equalities.len()
+        );
+        for (feature_id, feature) in potential_task.features.iter().enumerate() {
+            debug!(
+                "Numeric potential feature {feature_id}: `{}` coefficients={:?} goal=[{}, {}]",
+                feature.name,
+                feature.coefficients,
+                potential_task.feature_goal_bounds[feature_id].lower,
+                potential_task.feature_goal_bounds[feature_id].upper
+            );
+        }
+        for (operator_id, operator) in potential_task.operators.iter().enumerate() {
+            for &(feature_id, bounds) in &operator.numeric_precondition_bounds {
+                debug!(
+                    "Numeric potential operator {operator_id} feature {feature_id} bounds=[{}, {}]",
+                    bounds.lower, bounds.upper
+                );
+            }
+        }
+        info!(
+            "Numeric potential functions: {} ({} conditioned); max-ensemble h(s_0): {}",
+            summary.functions + summary.conditioned_functions,
+            summary.conditioned_functions,
+            summary.max_initial_value
+        );
+    }
+    if config.rays > 0 {
+        info!("Numeric rays generated: {}", summary.rays);
     }
 }
 
