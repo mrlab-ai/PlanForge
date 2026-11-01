@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::search::{SearchOutcome, parse_search_spec, solve_task};
+use planforge_search::search::{SearchLimits, SearchOutcome, parse_search_spec};
 use planforge_search::task_transformations::restriction::build_restricted_task;
 
 use crate::corpus::{self, problem_file_names, subdirectory_names, translate_in_memory};
@@ -86,7 +86,7 @@ fn run(task: &Task, restrict: bool, spec: &str) -> String {
     } else {
         task.clone()
     };
-    match solve_task(Arc::new(task), &search, None, None) {
+    match search.solve(Arc::new(task), SearchLimits::default()) {
         Ok(result) => {
             let nodes = &result.statistics.nodes;
             let outcome = match result.outcome {

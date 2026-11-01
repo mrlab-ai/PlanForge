@@ -9,10 +9,11 @@ fn register() {
 }
 
 fn astar_heuristic(input: &str) -> ConfigCall {
-    match parse_search_spec(input).unwrap() {
-        SearchConfig::AStar { heuristic, .. } => (*heuristic).clone(),
-        other => panic!("expected astar(...), got {other:?}"),
-    }
+    let parsed = parse_search_spec(input).unwrap();
+    let config = parsed
+        .config::<AStarConfig>()
+        .unwrap_or_else(|| panic!("expected astar(...), got {parsed:?}"));
+    (*config.heuristic).clone()
 }
 
 #[test]
@@ -47,12 +48,12 @@ fn parses_astar_blind_with_or_without_unit_parens() {
 fn parses_and_round_trips_astar_mpd() {
     register();
     let parsed = parse_search_spec("astar(blind(), mpd=true)").unwrap();
-    assert!(matches!(&parsed, SearchConfig::AStar { mpd: true, .. }));
+    assert!(parsed.config::<AStarConfig>().unwrap().mpd);
     assert_eq!(parsed.to_string(), "astar(blind(), mpd=true)");
     assert_eq!(parse_search_spec(&parsed.to_string()).unwrap(), parsed);
 
     let default = parse_search_spec("astar(blind())").unwrap();
-    assert!(matches!(default, SearchConfig::AStar { mpd: false, .. }));
+    assert!(!default.config::<AStarConfig>().unwrap().mpd);
 }
 
 #[test]

@@ -30,7 +30,7 @@ use limits::{
 };
 use planforge_sas::numeric_task::Task;
 use planforge_search::heuristic_factory::{HEURISTICS, HeuristicEntry};
-use planforge_search::search::{SearchConfig, SearchResult, solve_task};
+use planforge_search::search::{SearchConfig, SearchLimits, SearchResult};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_transformations::restriction::build_restricted_task;
 use std::ffi::OsString;
@@ -543,7 +543,13 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 
     let time_limit = cli.max_time;
     let memory_limit = cli.max_memory;
-    let result = solve_task(task.clone(), &cli.search, time_limit, memory_limit)?;
+    let result = cli.search.solve(
+        task.clone(),
+        SearchLimits {
+            time: time_limit,
+            memory_bytes: memory_limit,
+        },
+    )?;
 
     write_plan_file(&result)?;
     print_search_result(&result);

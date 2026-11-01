@@ -1022,7 +1022,13 @@ impl GilReleasedTask {
         time_limit: Option<Duration>,
         max_memory: Option<u64>,
     ) -> std::io::Result<SearchResult> {
-        planforge_search::search::solve_task(self.0, spec, time_limit, max_memory)
+        spec.solve(
+            self.0,
+            planforge_search::search::SearchLimits {
+                time: time_limit,
+                memory_bytes: max_memory,
+            },
+        )
     }
 
     fn enumerate(
@@ -1685,8 +1691,14 @@ fn solve(
 
         let task = restrict_numeric_task(task, restrict_task).map_err(SolveError::Restrict)?;
         let task: Arc<planforge_sas::numeric_task::Task> = Arc::new(task);
-        planforge_search::search::solve_task(task, &spec, time_limit, memory_limit)
-            .map_err(|err| SolveError::Search(err.to_string()))
+        spec.solve(
+            task,
+            planforge_search::search::SearchLimits {
+                time: time_limit,
+                memory_bytes: memory_limit,
+            },
+        )
+        .map_err(|err| SolveError::Search(err.to_string()))
     });
 
     let result = outcome.map_err(|err| -> PyErr {
@@ -1736,9 +1748,8 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
 
 #[pymodule]
 fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    planforge_search::heuristic_factory::HEURISTICS.ensure_registered(
-        planforge_heuristics::heuristics,
-    );
+    planforge_search::heuristic_factory::HEURISTICS
+        .ensure_registered(planforge_heuristics::heuristics);
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_class::<PySearchResult>()?;
     m.add_class::<PyEdge>()?;

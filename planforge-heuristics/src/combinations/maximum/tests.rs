@@ -7,7 +7,7 @@ use planforge_sas::state_registry::StateRegistry;
 use super::MaximumHeuristic;
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::heuristic_factory::BuildContext;
-use planforge_search::search::{SearchConfig, parse_search_spec};
+use planforge_search::search::{AStarConfig, parse_search_spec};
 use planforge_search::test_tasks::one_step_task;
 
 struct Child {
@@ -149,10 +149,11 @@ fn configured_maximum_builds_arbitrary_and_mixed_children() {
         "astar(max([domain()]))",
         "astar(max([domain(),cartesian()]))",
     ] {
-        let SearchConfig::AStar { heuristic, .. } = parse_search_spec(text).unwrap() else {
-            panic!("{text} is an A* configuration");
-        };
-        let mut heuristic = heuristic.build(&context).unwrap();
+        let parsed = parse_search_spec(text).unwrap();
+        let config = parsed
+            .config::<AStarConfig>()
+            .unwrap_or_else(|| panic!("{text} is an A* configuration"));
+        let mut heuristic = config.heuristic.build(&context).unwrap();
         assert_eq!(heuristic.evaluate(&eval).unwrap(), 1.0, "{text}");
     }
 }

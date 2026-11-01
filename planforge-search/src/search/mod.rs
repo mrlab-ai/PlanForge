@@ -1,19 +1,23 @@
 //! State-space search for numeric planning.
 //!
-//! - [`solve_task`] runs the search a [`SearchConfig`] describes.
-//! - `config`: the `--search` grammar, the algorithms and their options.
+//! - [`SearchConfig::solve`] runs the search a [`SearchConfig`] describes.
+//! - `config`: the `--search` grammar and its registry,
+//!   [`SEARCH_ALGORITHMS`]; `algorithms`: the built-in algorithms.
 //! - [`best_first`]: best-first search (A*, greedy best-first search,
 //!   uniform-cost search) and its open lists and node bookkeeping.
 //! - `statistics`: what a search counts.
 
+mod algorithms;
 pub mod best_first;
 mod config;
-mod solve;
 mod statistics;
 
+pub use algorithms::{AStarConfig, AStarFeature, GreedyBestFirstConfig, GreedyBestFirstFeature};
 pub use best_first::{AStarSearch, BestFirstSearch, GreedyBestFirstSearch, SearchParams};
-pub use config::{SearchConfig, parse_search_spec, search_algorithm_help};
-pub use solve::solve_task;
+pub use config::{
+    SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchFeature, SearchLimits, entry,
+    parse_search_spec, search_algorithm_help,
+};
 pub use statistics::{NodeCounters, SearchStatistics};
 
 use planforge_sas::numeric_task::Operator;
