@@ -16,43 +16,9 @@ use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::resource_limits::Deadline;
 
-/// Whether an abstraction stands alone or is a member of a collection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AbstractionUse {
-    Standalone,
-    CollectionMember {
-        /// The one-based number of the build that produced the member; a
-        /// standard collection counts the restarts it dropped as duplicates
-        /// too.
-        iteration: usize,
-        /// Set exactly for a member of a goal-focused collection built on
-        /// its goal's single-goal task.
-        membership: Option<CollectionMembership>,
-    },
-}
-
-/// Where a member of a goal-focused collection sits among the members built
-/// on its goal's task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollectionMembership {
-    pub goal_id: usize,
-    /// The variant whose progress state the member refined from; none for an
-    /// initial-state specialist.
-    pub variant_id: Option<usize>,
-    /// The member refined from an advanced (non-initial) progress state.
-    pub from_progress_state: bool,
-}
-
-impl AbstractionUse {
-    pub fn permits_initial_optimality_proof(self) -> bool {
-        matches!(self, Self::Standalone)
-    }
-}
-
-/// How CEGAR built an abstraction, and where the abstraction is used.
+/// How CEGAR built an abstraction.
 #[derive(Debug, Clone)]
 pub struct AbstractionMetadata {
-    pub abstraction_use: AbstractionUse,
     pub stop_reason: CegarStopReason,
     /// The concrete plan from the refinement root, exactly when CEGAR stopped
     /// with [`CegarStopReason::ConcretePlan`].
@@ -67,14 +33,13 @@ pub struct AbstractionMetadata {
 }
 
 impl AbstractionMetadata {
-    /// The metadata of a standalone abstraction CEGAR built with `outcome`.
-    pub(crate) fn standalone(
+    /// The metadata of an abstraction CEGAR built with `outcome`.
+    pub(crate) fn new(
         outcome: CegarOutcome,
         split_kind: SplitKind,
         split_selection_rank: Option<usize>,
     ) -> Self {
         Self {
-            abstraction_use: AbstractionUse::Standalone,
             stop_reason: outcome.stop_reason,
             concrete_plan_operator_ids: outcome.concrete_plan.map(ConcretePlan::into_operator_ids),
             pending_flaw: outcome.pending_flaw,
@@ -84,33 +49,9 @@ impl AbstractionMetadata {
         }
     }
 
-    /// The iteration that built the abstraction, for a collection member.
-    pub fn collection_iteration(&self) -> Option<usize> {
-        match self.abstraction_use {
-            AbstractionUse::Standalone => None,
-            AbstractionUse::CollectionMember { iteration, .. } => Some(iteration),
-        }
-    }
-
-    /// Set exactly for a member of a goal-focused collection built on its
-    /// goal's single-goal task.
-    pub fn collection_membership(&self) -> Option<CollectionMembership> {
-        match self.abstraction_use {
-            AbstractionUse::Standalone => None,
-            AbstractionUse::CollectionMember { membership, .. } => membership,
-        }
-    }
-
     /// CEGAR's abstract plan is a concrete plan.
     pub fn solved_by_self(&self) -> bool {
         self.stop_reason == CegarStopReason::ConcretePlan
-    }
-
-    /// The abstraction's goal distance of the initial state is the optimal
-    /// plan cost: CEGAR found a concrete plan on the abstraction of the full
-    /// task.
-    pub fn proves_initial_state_optimal(&self) -> bool {
-        self.solved_by_self() && self.abstraction_use.permits_initial_optimality_proof()
     }
 }
 
@@ -184,10 +125,6 @@ pub trait CegarAbstraction: std::fmt::Debug {
 
     fn metadata(&self) -> &AbstractionMetadata {
         &self.core().metadata
-    }
-
-    fn metadata_mut(&mut self) -> &mut AbstractionMetadata {
-        &mut self.core_mut().metadata
     }
 
     fn distances(&self) -> &[f64] {
@@ -275,8 +212,10 @@ impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
         Ok(self.abstraction.goal_distance(state))
     }
 
+    /// The abstraction is of the full task and refined from its initial
+    /// state, so a concrete plan CEGAR found there is optimal.
     fn proves_initial_state_optimal(&self) -> bool {
-        self.abstraction.metadata().proves_initial_state_optimal()
+        self.abstraction.metadata().solved_by_self()
     }
 
     fn name(&self) -> &str {

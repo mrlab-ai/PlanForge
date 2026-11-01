@@ -1,3 +1,4 @@
+use crate::abstractions::collections::member::{CollectionMembership, Member};
 use crate::abstractions::common::abstraction::CegarAbstraction;
 use crate::abstractions::common::cegar::options::CegarOptions;
 use crate::abstractions::common::regions::RegionSemantics;
@@ -18,9 +19,7 @@ use crate::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
 };
-use crate::abstractions::common::abstraction::{
-    AbstractionCore, AbstractionMetadata, AbstractionUse,
-};
+use crate::abstractions::common::abstraction::{AbstractionCore, AbstractionMetadata};
 use crate::abstractions::common::cegar::CegarStopReason;
 use crate::abstractions::common::cegar::SplitKind;
 use crate::abstractions::common::cegar::refine::CegarOutcome;
@@ -90,7 +89,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
     assert_eq!(
         abstractions
             .iter()
-            .map(CegarAbstraction::num_states)
+            .map(|member| member.abstraction.num_states())
             .sum::<usize>(),
         8_000
     );
@@ -98,16 +97,12 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
         let mut modes = abstractions
             .iter()
             .filter(|abstraction| {
-                abstraction
-                    .metadata()
-                    .collection_membership()
-                    .map(|member| member.goal_id)
-                    == Some(goal_id)
+                abstraction.membership.goal.map(|member| member.goal_id) == Some(goal_id)
             })
             .map(|abstraction| {
                 (
-                    abstraction.metadata().split_kind,
-                    abstraction.metadata().split_selection_rank,
+                    abstraction.abstraction.metadata().split_kind,
+                    abstraction.abstraction.metadata().split_selection_rank,
                 )
             })
             .collect::<Vec<_>>();
@@ -133,11 +128,11 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
 
     let standalone_max = abstractions
         .iter()
-        .map(|abstraction| abstraction.initial_h())
+        .map(|abstraction| abstraction.abstraction.initial_h())
         .fold(0.0f64, f64::max);
     let abstraction_h = abstractions
         .iter()
-        .map(|abstraction| abstraction.initial_h())
+        .map(|abstraction| abstraction.abstraction.initial_h())
         .collect::<Vec<_>>();
     let components = abstractions
         .iter()
@@ -164,16 +159,17 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
 
 fn initial_cartesian_scp_value(
     task: &Task,
-    abstractions: Vec<CartesianAbstraction>,
+    members: Vec<Member<CartesianAbstraction>>,
     partitioning: bool,
 ) -> f64 {
     let initial_prop = task.initial_propositional_values();
     let initial_numeric = task.initial_numeric_values();
-    let abstract_state_ids = abstractions
+    let abstract_state_ids = members
         .iter()
-        .map(|abstraction| {
+        .map(|member| {
             Some(
-                abstraction
+                member
+                    .abstraction
                     .hierarchy
                     .map_state(initial_prop, initial_numeric),
             )
@@ -192,7 +188,7 @@ fn initial_cartesian_scp_value(
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        abstractions
+        members
             .into_iter()
             .map(AbstractionComponent::from)
             .collect(),
@@ -221,19 +217,21 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     let mut abstractions = Vec::new();
     for (index, spec) in specs.iter().enumerate() {
         let single_goal_task = transformed_task.with_goals(vec![spec.goal]);
-        let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
+        let abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
             .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
-        abstraction.metadata_mut().abstraction_use = AbstractionUse::CollectionMember {
-            iteration: index + 1,
-            membership: abstraction.metadata().collection_membership(),
-        };
         let states = abstraction.distances().len();
         assert!(
             states <= 10_000,
             "{} has {states} states, expected at most 10000",
             spec.name
         );
-        abstractions.push(abstraction);
+        abstractions.push(Member {
+            abstraction,
+            membership: CollectionMembership {
+                iteration: index + 1,
+                goal: None,
+            },
+        });
     }
 
     let config = ScpConfig {
@@ -253,7 +251,9 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     let partition_reports = specs
         .iter()
         .zip(&abstractions)
-        .map(|(spec, abstraction)| partition_report(transformed_task, abstraction, &spec.view_ids))
+        .map(|(spec, member)| {
+            partition_report(transformed_task, &member.abstraction, &spec.view_ids)
+        })
         .collect::<Vec<_>>();
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
@@ -412,22 +412,16 @@ fn build_handcrafted_abstraction(
         initial_state: function.initial_state(transformed_task),
         relevant_operator_ids: transitions.relevant_operator_ids(),
         num_abstract_operators: transitions.operators.len(),
-        metadata: AbstractionMetadata {
-            abstraction_use: AbstractionUse::CollectionMember {
-                iteration: 1,
-                membership: None,
+        metadata: AbstractionMetadata::new(
+            CegarOutcome {
+                stop_reason: CegarStopReason::SizeLimit,
+                concrete_plan: None,
+                pending_flaw: None,
+                refinements: 0,
             },
-            ..AbstractionMetadata::standalone(
-                CegarOutcome {
-                    stop_reason: CegarStopReason::SizeLimit,
-                    concrete_plan: None,
-                    pending_flaw: None,
-                    refinements: 0,
-                },
-                SplitKind::Concrete,
-                None,
-            )
-        },
+            SplitKind::Concrete,
+            None,
+        ),
     };
     let mut abstraction = DomainAbstraction::new(function, core, Some(transitions));
     abstraction

@@ -118,27 +118,21 @@ struct Call {
     max_states: usize,
 }
 
+/// What [`ScriptedBackend`] builds.
 #[derive(Debug, Clone, PartialEq)]
-struct Member {
+struct Scripted {
     call: Call,
     report: BuiltReport,
     concrete_plan: Option<Vec<OperatorIndex>>,
-    iteration: Option<usize>,
-    membership: Option<CollectionMembership>,
 }
 
-impl CollectionMember for Member {
+impl CollectionMember for Scripted {
     fn report(&self) -> BuiltReport {
         self.report
     }
 
     fn concrete_plan(&self) -> Option<&[OperatorIndex]> {
         self.concrete_plan.as_deref()
-    }
-
-    fn record(&mut self, iteration: usize, membership: Option<CollectionMembership>) {
-        self.iteration = Some(iteration);
-        self.membership = membership;
     }
 }
 
@@ -176,7 +170,7 @@ impl ScriptedBackend {
 }
 
 impl GoalFocusedBackend for ScriptedBackend {
-    type Member = Member;
+    type Member = Scripted;
 
     const NAME: &'static str = "scripted";
 
@@ -185,7 +179,7 @@ impl GoalFocusedBackend for ScriptedBackend {
         task: &Task,
         root: Option<&ExplicitState>,
         construction: &MemberConstruction,
-    ) -> Result<Member> {
+    ) -> Result<Scripted> {
         assert_eq!(construction.scope, RefinementScope::default());
         // Goal `i` of the counter task is the condition variable `i`.
         let goals = task
@@ -215,7 +209,7 @@ impl GoalFocusedBackend for ScriptedBackend {
             (Some(initial_h), &[goal_id]) => initial_h[goal_id],
             _ => plan_length(0.0).map_or(f64::INFINITY, |length| length as f64),
         };
-        Ok(Member {
+        Ok(Scripted {
             call,
             report: BuiltReport {
                 initial_h,
@@ -225,8 +219,6 @@ impl GoalFocusedBackend for ScriptedBackend {
             concrete_plan: length
                 .filter(|_| !self.unsolved_calls.contains(&call_index))
                 .map(|length| vec![OperatorIndex::new(0); length]),
-            iteration: None,
-            membership: None,
         })
     }
 }
@@ -259,16 +251,16 @@ fn schedule(
 
 /// `(goal, variant, root x, from a progress state)` per member of goal
 /// tasks; an initial-state specialist has no variant.
-fn progress(members: &[Member]) -> Vec<(usize, Option<usize>, Option<f64>, bool)> {
+fn progress(members: &[Member<Scripted>]) -> Vec<(usize, Option<usize>, Option<f64>, bool)> {
     members
         .iter()
         .map(|member| {
-            let membership = member.membership.expect("goal tasks tag every member");
-            assert_eq!(member.call.goals, [membership.goal_id]);
+            let membership = member.membership.goal.expect("goal tasks tag every member");
+            assert_eq!(member.abstraction.call.goals, [membership.goal_id]);
             (
                 membership.goal_id,
                 membership.variant_id,
-                member.call.root_x,
+                member.abstraction.call.root_x,
                 membership.from_progress_state,
             )
         })
@@ -276,11 +268,11 @@ fn progress(members: &[Member]) -> Vec<(usize, Option<usize>, Option<f64>, bool)
 }
 
 /// `(goal, variant)` of every member of goal tasks.
-fn goal_variants(members: &[Member]) -> Vec<(usize, usize)> {
+fn goal_variants(members: &[Member<Scripted>]) -> Vec<(usize, usize)> {
     members
         .iter()
         .map(|member| {
-            let membership = member.membership.expect("goal tasks tag every member");
+            let membership = member.membership.goal.expect("goal tasks tag every member");
             (
                 membership.goal_id,
                 membership
@@ -331,9 +323,9 @@ fn goal_focused_variants_alternate_split_kinds_and_rank_ties_by_pairs() {
             (
                 goal_id,
                 variant_id,
-                member.call.split_kind,
-                member.call.tie_rank.unwrap(),
-                member.call.seed,
+                member.abstraction.call.split_kind,
+                member.abstraction.call.tie_rank.unwrap(),
+                member.abstraction.call.seed,
             )
         })
         .collect::<Vec<_>>();
@@ -356,7 +348,11 @@ fn goal_focused_variants_alternate_split_kinds_and_rank_ties_by_pairs() {
             (0, 3, Wanted, 1, seed(0, 3)),
         ]
     );
-    assert!(members.iter().all(|member| member.call.root_x.is_none()));
+    assert!(
+        members
+            .iter()
+            .all(|member| member.abstraction.call.root_x.is_none())
+    );
 }
 
 #[test]
@@ -375,9 +371,9 @@ fn per_goal_variants_vary_only_the_seed() {
         members
             .iter()
             .map(|member| (
-                member.call.split_kind,
-                member.call.tie_rank,
-                member.call.seed
+                member.abstraction.call.split_kind,
+                member.abstraction.call.tie_rank,
+                member.abstraction.call.seed
             ))
             .collect::<Vec<_>>(),
         vec![
@@ -408,22 +404,26 @@ fn a_goal_free_task_gets_one_full_task_member() {
     assert_eq!(
         members,
         vec![Member {
-            call: Call {
-                goals: Vec::new(),
-                split_kind: SplitKind::Concrete,
-                tie_rank: None,
-                seed: Some(5),
-                root_x: None,
-                max_states: 1_000,
+            abstraction: Scripted {
+                call: Call {
+                    goals: Vec::new(),
+                    split_kind: SplitKind::Concrete,
+                    tie_rank: None,
+                    seed: Some(5),
+                    root_x: None,
+                    max_states: 1_000,
+                },
+                report: BuiltReport {
+                    initial_h: 0.0,
+                    num_states: 2,
+                    root_is_dead_end: false,
+                },
+                concrete_plan: Some(Vec::new()),
             },
-            report: BuiltReport {
-                initial_h: 0.0,
-                num_states: 2,
-                root_is_dead_end: false,
+            membership: CollectionMembership {
+                iteration: 1,
+                goal: None,
             },
-            concrete_plan: Some(Vec::new()),
-            iteration: Some(1),
-            membership: None,
         }]
     );
 }
@@ -512,14 +512,14 @@ fn a_rebuild_after_a_dead_progress_state_gets_the_time_left() {
     /// Records the time limit of every build, and takes 20 ms for each.
     struct Slow(ScriptedBackend, RefCell<Vec<Option<Duration>>>);
     impl GoalFocusedBackend for Slow {
-        type Member = Member;
+        type Member = Scripted;
         const NAME: &'static str = "slow";
         fn build(
             &self,
             task: &Task,
             root: Option<&ExplicitState>,
             construction: &MemberConstruction,
-        ) -> Result<Member> {
+        ) -> Result<Scripted> {
             self.1.borrow_mut().push(construction.max_time);
             std::thread::sleep(Duration::from_millis(20));
             self.0.build(task, root, construction)
@@ -567,7 +567,9 @@ fn a_member_whose_initial_state_is_dead_is_kept() {
     .unwrap();
 
     assert!(
-        members.iter().any(|member| member.call.goals == [1]),
+        members
+            .iter()
+            .any(|member| member.abstraction.call.goals == [1]),
         "the dead goal's member is part of the collection"
     );
     assert!(
@@ -612,14 +614,14 @@ fn an_invalid_concrete_plan_is_an_error() {
     /// Reports a plan one increment short of its goal.
     struct ShortPlans(ScriptedBackend);
     impl GoalFocusedBackend for ShortPlans {
-        type Member = Member;
+        type Member = Scripted;
         const NAME: &'static str = "short";
         fn build(
             &self,
             task: &Task,
             root: Option<&ExplicitState>,
             construction: &MemberConstruction,
-        ) -> Result<Member> {
+        ) -> Result<Scripted> {
             let mut member = self.0.build(task, root, construction)?;
             member.concrete_plan.as_mut().unwrap().pop();
             Ok(member)
@@ -661,7 +663,7 @@ fn members_share_the_collection_state_budget() {
     assert_eq!(
         members
             .iter()
-            .map(|member| member.call.max_states)
+            .map(|member| member.abstraction.call.max_states)
             .collect::<Vec<_>>(),
         vec![8, 5, 2]
     );
@@ -734,9 +736,9 @@ fn without_alternation_every_variant_keeps_the_configured_direction() {
             .map(|((goal_id, variant_id), member)| (
                 goal_id,
                 variant_id,
-                member.call.split_kind,
-                member.call.tie_rank,
-                member.call.seed
+                member.abstraction.call.split_kind,
+                member.abstraction.call.tie_rank,
+                member.abstraction.call.seed
             ))
             .collect::<Vec<_>>(),
         vec![
@@ -779,10 +781,10 @@ fn full_task_members_are_scheduled_round_robin_without_membership() {
         members
             .iter()
             .map(|member| (
-                member.call.split_kind,
-                member.call.tie_rank.unwrap(),
-                member.call.seed,
-                member.membership,
+                member.abstraction.call.split_kind,
+                member.abstraction.call.tie_rank.unwrap(),
+                member.abstraction.call.seed,
+                member.membership.goal,
             ))
             .collect::<Vec<_>>(),
         vec![
@@ -800,7 +802,8 @@ fn full_task_members_are_scheduled_round_robin_without_membership() {
     assert!(
         members
             .iter()
-            .all(|member| member.call.root_x.is_none() && member.call.goals == [0, 1, 2])
+            .all(|member| member.abstraction.call.root_x.is_none()
+                && member.abstraction.call.goals == [0, 1, 2])
     );
 }
 

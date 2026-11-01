@@ -178,17 +178,13 @@ pub(super) fn goal_cover_scp(
         .unwrap();
     for abstraction in &mut abstractions {
         abstraction
+            .abstraction
             .prepare_regional_saturation(&RegionSemantics::new(task).unwrap(), Deadline::NONE)
             .unwrap();
     }
     let expected_goals = abstractions
         .iter()
-        .filter_map(|abstraction| {
-            abstraction
-                .metadata()
-                .collection_membership()
-                .map(|member| member.goal_id)
-        })
+        .filter_map(|abstraction| abstraction.membership.goal.map(|member| member.goal_id))
         .collect::<HashSet<_>>();
     let components = abstractions
         .into_iter()

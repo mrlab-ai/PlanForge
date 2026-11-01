@@ -209,7 +209,6 @@ impl Icaps26CartesianGenerator {
                 relevant_operator_ids,
                 num_abstract_operators: transition_count,
                 metadata: AbstractionMetadata {
-                    abstraction_use: AbstractionUse::Standalone,
                     stop_reason,
                     concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
                     pending_flaw,

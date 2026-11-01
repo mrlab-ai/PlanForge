@@ -27,7 +27,7 @@ use tracing::{debug, info};
 use super::budget::{CollectionBudget, CollectionLimits, CollectionStopReason};
 use super::config::{MemberConfig, SplitKinds};
 use super::generator::AbstractionGenerator;
-use super::member::{CollectionMember, MemberConstruction};
+use super::member::{CollectionMember, CollectionMembership, Member, MemberConstruction};
 use crate::abstractions::common::abstraction::CegarAbstraction;
 use crate::abstractions::common::cegar::CegarStopReason;
 use crate::abstractions::common::cegar::initial_splits::{InitialSplitVar, RefinementScope};
@@ -59,14 +59,14 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
     task: &Task,
     schedule: &StandardSchedule,
     member: &G::Config,
-) -> Result<Vec<G::Abstraction>> {
+) -> Result<Vec<Member<G::Abstraction>>> {
     let mut rng = SmallRng::seed_from_u64(schedule.random_seed);
     let candidates = initial_split_candidates(task);
 
     let start = Instant::now();
     let mut budget = CollectionBudget::new(schedule.limits, start)?;
     let mut keys: HashSet<G::Key> = HashSet::new();
-    let mut members: Vec<G::Abstraction> = Vec::new();
+    let mut members = Vec::new();
     let mut last_new_member = start;
     let mut blacklisting = false;
     let mut iteration = 1usize;
@@ -115,7 +115,7 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
             G::KIND,
             construction.split_kind
         );
-        let mut built = match G::new(member.for_member(&construction))
+        let built = match G::new(member.for_member(&construction))
             .and_then(|generator| generator.generate_from_root(task, None, &construction.scope))
         {
             Ok(built) => built,
@@ -148,8 +148,13 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
         {
             last_new_member = iteration_end;
             budget.charge(num_states);
-            built.record(iteration, None);
-            members.push(built);
+            members.push(Member {
+                abstraction: built,
+                membership: CollectionMembership {
+                    iteration,
+                    goal: None,
+                },
+            });
             debug!(
                 "{} collection: added restart {iteration}, remaining_collection_size={}, blacklisting={blacklisting}",
                 G::KIND,

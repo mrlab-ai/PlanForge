@@ -12,7 +12,6 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::abstractions::cartesian::{CartesianAbstractionConfig, CartesianAbstractionGenerator};
-use crate::abstractions::common::abstraction::AbstractionUse;
 use crate::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 use crate::abstractions::pdb::pattern_database::PatternDatabase;
 use planforge_search::evaluation::evaluator::EvaluationState;
@@ -99,7 +98,7 @@ fn make_abstraction(task: &Task, distances: Vec<f64>) -> DomainAbstraction {
         initial_state: 0,
         relevant_operator_ids: Vec::new(),
         num_abstract_operators: 0,
-        metadata: AbstractionMetadata::standalone(
+        metadata: AbstractionMetadata::new(
             CegarOutcome {
                 stop_reason: CegarStopReason::SizeLimit,
                 concrete_plan: None,
@@ -281,8 +280,7 @@ fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() 
     let task = simple_task();
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
     domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
-    domain.metadata_mut().stop_reason = CegarStopReason::ConcretePlan;
-    domain.metadata_mut().abstraction_use = AbstractionUse::Standalone;
+    domain.core_mut().metadata.stop_reason = CegarStopReason::ConcretePlan;
     let component = AbstractionComponent::from(domain);
     assert!(component.proves_initial_state_optimal());
     let max = MaxAbstractionHeuristic::new(None, vec![component]).unwrap();
@@ -290,8 +288,7 @@ fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() 
 
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
     domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
-    domain.metadata_mut().stop_reason = CegarStopReason::ConcretePlan;
-    domain.metadata_mut().abstraction_use = AbstractionUse::Standalone;
+    domain.core_mut().metadata.stop_reason = CegarStopReason::ConcretePlan;
     let canonical =
         CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)])
             .unwrap();

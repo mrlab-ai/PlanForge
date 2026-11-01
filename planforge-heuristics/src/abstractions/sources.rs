@@ -375,7 +375,7 @@ fn build_cegar_collection_source<G>(
 ) -> Result<Vec<AbstractionComponent>, HeuristicBuildError>
 where
     G: AbstractionGenerator,
-    G::Abstraction: Into<AbstractionComponent>,
+    G::Abstraction: 'static,
 {
     config.member.cegar_mut().keep_transitions = purpose.needs_transition_system();
     if let Some(remaining) = remaining {

@@ -46,6 +46,7 @@
 //! `cargo test -p tests --release`.
 
 use planforge_heuristics::abstractions::collections::generator::AbstractionGenerator;
+use planforge_heuristics::abstractions::collections::member::Member;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -340,7 +341,7 @@ fn scp_initial_h_with_config(
     scp_initial_h_for_collection(&task, abstractions)
 }
 
-fn scp_initial_h_for_collection(task: &Task, abstractions: Vec<DomainAbstraction>) -> f64 {
+fn scp_initial_h_for_collection(task: &Task, abstractions: Vec<Member<DomainAbstraction>>) -> f64 {
     let config = ScpConfig {
         max_time: Some(Duration::from_secs(100)).into(),
         table_construction_max_time: Some(Duration::from_secs(100)).into(),
@@ -465,8 +466,9 @@ fn sailing_simple_ratchet_equilibrium() {
 
     let saved_p0_group_counts = abstractions
         .iter()
-        .filter_map(|abstraction| {
-            abstraction.metadata().collection_membership()?;
+        .filter_map(|member| {
+            member.membership.goal?;
+            let abstraction = &member.abstraction;
             let factory_task = &task;
             // The save precondition compares each boat's x with p0's, a
             // threshold on the boat's own x.
@@ -550,7 +552,7 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
     for goal_id in 0..task.goals().len() {
         let variants = abstractions
             .iter()
-            .filter_map(|abstraction| abstraction.metadata().collection_membership())
+            .filter_map(|member| member.membership.goal)
             .filter_map(|member| {
                 member
                     .variant_id
@@ -566,7 +568,7 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
     assert!(
         abstractions
             .iter()
-            .all(|abstraction| abstraction.metadata().collection_membership().is_some()),
+            .all(|member| member.membership.goal.is_some()),
         "multi-goal goal-focused collection must not generate full-goal abstractions"
     );
 }
@@ -574,8 +576,8 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
 /// The collection heuristics' components: the domain abstractions, then the
 /// Cartesian ones.
 fn components(
-    domain: Vec<DomainAbstraction>,
-    cartesian: Vec<CartesianAbstraction>,
+    domain: Vec<Member<DomainAbstraction>>,
+    cartesian: Vec<Member<CartesianAbstraction>>,
 ) -> Vec<AbstractionComponent> {
     domain
         .into_iter()
