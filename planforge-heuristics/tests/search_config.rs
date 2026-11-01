@@ -295,12 +295,12 @@ fn task_requirements_follow_typed_sources_and_wrappers() {
     let requirements = spec.requirements();
     assert!(requirements.restricted);
     assert!(requirements.abstractable_goal);
-    assert!(!requirements.icaps26_restriction);
+    assert_eq!(requirements.restriction, None);
 
     let spec = parse_search_spec("astar(blind(), lazy=canonical([icaps26_cartesian()]))").unwrap();
     let requirements = spec.requirements();
     assert!(requirements.restricted);
-    assert!(requirements.icaps26_restriction);
+    assert_eq!(requirements.restriction.unwrap().name, "icaps26");
 }
 
 #[test]
