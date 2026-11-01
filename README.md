@@ -175,7 +175,7 @@ Common options:
 
 ## Layout
 
-[ARCHITECTURE.md](ARCHITECTURE.md) explains how the crates fit together and
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) explains how the crates fit together and
 where each extension point lives. Workspace crates:
 
 - `planforge` — both binaries: the planner (`planforge`) and the translate-only
