@@ -224,7 +224,7 @@ impl CartesianSemantics<'_> {
         }
 
         for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
-            match variable.get_type() {
+            match variable.numeric_type() {
                 NumericType::Constant => {
                     if !source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id]) {
                         return Ok(false);
@@ -328,7 +328,7 @@ impl CartesianSemantics<'_> {
         );
         let mut source_set = source.clone();
         for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
-            match variable.get_type() {
+            match variable.numeric_type() {
                 NumericType::Constant => {
                     if !source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id]) {
                         return Ok(None);

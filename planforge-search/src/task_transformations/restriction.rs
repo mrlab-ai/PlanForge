@@ -32,7 +32,7 @@ impl RestrictedTask {
 
 pub fn validate_restricted_task(task: &dyn AbstractNumericTask) -> std::result::Result<(), String> {
     if let Some(variable) = task.metric().var_id()
-        && task.numeric_variables()[variable.index()].get_type() == &NumericType::Derived
+        && task.numeric_type(variable) == NumericType::Derived
     {
         return Err(format!(
             "task is not restricted: metric variable {variable} is derived"
@@ -48,7 +48,7 @@ pub fn validate_restricted_task(task: &dyn AbstractNumericTask) -> std::result::
                     "comparison axiom {comparison_axiom_id} has invalid {side} numeric variable {numeric_var_id}"
                 )
             })?;
-            if numeric_var.get_type() == &NumericType::Derived {
+            if numeric_var.numeric_type() == NumericType::Derived {
                 return Err(format!(
                     "task is not restricted: comparison axiom {comparison_axiom_id} has derived {side} operand {numeric_var_id}; use `--restrict-task` or provide an already restricted task"
                 ));
@@ -68,14 +68,14 @@ pub fn validate_restricted_task(task: &dyn AbstractNumericTask) -> std::result::
                     )
                 })?;
             if !matches!(
-                affected.get_type(),
+                affected.numeric_type(),
                 NumericType::Regular | NumericType::Cost
             ) {
                 return Err(format!(
                     "task is not restricted: operator {operator_id} ({}) numeric effect {effect_id} targets unsupported variable {} ({:?}); use `--restrict-task` or provide an already restricted task",
                     operator.name(),
                     effect.affected_var_id(),
-                    affected.get_type()
+                    affected.numeric_type()
                 ));
             }
 
@@ -89,7 +89,7 @@ pub fn validate_restricted_task(task: &dyn AbstractNumericTask) -> std::result::
                         effect.var_id()
                     )
                 })?;
-            if source.get_type() == &NumericType::Derived {
+            if source.numeric_type() == NumericType::Derived {
                 return Err(format!(
                     "task is not restricted: operator {operator_id} ({}) numeric effect {effect_id} reads derived variable {}; use `--restrict-task` or provide an already restricted task",
                     operator.name(),
@@ -216,9 +216,7 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
             comparison_axiom.get_left_var_id(),
             comparison_axiom.get_right_var_id(),
         ];
-        let is_derived = |var_id: VariableIndex| {
-            task.numeric_variables()[var_id.index()].get_type() == &NumericType::Derived
-        };
+        let is_derived = |var_id: VariableIndex| task.numeric_type(var_id) == NumericType::Derived;
         for var_id in operands {
             root_var_ids.insert(var_id);
             if is_derived(var_id) {
@@ -231,10 +229,7 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
         .iter()
         .copied()
         .filter(|&numeric_var_id| {
-            !matches!(
-                task.numeric_variables()[numeric_var_id.index()].get_type(),
-                NumericType::Derived
-            )
+            !matches!(task.numeric_type(numeric_var_id), NumericType::Derived)
         })
         .collect();
     if let Some(metric_var_id) = task.metric().var_id() {
@@ -293,7 +288,7 @@ pub fn build_icaps26_restricted_task(
         .iter()
         .enumerate()
         .filter_map(|(var_id, variable)| {
-            (!matches!(variable.get_type(), NumericType::Derived))
+            (!matches!(variable.numeric_type(), NumericType::Derived))
                 .then_some(VariableIndex::from_usize(var_id))
         })
         .collect::<Vec<_>>();
@@ -308,7 +303,7 @@ pub fn build_icaps26_restricted_task(
             Some(VariableIndex::from_usize(transformed_id));
         let variable = task.numeric_variables()[original_id.index()].clone();
         let value = initial_numeric[original_id.index()];
-        if matches!(variable.get_type(), NumericType::Constant) {
+        if matches!(variable.numeric_type(), NumericType::Constant) {
             constants
                 .by_value
                 .insert(value, VariableIndex::from_usize(transformed_id));
@@ -342,10 +337,7 @@ pub fn build_icaps26_restricted_task(
         let (left, threshold, operator) = if dependencies.len() == 1 {
             let original_var_id = dependencies[0];
             crate::ensure_supported!(
-                matches!(
-                    task.numeric_variables()[original_var_id.index()].get_type(),
-                    NumericType::Regular
-                ),
+                matches!(task.numeric_type(original_var_id), NumericType::Regular),
                 "ICAPS 2026 comparison axiom {comparison_axiom_id} depends on non-regular numeric variable {original_var_id}"
             );
             let coefficient = difference.coefficients[original_var_id.index()];
@@ -365,10 +357,9 @@ pub fn build_icaps26_restricted_task(
             )
         } else {
             crate::ensure_supported!(
-                dependencies.iter().all(|&var_id| matches!(
-                    task.numeric_variables()[var_id.index()].get_type(),
-                    NumericType::Regular
-                )),
+                dependencies
+                    .iter()
+                    .all(|&var_id| matches!(task.numeric_type(var_id), NumericType::Regular)),
                 "ICAPS 2026 comparison axiom {comparison_axiom_id} has non-regular dependencies {dependencies:?}"
             );
             let auxiliary_id = numeric_variables.len();
@@ -488,7 +479,7 @@ fn build_task(
 
     for &original_id in numeric_var_ids {
         let expr = root_exprs.get(&original_id).cloned().unwrap_or_else(|| {
-            match task.numeric_variables()[original_id.index()].get_type() {
+            match task.numeric_type(original_id) {
                 NumericType::Constant => AffineExpression::constant(
                     initial_numeric[original_id.index()],
                     num_original_numeric,
@@ -505,7 +496,7 @@ fn build_task(
             let numeric_type = if root_exprs.contains_key(&original_id) {
                 NumericType::Cost
             } else {
-                *task.numeric_variables()[original_id.index()].get_type()
+                task.numeric_type(original_id)
             };
             (original_name.to_string(), numeric_type)
         } else if root_exprs.contains_key(&original_id) {
@@ -514,10 +505,7 @@ fn build_task(
                 NumericType::Regular,
             )
         } else {
-            (
-                original_name.to_string(),
-                *task.numeric_variables()[original_id.index()].get_type(),
-            )
+            (original_name.to_string(), task.numeric_type(original_id))
         };
         numeric_variables.push(NumericVariable::new(name, numeric_type, None));
         numeric_initial.push(expr.evaluate(initial_numeric)?);
@@ -603,10 +591,7 @@ fn derived_metric_expression(
     task: &dyn AbstractNumericTask,
     metric_var_id: VariableIndex,
 ) -> Result<Option<AffineExpression>> {
-    if !matches!(
-        task.numeric_variables()[metric_var_id.index()].get_type(),
-        NumericType::Derived
-    ) {
+    if !matches!(task.numeric_type(metric_var_id), NumericType::Derived) {
         return Ok(None);
     }
     affine_expression(task, metric_var_id)
@@ -718,7 +703,7 @@ fn transform_operator(
             "restricted task does not support conditional numeric effects in operator {}",
             operator.name()
         );
-        let source_value = match task.numeric_variables()[effect.var_id().index()].get_type() {
+        let source_value = match task.numeric_type(effect.var_id()) {
             NumericType::Constant => initial_numeric[effect.var_id().index()],
             _ => crate::unsupported!(
                 "restricted task requires constant RHS numeric effects in operator {}",
@@ -817,7 +802,7 @@ fn transform_operator_with_assignment(
             "restricted task does not support conditional numeric effects in operator {}",
             operator.name()
         );
-        let source_value = match task.numeric_variables()[effect.var_id().index()].get_type() {
+        let source_value = match task.numeric_type(effect.var_id()) {
             NumericType::Constant => initial_numeric[effect.var_id().index()],
             _ => crate::unsupported!(
                 "restricted task requires constant RHS numeric effects in operator {}",

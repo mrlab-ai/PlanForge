@@ -252,14 +252,14 @@ impl PotentialTask {
         let initial_numeric = task.initial_numeric_values();
         let mut global_linear_equalities = Vec::new();
         for lhs in 0..numeric_count {
-            if task.numeric_variables()[lhs].get_type() != &NumericType::Regular
+            if task.numeric_variables()[lhs].numeric_type() != NumericType::Regular
                 || assignment_targets[lhs]
             {
                 continue;
             }
             let lhs_id = VariableIndex::from_usize(lhs);
             for rhs in (lhs + 1)..numeric_count {
-                if task.numeric_variables()[rhs].get_type() != &NumericType::Regular
+                if task.numeric_variables()[rhs].numeric_type() != NumericType::Regular
                     || assignment_targets[rhs]
                 {
                     continue;
@@ -373,8 +373,7 @@ impl PotentialTask {
                 if feature.affine
                     && feature.coefficients.len() == 1
                     && feature.constant == 0.0
-                    && task.numeric_variables()[feature.source_numeric_var.index()].get_type()
-                        == &NumericType::Regular
+                    && task.numeric_type(feature.source_numeric_var) == NumericType::Regular
                 {
                     global_feature_bounds[feature_id] =
                         primitive_bounds[feature.source_numeric_var.index()];
@@ -531,7 +530,7 @@ fn build_cpp_numeric_features(
 ) -> Result<Vec<NumericFeature>, String> {
     let mut features = Vec::new();
     for (numeric_var_id, variable) in task.numeric_variables().iter().enumerate() {
-        if variable.get_type() != &NumericType::Regular {
+        if variable.numeric_type() != NumericType::Regular {
             continue;
         }
         let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
@@ -668,7 +667,7 @@ fn parse_cpp_numeric_expression(
             ));
         }
     };
-    if task.numeric_variables()[numeric_var_id.index()].get_type() == &NumericType::Derived {
+    if task.numeric_type(numeric_var_id) == NumericType::Derived {
         insert_cpp_auxiliary_feature(
             task,
             numeric_var_id,

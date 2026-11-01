@@ -233,7 +233,7 @@ impl<'task> ProjectedTask<'task> {
 
         for &numeric_var_id in &pattern.numeric {
             if numeric_var_id.index() < num_numeric_vars {
-                let numeric_type = *base.numeric_variables()[numeric_var_id.index()].get_type();
+                let numeric_type = base.numeric_type(numeric_var_id);
                 if numeric_type != NumericType::Regular {
                     return Err(ProjectedTaskBuildError::UnsupportedPatternNumericVarType {
                         numeric_var_id,
@@ -577,7 +577,7 @@ impl<'task> ProjectedTask<'task> {
     pub fn has_regular_numeric_variables(&self) -> bool {
         self.numeric_variables
             .iter()
-            .any(|variable| *variable.get_type() == NumericType::Regular)
+            .any(|variable| variable.numeric_type() == NumericType::Regular)
     }
 }
 
@@ -683,8 +683,8 @@ fn include_restricted_comparison_operands(
         comparison_axiom.get_right_var_id(),
     ] {
         assert_ne!(
-            task.numeric_variables()[numeric_var_id.index()].get_type(),
-            &NumericType::Derived,
+            task.numeric_type(numeric_var_id),
+            NumericType::Derived,
             "restricted task validation excludes derived comparison operands"
         );
         push_unique_mapping(
@@ -707,9 +707,8 @@ fn include_comparisons_over_projected_variables(
     task: &dyn AbstractNumericTask,
     projection: VariableProjection<'_>,
 ) {
-    let is_constant = |numeric_var_id: VariableIndex| {
-        task.numeric_variables()[numeric_var_id.index()].get_type() == &NumericType::Constant
-    };
+    let is_constant =
+        |numeric_var_id: VariableIndex| task.numeric_type(numeric_var_id) == NumericType::Constant;
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
         let operands = [
             comparison_axiom.get_left_var_id(),

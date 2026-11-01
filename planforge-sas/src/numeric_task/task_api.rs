@@ -16,6 +16,11 @@ pub trait AbstractNumericTask: Send + Sync {
         &self.variables()[var.index()]
     }
 
+    /// The type of numeric variable `var`.
+    fn numeric_type(&self, var: VariableIndex) -> NumericType {
+        self.numeric_variables()[var.index()].numeric_type()
+    }
+
     /// What determines the value of propositional variable `var`.
     fn variable_kind(&self, var: VariableIndex) -> VariableKind {
         if self.numeric_conditions().is_condition_var(var) {
@@ -102,7 +107,7 @@ pub trait NumericTaskExt: AbstractNumericTask {
             .iter()
             .enumerate()
             .filter_map(|(numeric_var_id, numeric_var)| {
-                (numeric_var.get_type() == &NumericType::Regular)
+                (numeric_var.numeric_type() == NumericType::Regular)
                     .then_some(VariableIndex::from_usize(numeric_var_id))
             })
             .collect()
@@ -229,7 +234,7 @@ fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
 
     let metric_var_id = task.metric().var_id().unwrap();
     let metric_variable = task.numeric_variables().get(metric_var_id.index())?;
-    if metric_variable.get_type() != &NumericType::Cost {
+    if metric_variable.numeric_type() != NumericType::Cost {
         return None;
     }
 
@@ -588,7 +593,7 @@ impl NumericRootTask {
                         self.numeric_variables
                             .get(variable.index())
                             .is_some_and(
-                                |definition| definition.get_type() == &NumericType::Regular
+                                |definition| definition.numeric_type() == NumericType::Regular
                             ),
                         "linear sum {} reads non-regular numeric variable {variable}",
                         axiom.get_affected_var_id()
@@ -610,12 +615,12 @@ impl NumericRootTask {
                 });
             assert!(
                 matches!(
-                    metric_var.get_type(),
+                    metric_var.numeric_type(),
                     NumericType::Cost | NumericType::Derived
                 ),
                 "metric variable {} has type {:?}, expected Cost or Derived",
                 metric_var_id.index(),
-                metric_var.get_type(),
+                metric_var.numeric_type(),
             );
         }
 

@@ -42,8 +42,7 @@ pub(super) fn fill_condition_intervals(
     out: &mut Vec<Interval>,
 ) -> bool {
     let is_unrefined_derived = |var_id: VariableIndex| {
-        task.numeric_variables()[var_id.index()].get_type() == &NumericType::Derived
-            && refined(var_id).is_none()
+        task.numeric_type(var_id) == NumericType::Derived && refined(var_id).is_none()
     };
     out.clear();
     out.extend(
@@ -85,7 +84,7 @@ pub(super) fn fill_state_intervals(
         task,
         |var_id| {
             (layout.numeric_domain_sizes()[var_id.index()] > 1
-                || task.numeric_variables()[var_id.index()].get_type() == &NumericType::Regular)
+                || task.numeric_type(var_id) == NumericType::Regular)
                 .then(|| partitions.partition_interval(var_id, layout.partition(state, var_id)))
         },
         out,

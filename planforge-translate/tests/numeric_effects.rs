@@ -51,10 +51,7 @@ fn a_transfer_onto_itself_has_one_effect_per_fluent() {
     let fluent_effects = |effects: &[AssignmentEffect]| -> Vec<AssignmentEffect> {
         effects
             .iter()
-            .filter(|effect| {
-                task.numeric_variables()[effect.affected_var_id().index()].get_type()
-                    != &NumericType::Cost
-            })
+            .filter(|effect| task.numeric_type(effect.affected_var_id()) != NumericType::Cost)
             .cloned()
             .collect()
     };

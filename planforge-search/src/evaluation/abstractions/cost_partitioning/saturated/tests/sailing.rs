@@ -468,7 +468,7 @@ fn find_sailing_view(
         .numeric_variables()
         .iter()
         .enumerate()
-        .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
+        .filter(|(_, variable)| variable.numeric_type() == NumericType::Regular)
         .filter(|(_, variable)| {
             let name = variable.name();
             name.contains(&tuple)

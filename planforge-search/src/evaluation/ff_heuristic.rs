@@ -443,7 +443,7 @@ fn constant_numeric_values(
     task.numeric_variables()
         .iter()
         .enumerate()
-        .map(|(idx, var)| match var.get_type() {
+        .map(|(idx, var)| match var.numeric_type() {
             NumericType::Constant => initial_numeric
                 .get(idx)
                 .copied()

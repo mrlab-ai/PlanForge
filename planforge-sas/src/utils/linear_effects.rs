@@ -303,7 +303,7 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
     }
 
     let numeric_var = &task.numeric_variables()[numeric_var_id.index()];
-    match numeric_var.get_type() {
+    match numeric_var.numeric_type() {
         NumericType::Regular | NumericType::Cost => {
             Ok(LinearExpression::variable(num_numeric_vars, numeric_var_id))
         }

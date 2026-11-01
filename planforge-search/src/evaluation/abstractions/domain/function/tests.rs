@@ -51,7 +51,7 @@ fn constant_leaf_values(
         let ConditionNode::Leaf { numeric_var_id } = node else {
             continue;
         };
-        if numeric_variables[numeric_var_id.index()].get_type() != &NumericType::Constant {
+        if numeric_variables[numeric_var_id.index()].numeric_type() != NumericType::Constant {
             continue;
         }
         let value = initial_numeric_values[numeric_var_id.index()];
@@ -107,7 +107,7 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
 
     let mut partitions_by_numeric_var: Vec<Vec<Interval>> = Vec::with_capacity(num_numeric_vars);
     for (var_id, var) in task.numeric_variables().iter().enumerate() {
-        let parts = match var.get_type() {
+        let parts = match var.numeric_type() {
             NumericType::Constant => vec![Interval::singleton(initial_numeric_values[var_id])],
             NumericType::Regular => {
                 let cuts: Vec<NumericValue> = cutpoints_by_var[var_id].iter().copied().collect();

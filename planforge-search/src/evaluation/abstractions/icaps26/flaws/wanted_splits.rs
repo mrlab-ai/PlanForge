@@ -98,13 +98,13 @@ pub(in super::super) fn desired_comparison_interval(
         .with_context(|| format!("missing comparison axiom {comparison_axiom_id}"))?;
     let left_id = axiom.get_left_var_id();
     let right_id = axiom.get_right_var_id();
-    let left_type = semantics.task().numeric_variables()[left_id.index()].get_type();
-    let right_type = semantics.task().numeric_variables()[right_id.index()].get_type();
-    let left_is_coordinate = left_type == &NumericType::Regular
-        || (left_type == &NumericType::Derived
+    let left_type = semantics.task().numeric_type(left_id);
+    let right_type = semantics.task().numeric_type(right_id);
+    let left_is_coordinate = left_type == NumericType::Regular
+        || (left_type == NumericType::Derived
             && semantics.additive_numeric_views()[left_id.index()].is_some());
-    let right_is_coordinate = right_type == &NumericType::Regular
-        || (right_type == &NumericType::Derived
+    let right_is_coordinate = right_type == NumericType::Regular
+        || (right_type == NumericType::Derived
             && semantics.additive_numeric_views()[right_id.index()].is_some());
     let initial = semantics.task().initial_numeric_values();
     let (numeric_var_id, threshold, mut operator) = match (

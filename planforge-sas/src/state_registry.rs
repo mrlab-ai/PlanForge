@@ -551,7 +551,7 @@ impl<'a> StateRegistry<'a> {
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
 
         let numeric_var_types: Vec<NumericType> =
-            numeric_vars.iter().map(|var| *var.get_type()).collect();
+            numeric_vars.iter().map(|var| var.numeric_type()).collect();
         let initial_numeric_values = task.initial_numeric_values();
         assert_eq!(
             initial_numeric_values.len(),
@@ -907,7 +907,7 @@ impl<'a> StateRegistry<'a> {
             .task
             .numeric_variables()
             .iter()
-            .filter(|var| var.get_type() == &NumericType::Derived)
+            .filter(|var| var.numeric_type() == NumericType::Derived)
             .count();
 
         info!(

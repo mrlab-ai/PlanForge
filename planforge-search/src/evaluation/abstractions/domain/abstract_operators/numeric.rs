@@ -72,7 +72,7 @@ pub(super) fn numeric_partition_transitions(
             continue;
         }
         let var_id = VariableIndex::from_usize(v);
-        let changed = if task.numeric_variables()[v].get_type() == &NumericType::Derived {
+        let changed = if task.numeric_variables()[v].numeric_type() == NumericType::Derived {
             let view = additive_numeric_views[v].as_ref().with_context(|| {
                 format!("refined derived numeric variable {v} has no additive-view semantics")
             })?;

@@ -223,7 +223,7 @@ fn initial_split_candidates(task: &dyn AbstractNumericTask) -> Vec<InitialSplitV
         .numeric_variables()
         .iter()
         .enumerate()
-        .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
+        .filter(|(_, variable)| variable.numeric_type() == NumericType::Regular)
         .map(|(numeric_var_id, _)| {
             InitialSplitVar::Numeric(VariableIndex::from_usize(numeric_var_id))
         });

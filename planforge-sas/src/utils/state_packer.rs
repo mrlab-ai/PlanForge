@@ -161,7 +161,7 @@ impl StatePacker {
             .collect();
         let numeric_slot_offset = domain_sizes.len();
         for numeric_var in task.numeric_variables().iter() {
-            if numeric_var.get_type() == &NumericType::Regular {
+            if numeric_var.numeric_type() == NumericType::Regular {
                 domain_sizes.push(numeric_range);
             }
         }

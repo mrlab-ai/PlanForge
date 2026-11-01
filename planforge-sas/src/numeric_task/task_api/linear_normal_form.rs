@@ -50,7 +50,7 @@ impl NumericRootTask {
         }
         let mut constants = std::collections::HashMap::new();
         for (id, variable) in self.numeric_variables.iter().enumerate() {
-            if variable.get_type() == &NumericType::Constant {
+            if variable.numeric_type() == NumericType::Constant {
                 constants
                     .entry(self.numeric_state[id])
                     .or_insert(VariableIndex::from_usize(id));
@@ -95,7 +95,7 @@ impl NumericRootTask {
                 .filter(|(_, coefficient)| *coefficient != ZERO_VALUE)
                 .collect();
             if terms.iter().any(|(var, _)| {
-                self.numeric_variables[var.index()].get_type() != &NumericType::Regular
+                self.numeric_variables[var.index()].numeric_type() != NumericType::Regular
             }) {
                 continue;
             }
@@ -190,7 +190,7 @@ impl NumericRootTask {
             definitions: &[Option<AxiomIndex>],
             visiting: &mut [bool],
         ) -> bool {
-            match task.numeric_variables[variable.index()].get_type() {
+            match task.numeric_variables[variable.index()].numeric_type() {
                 NumericType::Constant => return true,
                 NumericType::Regular | NumericType::Cost => return false,
                 NumericType::Derived => {}
@@ -231,8 +231,8 @@ impl NumericRootTask {
             );
         }
         self.assignment_axioms.retain(|axiom| {
-            self.numeric_variables[axiom.affected_var_id.index()].get_type()
-                == &NumericType::Derived
+            self.numeric_variables[axiom.affected_var_id.index()].numeric_type()
+                == NumericType::Derived
         });
     }
 
@@ -384,7 +384,7 @@ impl NumericRootTask {
         }
         for (variable, &layer) in self.numeric_variables.iter_mut().zip(&layers) {
             *variable =
-                NumericVariable::new(variable.name().to_string(), *variable.get_type(), layer);
+                NumericVariable::new(variable.name().to_string(), variable.numeric_type(), layer);
         }
         self.assignment_axioms
             .sort_by_key(|axiom| layers[axiom.affected_var_id.index()]);
