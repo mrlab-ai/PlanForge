@@ -137,7 +137,7 @@ enum Step {
 enum Popped {
     /// A node to expand.
     Expand(StateID, ConcreteState),
-    /// The entry was closed, superseded, deferred or pruned.
+    /// The entry was deferred or pruned.
     Skipped,
     /// The open list is empty.
     Exhausted,
@@ -327,17 +327,22 @@ impl<O: NodeOrdering, Q: OpenList> SearchCore<'_, O, Q> {
     /// With a lazy heuristic, the first pop of an entry evaluates it and
     /// requeues it; the second pop expands it.
     fn pop(&mut self) -> Result<Popped> {
-        let Some(entry) = self.open_list.pop() else {
-            return Ok(Popped::Exhausted);
+        // Stale entries -- their state was closed or reached more cheaply
+        // since -- are dropped here, so the caller's limit check runs once
+        // per pop that does work rather than once per entry.
+        let (entry, node) = loop {
+            let Some(entry) = self.open_list.pop() else {
+                return Ok(Popped::Exhausted);
+            };
+            let node = self
+                .space
+                .node(entry.state_id())
+                .expect("an open-list entry has a search node");
+            if !node.is_closed && node.g_value >= entry.g_value {
+                break (entry, node);
+            }
         };
         let state_id = entry.state_id();
-        let node = self
-            .space
-            .node(state_id)
-            .expect("an open-list entry has a search node");
-        if node.is_closed || node.g_value < entry.g_value {
-            return Ok(Popped::Skipped);
-        }
         let state = self
             .registry
             .lookup_state(state_id)
