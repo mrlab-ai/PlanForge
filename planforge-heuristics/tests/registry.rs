@@ -1,11 +1,11 @@
 //! The registry as a binary sees it once it registered this crate.
 
-use planforge_search::heuristic_factory::{ensure_heuristics_registered, heuristic_names};
+use planforge_search::heuristic_factory::HEURISTICS;
 
 #[test]
 fn heuristic_registry_names_are_unique_and_complete() {
-    ensure_heuristics_registered(planforge_heuristics::heuristics);
-    let names = heuristic_names().collect::<Vec<_>>();
+    HEURISTICS.ensure_registered(planforge_heuristics::heuristics);
+    let names = HEURISTICS.names().collect::<Vec<_>>();
     let unique = names
         .iter()
         .copied()
@@ -37,10 +37,10 @@ fn heuristic_registry_names_are_unique_and_complete() {
 #[test]
 fn every_heuristics_default_options_parse_back() {
     use planforge_search::config::parse_call;
-    use planforge_search::heuristic_factory::{HeuristicConfig, heuristic_entries};
+    use planforge_search::heuristic_factory::HeuristicConfig;
 
-    ensure_heuristics_registered(planforge_heuristics::heuristics);
-    for entry in heuristic_entries() {
+    HEURISTICS.ensure_registered(planforge_heuristics::heuristics);
+    for entry in HEURISTICS.entries() {
         let options = entry.options();
         // A combination has no default children; give it one.
         let arguments: Vec<String> = options

@@ -5,8 +5,8 @@ use planforge_search::config::parse_call;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::heuristic_factory::{
-    BuildContext, EmptyConfig, HeuristicBuildError, HeuristicConfig, HeuristicFeature, entry,
-    register_heuristics,
+    BuildContext, EmptyConfig, HEURISTICS, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
+    entry,
 };
 
 #[test]
@@ -21,7 +21,7 @@ fn external_registration_after_heuristic_construction_is_rejected() {
         .build(&BuildContext::new(&task))
         .unwrap();
 
-    let error = register_heuristics(vec![entry::<TooLate>()]).unwrap_err();
+    let error = HEURISTICS.register(vec![entry::<TooLate>()]).unwrap_err();
     assert!(
         error.contains("already been registered or used"),
         "got `{error}`"

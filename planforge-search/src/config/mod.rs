@@ -310,6 +310,29 @@ pub fn options_text(config: &impl ApplyOptions) -> String {
         .join(", ")
 }
 
+/// `config` as the call `name(...)` that configures it: the positional
+/// options in order, then every named option whose value differs from the
+/// default. Two configurations of one feature are equal exactly when their
+/// canonical calls are.
+pub fn canonical_call<C: ApplyOptions + Default>(name: &str, config: &C) -> String {
+    let (mut options, mut defaults) = (Vec::new(), Vec::new());
+    config.describe_options(&mut options);
+    C::default().describe_options(&mut defaults);
+    let arguments: Vec<String> = options
+        .iter()
+        .zip(&defaults)
+        .filter(|(option, default)| option.positional || option.default != default.default)
+        .map(|(option, _)| {
+            if option.positional {
+                option.default.clone()
+            } else {
+                format!("{}={}", option.name, option.default)
+            }
+        })
+        .collect();
+    format!("{name}({})", arguments.join(", "))
+}
+
 // =============================================================================
 // Primitive impls
 // =============================================================================

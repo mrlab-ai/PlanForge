@@ -1,16 +1,17 @@
 //! The heuristic registry: every heuristic the configuration grammar names
 //! is a [`HeuristicFeature`], a typed configuration and how to build the
 //! heuristic from it. Only blind search is built in; a binary registers every
-//! other heuristic once, with [`register_heuristics`], before it parses a
+//! other heuristic once, with [`HEURISTICS`]`.register`, before it parses a
 //! configuration.
 
-use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, OptionDoc, configure};
+use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, configure};
 use crate::evaluation::Heuristic;
+use crate::registry::{Entry, Registry, options_of};
 use crate::task_transformations::restriction::validate_restricted_task;
 use planforge_sas::numeric_task::Task;
 use std::any::Any;
 use std::fmt::{self, Debug};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 #[cfg(test)]
 mod tests;
 
@@ -24,52 +25,38 @@ pub enum RequiredBackend {
 pub struct TaskRequirements {
     pub restricted: bool,
     pub abstractable_goal: bool,
-    /// The transformation `--restrict-task` applies instead of the standard
-    /// restriction.
-    pub restriction: Option<TaskRestriction>,
+    /// The task transformation the heuristic needs applied, by name, when it
+    /// needs another normal form than the standard restriction.
+    pub transformation: Option<&'static str>,
 }
-
-/// A task transformation a heuristic brings along for `--restrict-task`
-/// because it needs another normal form than the standard restriction.
-#[derive(Debug, Clone, Copy)]
-pub struct TaskRestriction {
-    pub name: &'static str,
-    /// The transformed task; `None` when the task already has the form.
-    pub build: fn(&Task) -> anyhow::Result<Option<Task>>,
-}
-
-impl PartialEq for TaskRestriction {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl Eq for TaskRestriction {}
 
 impl TaskRequirements {
     pub const ANY: Self = Self {
         restricted: false,
         abstractable_goal: false,
-        restriction: None,
+        transformation: None,
     };
     pub const ABSTRACTABLE_GOAL: Self = Self {
         restricted: false,
         abstractable_goal: true,
-        restriction: None,
+        transformation: None,
     };
     pub const RESTRICTED_ABSTRACTABLE_GOAL: Self = Self {
         restricted: true,
         abstractable_goal: true,
-        restriction: None,
+        transformation: None,
     };
 
     pub fn union(self, other: Self) -> Self {
         Self {
             restricted: self.restricted || other.restricted,
             abstractable_goal: self.abstractable_goal || other.abstractable_goal,
-            restriction: match (self.restriction, other.restriction) {
+            transformation: match (self.transformation, other.transformation) {
                 (Some(left), Some(right)) => {
-                    assert_eq!(left, right, "one search cannot apply two task restrictions");
+                    assert_eq!(
+                        left, right,
+                        "one search cannot need two task transformations"
+                    );
                     Some(left)
                 }
                 (left, right) => left.or(right),
@@ -77,8 +64,8 @@ impl TaskRequirements {
         }
     }
 
-    /// A task that is not restricted is a usage error, since `--restrict-task`
-    /// would restrict it; a goal no abstraction can express is a task the
+    /// A task that is not restricted is a usage error, since `--transform
+    /// restrict` would restrict it; a goal no abstraction can express is a task the
     /// heuristic does not support.
     pub fn validate(self, task: &Task) -> Result<(), HeuristicBuildError> {
         if self.restricted {
@@ -200,14 +187,7 @@ impl HeuristicConfig {
     }
 
     pub fn from_spec(spec: &ConfigCall) -> Result<Self, ConfigError> {
-        let entry = lookup(&spec.name).ok_or_else(|| {
-            ConfigError::from(format!(
-                "unknown heuristic `{}`; expected one of {}",
-                spec.name,
-                heuristic_names().collect::<Vec<_>>().join(", ")
-            ))
-        })?;
-        (entry.parse)(spec)
+        HEURISTICS.parse(spec)
     }
     pub fn requirements(&self) -> TaskRequirements {
         self.0.requirements()
@@ -223,7 +203,6 @@ impl HeuristicConfig {
         &self,
         context: &BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        let _ = registered_heuristics();
         check_backend(self.required_backend())
             .map_err(|error| HeuristicBuildError::Failure(error.to_string()))?;
         self.requirements().validate(context.task)?;
@@ -263,134 +242,30 @@ impl crate::config::FromOptionValue for HeuristicConfig {
 
 /// A registered heuristic feature. External features use the same entries as
 /// the built-ins.
-#[derive(Clone, Copy)]
-pub struct HeuristicEntry {
-    name: &'static str,
-    parse: fn(&ConfigCall) -> Result<HeuristicConfig, ConfigError>,
-    options: fn() -> Vec<OptionDoc>,
-}
-impl HeuristicEntry {
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
+pub type HeuristicEntry = Entry<HeuristicConfig>;
 
-    /// The options the heuristic's configuration accepts, with its defaults.
-    pub fn options(&self) -> Vec<OptionDoc> {
-        (self.options)()
-    }
-    fn matches(&self, name: &str) -> bool {
-        self.name.eq_ignore_ascii_case(name)
-    }
-}
 pub const fn entry<F: HeuristicFeature>() -> HeuristicEntry {
-    HeuristicEntry {
-        name: F::NAME,
-        parse: parse_feature::<F>,
-        options: feature_options::<F>,
-    }
-}
-fn feature_options<F: HeuristicFeature>() -> Vec<OptionDoc> {
-    let mut options = Vec::new();
-    F::Config::default().describe_options(&mut options);
-    options
+    Entry::new(F::NAME, parse_feature::<F>, options_of::<F::Config>)
 }
 fn parse_feature<F: HeuristicFeature>(spec: &ConfigCall) -> Result<HeuristicConfig, ConfigError> {
     let mut spec = spec.clone();
     spec.name.make_ascii_lowercase();
     let config = configure(&spec.name, F::Config::default(), &spec.args)?;
     F::validate(&config).map_err(|error| error.at(&spec.name))?;
-    Ok(HeuristicConfig(Arc::new(Configured::<F> {
-        config,
-        spec: spec.clone(),
-    })))
+    Ok(HeuristicConfig(Arc::new(Configured::<F> { config, spec })))
 }
 
-/// The heuristics every build knows.
-static BUILTIN: &[HeuristicEntry] = &[entry::<crate::evaluation::heuristic::BlindFeature>()];
+/// Every heuristic the configuration grammar names: blind search is built
+/// in, a binary registers the others.
+pub static HEURISTICS: Registry<HeuristicConfig> = Registry::new(
+    "heuristic",
+    &[entry::<crate::evaluation::heuristic::BlindFeature>()],
+);
 
-static REGISTERED: OnceLock<Vec<HeuristicEntry>> = OnceLock::new();
-fn registered_heuristics() -> &'static [HeuristicEntry] {
-    REGISTERED.get_or_init(Vec::new)
-}
-fn lookup(name: &str) -> Option<&'static HeuristicEntry> {
-    BUILTIN
-        .iter()
-        .find(|entry| entry.matches(name))
-        .or_else(|| {
-            registered_heuristics()
-                .iter()
-                .find(|entry| entry.matches(name))
-        })
-}
-
-/// Registers the heuristics besides blind search, once per process and
-/// before any configuration is parsed.
-pub fn register_heuristics(entries: Vec<HeuristicEntry>) -> Result<(), String> {
-    let mut names = std::collections::HashSet::new();
-    for HeuristicEntry { name, .. } in &entries {
-        if name.is_empty() {
-            return Err("heuristic names must not be empty".into());
-        }
-        if BUILTIN.iter().any(|builtin| builtin.matches(name)) {
-            return Err(format!(
-                "heuristic `{name}` collides with a built-in heuristic"
-            ));
-        }
-        if !names.insert(name.to_ascii_lowercase()) {
-            return Err(format!("heuristic `{name}` is registered more than once"));
-        }
-    }
-    REGISTERED
-        .set(entries)
-        .map_err(|_| "heuristics have already been registered or used".into())
-}
-
-/// Registers `entries` unless heuristics were registered already: for test
-/// processes, which all register the same entries.
-pub fn ensure_heuristics_registered(entries: impl FnOnce() -> Vec<HeuristicEntry>) {
-    REGISTERED.get_or_init(entries);
-}
-/// Every known heuristic, built-in first, in registration order.
-pub fn heuristic_entries() -> impl Iterator<Item = &'static HeuristicEntry> {
-    BUILTIN.iter().chain(registered_heuristics())
-}
-
-/// A reference of every known heuristic and its options with their
-/// defaults, generated from the configuration types themselves.
-pub fn heuristic_reference() -> String {
-    let mut text = String::new();
-    for entry in heuristic_entries() {
-        let options = entry.options();
-        let positional: Vec<&str> = options
-            .iter()
-            .filter(|option| option.positional)
-            .map(|option| option.name.as_str())
-            .collect();
-        text.push_str(entry.name());
-        text.push('(');
-        text.push_str(&positional.join(", "));
-        text.push_str(")\n");
-        for option in &options {
-            text.push_str(&format!("    {} = {}", option.name, option.default));
-            if !option.doc.is_empty() {
-                text.push_str(&format!("  -- {}", option.doc));
-            }
-            text.push('\n');
-        }
-    }
-    text
-}
-
-pub fn heuristic_names() -> impl Iterator<Item = &'static str> {
-    BUILTIN
-        .iter()
-        .chain(registered_heuristics())
-        .map(HeuristicEntry::name)
-}
 pub fn heuristic_help() -> String {
     format!(
         "Heuristics: {}. `planforge heuristics` lists their options and defaults. Custom Rust heuristics can be passed directly as Box<dyn Heuristic>.",
-        heuristic_names().collect::<Vec<_>>().join(", ")
+        HEURISTICS.names().collect::<Vec<_>>().join(", ")
     )
 }
 fn check_backend(backend: RequiredBackend) -> std::io::Result<()> {

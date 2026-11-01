@@ -86,6 +86,7 @@ fn normalizes_wrapped_timeout_exit_code() {
 
 #[test]
 fn cli_rejects_nested_config_errors_without_loading_pddl() {
+    crate::register_planforge_features();
     for (spec, detail) in [
         (
             "astar(scp(domian(),bogus=1))",

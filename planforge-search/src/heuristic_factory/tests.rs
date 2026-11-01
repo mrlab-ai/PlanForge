@@ -1,17 +1,21 @@
-use super::register_heuristics;
+use super::HEURISTICS;
 use super::{BuildContext, EmptyConfig, HeuristicBuildError, HeuristicFeature, entry};
 use crate::evaluation::Heuristic;
 use crate::evaluation::heuristic::{BlindFeature, BlindHeuristic};
 
 #[test]
 fn registration_rejects_builtin_name_collision() {
-    let error = register_heuristics(vec![entry::<BlindFeature>()]).unwrap_err();
+    let error = HEURISTICS
+        .register(vec![entry::<BlindFeature>()])
+        .unwrap_err();
     assert!(error.contains("collides with a built-in"), "got `{error}`");
 }
 
 #[test]
 fn registration_rejects_duplicate_names() {
-    let error = register_heuristics(vec![entry::<Duplicate>(), entry::<Duplicate>()]).unwrap_err();
+    let error = HEURISTICS
+        .register(vec![entry::<Duplicate>(), entry::<Duplicate>()])
+        .unwrap_err();
     assert!(error.contains("registered more than once"), "got `{error}`");
 }
 

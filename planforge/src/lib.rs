@@ -6,8 +6,9 @@
 //! code -- and delegates the planning itself to `planforge-translate` and
 //! `planforge-search`.
 //! It therefore orchestrates the complete PDDL translation → SAS+ task →
-//! search pipeline. Embedders that need the standard CLI with an additional
-//! native heuristic should use [`run_with_heuristics`].
+//! search pipeline. Embedders that need the standard CLI with their own
+//! heuristics, search algorithms or task transformations should use
+//! [`run_with`].
 
 mod allocator;
 mod limits;
@@ -29,12 +30,15 @@ use limits::{
     parse_time_limit,
 };
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::{
-    HeuristicEntry, ensure_heuristics_registered, register_heuristics,
+use planforge_search::heuristic_factory::{HEURISTICS, HeuristicEntry, TaskRequirements};
+use planforge_search::search::{
+    SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchLimits, SearchResult,
 };
-use planforge_search::search::{SearchConfig, SearchResult, solve_task};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
-use planforge_search::task_transformations::restriction::build_restricted_task;
+use planforge_search::task_transformations::{
+    TRANSFORMATIONS, TransformationConfig, TransformationEntry, parse_transformation_spec,
+    transform_task, transformation_help,
+};
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
@@ -83,19 +87,39 @@ pub fn init_logger(level: LevelFilter) {
         .init();
 }
 
-/// Registers PlanForge's heuristics unless they are registered already, for
-/// a program that uses the library rather than [`run_with_heuristics`].
-pub fn register_planforge_heuristics() {
-    ensure_heuristics_registered(planforge_heuristics::heuristics);
+/// Registers PlanForge's heuristics and task transformations unless they are
+/// registered already, for a program that uses the library rather than
+/// [`run_with`].
+pub fn register_planforge_features() {
+    HEURISTICS.ensure_registered(planforge_heuristics::heuristics);
+    TRANSFORMATIONS.ensure_registered(planforge_heuristics::transformations);
 }
 
-/// Run the standard PlanForge CLI, with extra heuristics registered next to
-/// PlanForge's own. This is the supported way to ship your own heuristic
-/// inside the real binary.
-pub fn run_with_heuristics(extra: Vec<HeuristicEntry>) -> std::io::Result<()> {
+/// The features a binary adds to PlanForge's own.
+#[derive(Default)]
+pub struct Extensions {
+    pub heuristics: Vec<HeuristicEntry>,
+    pub search_algorithms: Vec<SearchEntry>,
+    pub transformations: Vec<TransformationEntry>,
+}
+
+/// Run the standard PlanForge CLI, with `extensions` registered next to
+/// PlanForge's own features. This is the supported way to ship your own
+/// heuristic, search algorithm or task transformation inside the real binary.
+pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
     let mut heuristics = planforge_heuristics::heuristics();
-    heuristics.extend(extra);
-    register_heuristics(heuristics).map_err(std::io::Error::other)?;
+    heuristics.extend(extensions.heuristics);
+    HEURISTICS
+        .register(heuristics)
+        .map_err(std::io::Error::other)?;
+    SEARCH_ALGORITHMS
+        .register(extensions.search_algorithms)
+        .map_err(std::io::Error::other)?;
+    let mut transformations = planforge_heuristics::transformations();
+    transformations.extend(extensions.transformations);
+    TRANSFORMATIONS
+        .register(transformations)
+        .map_err(std::io::Error::other)?;
 
     let cli = PlannersCli::parse();
     init_logger(
@@ -151,8 +175,15 @@ pub struct PlannersCli {
     #[arg(long, hide = true)]
     pub internal_run: bool,
 
-    #[arg(long = "restrict-task")]
-    pub restrict_task: bool,
+    /// Task transformations, applied before the search in the order given:
+    /// `restrict` folds derived arithmetic into the comparisons.
+    #[arg(
+        long = "transform",
+        value_name = "SPEC",
+        value_parser = parse_transformation_spec,
+        long_help = transformation_help()
+    )]
+    pub transform: Vec<TransformationConfig>,
 
     #[command(flatten)]
     pub grounding: GroundingOptions,
@@ -236,8 +267,10 @@ pub struct EnumerateCli {
     #[arg(long, value_name = "DIRECTORY")]
     pub output: PathBuf,
 
-    #[arg(long = "restrict-task")]
-    pub restrict_task: bool,
+    /// Task transformations, applied before the enumeration in the order
+    /// given.
+    #[arg(long = "transform", value_name = "SPEC", value_parser = parse_transformation_spec)]
+    pub transform: Vec<TransformationConfig>,
 
     #[arg(value_name = "INPUT", required = true, num_args = 1..=2)]
     pub inputs: Vec<String>,
@@ -252,7 +285,7 @@ pub fn run_command(
         PlanforgeCommand::Heuristics => {
             print!(
                 "{}",
-                planforge_search::heuristic_factory::heuristic_reference()
+                planforge_search::heuristic_factory::HEURISTICS.reference()
             );
             Ok(())
         }
@@ -279,8 +312,9 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
         child_args.push(OsString::from("--log-level"));
         child_args.push(OsString::from(level.to_string()));
     }
-    if cli.restrict_task {
-        child_args.push(OsString::from("--restrict-task"));
+    for transformation in &cli.transform {
+        child_args.push(OsString::from("--transform"));
+        child_args.push(OsString::from(transformation.to_string()));
     }
     child_args.push(OsString::from("--max-ground-actions"));
     child_args.push(OsString::from(cli.grounding.max_ground_actions.to_string()));
@@ -333,7 +367,7 @@ fn load_enumeration_task(
     arguments: &EnumerateCli,
     grounding_limits: planforge_translate::GroundingLimits,
 ) -> std::io::Result<Task> {
-    let mut task = if arguments.inputs.len() == 2 {
+    let task = if arguments.inputs.len() == 2 {
         planforge_translate::translate_to_task_with_limits(
             &arguments.inputs[0],
             &arguments.inputs[1],
@@ -343,13 +377,7 @@ fn load_enumeration_task(
     } else {
         Task::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
     };
-    if arguments.restrict_task
-        && let Some(restricted) = build_restricted_task(&task)
-            .map_err(|error| std::io::Error::other(format!("failed to restrict task: {error:#}")))?
-    {
-        task = restricted;
-    }
-    Ok(task)
+    transform_task(task, &arguments.transform, TaskRequirements::ANY).map_err(transformation_error)
 }
 
 fn create_csv(path: &Path) -> std::io::Result<BufWriter<std::fs::File>> {
@@ -488,7 +516,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     cli.search.preflight()?;
 
     let start_time = std::time::Instant::now();
-    let (mut task, sas_label) = if cli.inputs.len() == 2 {
+    let (task, sas_label) = if cli.inputs.len() == 2 {
         let domain = &cli.inputs[0];
         let problem = &cli.inputs[1];
         // The default path: the translation hands over the task it built, with
@@ -507,28 +535,8 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let task = Task::try_from_file(&path).map_err(std::io::Error::other)?;
         (task, path)
     };
-    if cli.restrict_task {
-        let original_numeric_count = task.numeric_variables().len();
-        let restricted_task = match cli.search.requirements().restriction {
-            Some(restriction) => (restriction.build)(&task),
-            None => build_restricted_task(&task),
-        };
-        if let Some(restricted_task) = restricted_task.map_err(|err| {
-            let kind = if planforge_search::unsupported::is_unsupported_task(&err) {
-                std::io::ErrorKind::Unsupported
-            } else {
-                std::io::ErrorKind::Other
-            };
-            std::io::Error::new(kind, format!("failed to build restricted task: {err:#}"))
-        })? {
-            task = restricted_task;
-            info!(
-                "restricted task: numeric variables {} -> {}",
-                original_numeric_count,
-                task.numeric_variables().len()
-            );
-        }
-    }
+    let task = transform_task(task, &cli.transform, cli.search.requirements())
+        .map_err(transformation_error)?;
     let task: Arc<Task> = Arc::new(task);
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
@@ -543,12 +551,29 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 
     let time_limit = cli.max_time;
     let memory_limit = cli.max_memory;
-    let result = solve_task(task.clone(), &cli.search, time_limit, memory_limit)?;
+    let result = cli.search.solve(
+        task.clone(),
+        SearchLimits {
+            time: time_limit,
+            memory_bytes: memory_limit,
+        },
+    )?;
 
     write_plan_file(&result)?;
     print_search_result(&result);
 
     Ok(result)
+}
+
+/// The error a failed task transformation ends the run with: a task the
+/// transformation does not support is `Unsupported`.
+fn transformation_error(error: anyhow::Error) -> std::io::Error {
+    let kind = if planforge_search::unsupported::is_unsupported_task(&error) {
+        std::io::ErrorKind::Unsupported
+    } else {
+        std::io::ErrorKind::Other
+    };
+    std::io::Error::new(kind, format!("task transformation failed: {error:#}"))
 }
 
 /// The error a failed translation ends the run with: PDDL the translator does

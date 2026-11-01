@@ -159,8 +159,9 @@ fn run_stage(
         args.push(OsString::from("--log-level"));
         args.push(OsString::from(level.to_string()));
     }
-    if cli.restrict_task {
-        args.push(OsString::from("--restrict-task"));
+    for transformation in &cli.transform {
+        args.push(OsString::from("--transform"));
+        args.push(OsString::from(transformation.to_string()));
     }
     args.push(OsString::from("--max-ground-actions"));
     args.push(OsString::from(cli.grounding.max_ground_actions.to_string()));

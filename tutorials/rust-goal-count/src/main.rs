@@ -32,7 +32,7 @@ fn run(path: &str) {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();
     let initial_h = heuristic
-        .evaluate(&EvaluationState::new(&initial_state, &*task, &registry))
+        .evaluate(&EvaluationState::new(&initial_state, &task, &registry))
         .expect("goal-count should evaluate the initial state");
 
     let params = SearchParams {

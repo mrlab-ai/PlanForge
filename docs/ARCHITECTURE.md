@@ -33,7 +33,7 @@ and `task.with_goals(..)` gives a task with another goal that shares every
 operator. A transformation that changes a task's structure is a function
 returning a new `Task`, plus a mapping back where ids change:
 
-- the restriction (`--restrict-task`) folds derived arithmetic into the
+- the restriction (`--transform restrict`) folds derived arithmetic into the
   comparisons and the metric;
 - the projection onto a pattern builds a pattern database's task.
 
@@ -49,11 +49,16 @@ propositional values without decoding a whole state.
   a `NodeOrdering`, and the `--search` configuration language.
 - `evaluation`: the `Heuristic` trait, `EvaluationState`, blind search, and
   shared helpers (random walks, seeds, a per-state value cache).
-- `heuristic_factory`: the registry. A heuristic the configuration language
-  names is a `HeuristicFeature`: a typed configuration (derived with
-  `#[derive(ApplyOptions)]`), the task properties and backend it needs, and
-  how to build it. The core knows only blind search; a binary registers every
-  other heuristic once with `register_heuristics`.
+- `registry`: the registries of the features the configuration language
+  names. Each feature is a typed configuration (derived with
+  `#[derive(ApplyOptions)]`) plus what it does: a `HeuristicFeature`
+  (`heuristic_factory::HEURISTICS`) builds a heuristic and names the task
+  properties and backend it needs, a `SearchFeature`
+  (`search::SEARCH_ALGORITHMS`, with A* and greedy best-first search built in)
+  runs a search, a `TransformationFeature`
+  (`task_transformations::TRANSFORMATIONS`, with `restrict` built in)
+  transforms the task before it. A binary registers the other features once,
+  before it parses a configuration.
 - `successor_generator`, `state_space` (the exact state space), `graph` (the
   backward goal-distance search shared with the abstractions),
   `task_transformations`, `resource_limits`.
@@ -72,15 +77,16 @@ One module per technique, each depending on the core only:
 - `combinations`: the maximum over arbitrary heuristics and the admissibility
   check around one.
 
-`heuristics()` lists every feature of the crate; `planforge` registers it.
+`heuristics()` and `transformations()` list the features of the crate;
+`planforge` registers them.
 
 ## Extending PlanForge
 
 | To add | Implement | Register | Example |
 |---|---|---|---|
-| a heuristic | `Heuristic`, and a `HeuristicFeature` for its configuration | one entry in `planforge_heuristics::heuristics()`, or `planforge::run_with_heuristics` from your own binary | `tutorials/rust-goal-count`, `tutorials/rust-plugin-binary` |
-| a node ordering | `search::best_first::NodeOrdering` | none: instantiate best-first search with it | `tutorials/rust-custom-search` |
-| a task transformation | a function `&Task -> Task` (plus an id mapping if ids change) | none | `task_transformations::projection` |
+| a heuristic | `Heuristic`, and a `HeuristicFeature` for its configuration | one entry in `planforge_heuristics::heuristics()`, or `planforge::Extensions::heuristics` with `planforge::run_with` from your own binary | `tutorials/rust-goal-count`, `tutorials/rust-plugin-binary` |
+| a search algorithm | a `SearchFeature` (for best-first search, a `NodeOrdering`) | `planforge::Extensions::search_algorithms` | `tutorials/rust-custom-search` |
+| a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::transformations()`, or `planforge::Extensions::transformations` | `task_transformations::restriction::RestrictFeature` |
 
 A heuristic owns its state (`&mut self`), reads the task through `&Task` or a
 shared `Arc<Task>`, and reports invalid internal states by panicking, never by

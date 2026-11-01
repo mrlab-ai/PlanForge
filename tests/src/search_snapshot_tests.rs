@@ -19,36 +19,37 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::search::{SearchOutcome, parse_search_spec, solve_task};
-use planforge_search::task_transformations::restriction::build_restricted_task;
+use planforge_search::search::{SearchLimits, SearchOutcome, parse_search_spec};
+use planforge_search::task_transformations::{parse_transformation_spec, transform_task};
 
 use crate::corpus::{self, problem_file_names, subdirectory_names, translate_in_memory};
 
-/// The configurations, each with whether it searches the restricted task.
-const CONFIGS: &[(bool, &str)] = &[
-    (false, "astar(blind())"),
-    (false, "astar(lmcutnumeric())"),
-    (false, "gbfs(ff())"),
-    (false, "astar(domain())"),
-    (false, "astar(cartesian())"),
+/// The configurations, each with the transformation of the task it
+/// searches, if any.
+const CONFIGS: &[(Option<&str>, &str)] = &[
+    (None, "astar(blind())"),
+    (None, "astar(lmcutnumeric())"),
+    (None, "gbfs(ff())"),
+    (None, "astar(domain())"),
+    (None, "astar(cartesian())"),
     (
-        false,
+        None,
         "astar(max([domain(max_states=500),cartesian(max_states=500)]))",
     ),
     (
-        true,
+        Some("restrict"),
         "astar(canonical(pdb(patterns=systematic(max_pdb_states=1000))))",
     ),
     (
-        true,
+        Some("restrict"),
         "astar(canonical(pdb(patterns=hillclimbing(max_pdb_states=1000,num_samples=100,collection_max_size=20000))))",
     ),
     (
-        true,
+        Some("restrict"),
         "astar(scp([domain_collection(total_max_time=infinity,max_collection_size=20000)]))",
     ),
     (
-        true,
+        Some("icaps26_restrict"),
         "astar(canonical(icaps26_cartesian(pick=min_unwanted,max_states=2000)))",
     ),
 ];
@@ -71,22 +72,17 @@ fn instances() -> Vec<(String, String)> {
 }
 
 /// One snapshot line: the run's outcome, or the error that ended it.
-fn run(task: &Task, restrict: bool, spec: &str) -> String {
+fn run(task: &Task, transformation: Option<&str>, spec: &str) -> String {
     let search = parse_search_spec(spec).unwrap_or_else(|error| panic!("{spec}: {error}"));
-    let task = if restrict {
-        let restricted = match search.requirements().restriction {
-            Some(restriction) => (restriction.build)(task),
-            None => build_restricted_task(task),
-        };
-        match restricted {
-            Ok(Some(restricted)) => restricted,
-            Ok(None) => task.clone(),
-            Err(error) => return format!("restriction error: {}", first_line(&error.to_string())),
-        }
-    } else {
-        task.clone()
+    let transformations: Vec<_> = transformation
+        .map(|raw| parse_transformation_spec(raw).unwrap_or_else(|error| panic!("{raw}: {error}")))
+        .into_iter()
+        .collect();
+    let task = match transform_task(task.clone(), &transformations, search.requirements()) {
+        Ok(task) => task,
+        Err(error) => return format!("restriction error: {}", first_line(&error.to_string())),
     };
-    match solve_task(Arc::new(task), &search, None, None) {
+    match search.solve(Arc::new(task), SearchLimits::default()) {
         Ok(result) => {
             let nodes = &result.statistics.nodes;
             let outcome = match result.outcome {
@@ -127,12 +123,12 @@ fn snapshot(instances: &[(String, String)]) -> String {
                         let dir = root.join(folder);
                         let task =
                             translate_in_memory(&dir.join("domain.pddl"), &dir.join(problem));
-                        for (restrict, spec) in CONFIGS {
+                        for (transformation, spec) in CONFIGS {
                             lines.push((
                                 index,
                                 format!(
                                     "{folder}/{problem} | {spec} | {}",
-                                    run(&task, *restrict, spec)
+                                    run(&task, *transformation, spec)
                                 ),
                             ));
                         }
@@ -153,9 +149,10 @@ fn snapshot(instances: &[(String, String)]) -> String {
 #[test]
 #[ignore = "semantic gate; run with --release -- --ignored search_snapshot"]
 fn search_snapshot() {
-    planforge_search::heuristic_factory::ensure_heuristics_registered(
-        planforge_heuristics::heuristics,
-    );
+    planforge_search::heuristic_factory::HEURISTICS
+        .ensure_registered(planforge_heuristics::heuristics);
+    planforge_search::task_transformations::TRANSFORMATIONS
+        .ensure_registered(planforge_heuristics::transformations);
     let actual = snapshot(&instances());
     let path = snapshot_path();
     if std::env::var_os("PLANFORGE_BLESS").is_some() {

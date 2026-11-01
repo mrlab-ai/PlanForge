@@ -9,7 +9,7 @@
 //! - implement [`evaluation::Heuristic`] for a new state evaluator;
 //! - implement [`search::best_first::NodeOrdering`] for a new best-first
 //!   node ordering;
-//! - call [`heuristic_factory::register_heuristics`] to make external
+//! - register entries with [`heuristic_factory::HEURISTICS`] to make external
 //!   heuristic factories visible to the standard configuration grammar.
 //!
 //! The repository tutorials contain complete examples for all three paths. A
@@ -30,6 +30,7 @@ pub mod config;
 pub mod evaluation;
 pub mod graph;
 pub mod heuristic_factory;
+pub mod registry;
 pub mod resource_limits;
 pub mod search;
 pub mod state_space;
