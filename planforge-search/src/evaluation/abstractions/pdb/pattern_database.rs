@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::explicit_state::StateValues;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -237,18 +238,18 @@ impl<'task> PatternDatabase<'task> {
     /// exploration was exhaustive, has distance zero when it is an abstract
     /// goal, and otherwise takes the failed-lookup heuristic, at least the
     /// cheapest operator cost.
-    pub fn value(&self, propositional: &[ExplicitValueIndex], numeric: &[NumericValue]) -> f64 {
+    pub fn value(&self, state: StateValues<'_>) -> f64 {
         let registry = match &self.states {
             AbstractStates::Dense(dense) => {
                 return dense
-                    .state_id(propositional)
+                    .state_id(state)
                     .map_or(f64::INFINITY, |state_id| self.distances[state_id]);
             }
             AbstractStates::Registry(registry) => registry,
         };
         let mut scratch = self.scratch.borrow_mut();
         let scratch = &mut *scratch;
-        if let Some(state_id) = self.find_state_id(registry, propositional, numeric, scratch) {
+        if let Some(state_id) = self.find_state_id(registry, state, scratch) {
             return self.distances[state_id];
         }
         if self.exhausted {
@@ -269,19 +270,12 @@ impl<'task> PatternDatabase<'task> {
 
     /// The id of the abstract state of the state of the base task with values
     /// `propositional` and `numeric`, if the exploration reached it.
-    pub fn abstract_state_id(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Option<usize> {
+    pub fn abstract_state_id(&self, state: StateValues<'_>) -> Option<usize> {
         match &self.states {
-            AbstractStates::Dense(dense) => dense.state_id(propositional),
-            AbstractStates::Registry(registry) => self.find_state_id(
-                registry,
-                propositional,
-                numeric,
-                &mut self.scratch.borrow_mut(),
-            ),
+            AbstractStates::Dense(dense) => dense.state_id(state),
+            AbstractStates::Registry(registry) => {
+                self.find_state_id(registry, state, &mut self.scratch.borrow_mut())
+            }
         }
     }
 
@@ -289,13 +283,11 @@ impl<'task> PatternDatabase<'task> {
     fn find_state_id(
         &self,
         registry: &StateRegistry<'task>,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
+        state: StateValues<'_>,
         scratch: &mut LookupScratch,
     ) -> Option<usize> {
         self.task.project_state_values_into(
-            propositional,
-            numeric,
+            state,
             &mut scratch.propositional,
             &mut scratch.numeric,
         );
@@ -466,11 +458,11 @@ impl DenseStates {
     }
 
     /// The abstract state of the base task state with `propositional` values.
-    fn state_id(&self, propositional: &[ExplicitValueIndex]) -> Option<usize> {
+    fn state_id(&self, state: StateValues<'_>) -> Option<usize> {
         let index: usize = self
             .variables
             .iter()
-            .map(|variable| propositional[variable.original].index() * variable.multiplier)
+            .map(|variable| state.propositional(variable.original).index() * variable.multiplier)
             .sum();
         let id = self.ids[index];
         (id != Self::UNREACHED).then_some(id as usize)

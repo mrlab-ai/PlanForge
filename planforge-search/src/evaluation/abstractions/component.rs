@@ -1,6 +1,6 @@
+use planforge_sas::explicit_state::StateValues;
 use std::collections::BTreeSet;
 
-use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 use crate::evaluation::abstractions::cartesian::CartesianAbstraction;
@@ -91,24 +91,18 @@ impl<'task> AbstractionComponent<'task> {
 
     /// The abstract state of the concrete state `values`; `None` for a state
     /// outside the states a pattern database enumerated.
-    pub fn abstract_state_id(&self, values: &ExplicitState) -> Option<usize> {
+    pub fn abstract_state_id(&self, values: StateValues<'_>) -> Option<usize> {
         match self {
-            Self::Cegar(abstraction) => {
-                Some(abstraction.abstract_state(&values.propositional, &values.numeric))
-            }
-            Self::PatternDatabase(pdb) => {
-                pdb.abstract_state_id(&values.propositional, &values.numeric)
-            }
+            Self::Cegar(abstraction) => Some(abstraction.abstract_state(values)),
+            Self::PatternDatabase(pdb) => pdb.abstract_state_id(values),
         }
     }
 
     /// The goal distance this component alone estimates for `values`.
-    pub fn standalone_value(&self, values: &ExplicitState) -> f64 {
+    pub fn standalone_value(&self, values: StateValues<'_>) -> f64 {
         match self {
-            Self::Cegar(abstraction) => {
-                abstraction.goal_distance(&values.propositional, &values.numeric)
-            }
-            Self::PatternDatabase(pdb) => pdb.value(&values.propositional, &values.numeric),
+            Self::Cegar(abstraction) => abstraction.goal_distance(values),
+            Self::PatternDatabase(pdb) => pdb.value(values),
         }
     }
 

@@ -1,5 +1,5 @@
-use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::explicit_state::{ExplicitState, StateValues};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue};
 use planforge_sas::state_registry::ConcreteState;
 use planforge_sas::state_registry::StateRegistry;
 use std::fmt;
@@ -73,6 +73,26 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
                     "failed to evaluate the state's derived numeric values: {error:?}"
                 ))
             })
+    }
+
+    /// The evaluated state's values, with its numeric values, derived ones
+    /// included, decoded into `numeric` and its propositional values read
+    /// from the registry on demand.
+    pub fn values<'v>(
+        &'v self,
+        numeric: &'v mut Vec<NumericValue>,
+    ) -> Result<StateValues<'v>, EvaluationError> {
+        let view = self.state_registry.view(self.backing_state);
+        view.fill_numeric(numeric).map_err(|error| {
+            EvaluationError::ComputationFailed(format!(
+                "failed to evaluate the state's derived numeric values: {error:?}"
+            ))
+        })?;
+        Ok(StateValues::packed(
+            view.packer(),
+            view.propositional(),
+            numeric,
+        ))
     }
 
     /// Mark whether this state is a goal.

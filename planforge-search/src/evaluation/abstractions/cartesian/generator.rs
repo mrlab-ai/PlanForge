@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use anyhow::Result;
-use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::explicit_state::{ExplicitState, StateValues};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 use super::abstraction::CartesianAbstraction;
@@ -87,7 +87,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
         let views = semantics.cegar().coordinates().views();
         let initial_abstract_state = working
             .hierarchy
-            .map_state_with(&initial_state.propositional, |var_id| {
+            .map_state_with(StateValues::from(&initial_state), |var_id| {
                 coordinate_value(views, &initial_state.numeric, var_id)
             });
         let abstraction = finalize_abstraction(

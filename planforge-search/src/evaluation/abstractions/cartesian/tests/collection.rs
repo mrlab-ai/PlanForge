@@ -3,6 +3,7 @@ use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::resource_limits::Deadline;
+use planforge_sas::explicit_state::StateValues;
 
 #[test]
 fn goal_collection_builds_every_goal_with_source_sets() {
@@ -432,7 +433,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             ("checkpoint-rooted", &abstractions[1]),
             ("initial-state specialist", &abstractions[2]),
         ] {
-            let state_id = abstraction.abstract_state(&propositions, &numeric);
+            let state_id = abstraction.abstract_state(StateValues::new(&propositions, &numeric));
             let h = abstraction.distances()[state_id];
             assert!(
                 h <= true_distance,
@@ -835,7 +836,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
                 NumericValue::new(4.0),
                 NumericValue::new(2.0),
             ];
-            let state_id = abstraction.abstract_state(&propositions, &numeric);
+            let state_id = abstraction.abstract_state(StateValues::new(&propositions, &numeric));
             let h = abstraction.distances()[state_id];
             let goal = abstraction
                 .metadata()

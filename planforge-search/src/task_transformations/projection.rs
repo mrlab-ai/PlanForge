@@ -14,6 +14,7 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_sas::explicit_state::StateValues;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
@@ -470,8 +471,7 @@ impl<'task> ProjectedTask<'task> {
         let mut projected_numeric_values =
             Vec::with_capacity(self.projected_num_var_to_original.len());
         self.project_state_values_into(
-            propositional_values,
-            numeric_values,
+            StateValues::new(propositional_values, numeric_values),
             &mut projected_prop_values,
             &mut projected_numeric_values,
         );
@@ -483,13 +483,13 @@ impl<'task> ProjectedTask<'task> {
     /// `propositional_values` and `source_numeric_values`.
     pub fn project_state_values_into(
         &self,
-        propositional_values: &[ExplicitValueIndex],
-        source_numeric_values: &[NumericValue],
+        state: StateValues<'_>,
         projected_prop_values: &mut Vec<ExplicitValueIndex>,
         projected_numeric_values: &mut Vec<NumericValue>,
     ) {
+        let source_numeric_values = state.numeric();
         assert_eq!(
-            propositional_values.len(),
+            state.num_propositional(),
             self.base.variables().len(),
             "a projected state needs one value per base propositional variable"
         );
@@ -503,7 +503,7 @@ impl<'task> ProjectedTask<'task> {
         projected_prop_values.extend(
             self.projected_var_to_original
                 .iter()
-                .map(|&original_var_id| propositional_values[original_var_id.index()]),
+                .map(|&original_var_id| state.propositional(original_var_id.index())),
         );
 
         projected_numeric_values.clear();

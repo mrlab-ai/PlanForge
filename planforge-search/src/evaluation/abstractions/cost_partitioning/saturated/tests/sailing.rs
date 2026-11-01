@@ -1,6 +1,7 @@
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
+use planforge_sas::explicit_state::StateValues;
 use planforge_sas::utils::value_lattice::ValueLattice;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -446,7 +447,7 @@ fn initial_abstract_state_ids(
     heuristic
         .components
         .iter()
-        .map(|component| component.abstract_state_id(&values))
+        .map(|component| component.abstract_state_id(StateValues::from(&values)))
         .collect()
 }
 

@@ -5,6 +5,7 @@ use planforge_sas::numeric_task::{
 
 use super::*;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbHeuristicConfig;
+use planforge_sas::explicit_state::StateValues;
 
 fn binary_var(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(
@@ -63,7 +64,9 @@ fn key_task() -> NumericRootTask {
 fn initial_h(task: &NumericRootTask, pdbs: &[PatternDatabase<'_>]) -> f64 {
     let initial = [ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)];
     assert_eq!(task.variables().len(), initial.len());
-    pdbs.iter().map(|pdb| pdb.value(&initial, &[])).sum()
+    pdbs.iter()
+        .map(|pdb| pdb.value(StateValues::new(&initial, &[])))
+        .sum()
 }
 
 #[test]
@@ -83,7 +86,10 @@ fn hill_climbing_adds_the_precondition_variable_of_the_goal() {
     // reachable states, and the two share `open`, so the canonical heuristic
     // takes their maximum.
     assert_eq!(pdbs[1].num_states(), 3);
-    assert_eq!(pdbs[1].value(&[ExplicitValueIndex::new(0); 2], &[]), 2.0);
+    assert_eq!(
+        pdbs[1].value(StateValues::new(&[ExplicitValueIndex::new(0); 2], &[])),
+        2.0
+    );
     assert_eq!(initial_h(&task, &pdbs[..1]), 1.0);
 }
 

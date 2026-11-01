@@ -549,6 +549,27 @@ impl NumericRootTask {
             self.numeric_variables.len()
         );
 
+        let numeric_count = self.numeric_variables.len();
+        let assert_numeric_operand = |variable: VariableIndex, origin: &str| {
+            assert!(
+                variable.index() < numeric_count,
+                "{origin} names numeric variable {variable}, past the task's {numeric_count} \
+                 numeric variables"
+            );
+        };
+        for axiom in &self.assignment_axioms {
+            let head = axiom.get_affected_var_id();
+            assert_numeric_operand(head, "an assignment axiom head");
+            for operand in axiom.expression.dependencies() {
+                assert_numeric_operand(operand, &format!("assignment axiom {head}"));
+            }
+        }
+        for (axiom_id, axiom) in self.comparison_axioms.iter().enumerate() {
+            for operand in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
+                assert_numeric_operand(operand, &format!("comparison axiom {axiom_id}"));
+            }
+        }
+
         for axiom in &self.assignment_axioms {
             if let crate::axioms::NumericExpression::Linear(terms) = &axiom.expression {
                 for &(variable, _) in terms {

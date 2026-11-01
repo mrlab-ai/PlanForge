@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, ensure};
+use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};
 
 use crate::evaluation::abstractions::common::cegar::split::{ChildSide, Split};
@@ -132,14 +133,16 @@ impl CartesianRefinementHierarchy {
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
     ) -> usize {
-        self.map_state_with(propositional, |var_id| numeric[var_id.index()])
+        self.map_state_with(StateValues::new(propositional, numeric), |var_id| {
+            numeric[var_id.index()]
+        })
     }
 
     /// The abstract state of the concrete state with propositional values
     /// `propositional` whose numeric coordinates have `coordinate_value`.
     pub(crate) fn map_state_with(
         &self,
-        propositional: &[ExplicitValueIndex],
+        state: StateValues<'_>,
         coordinate_value: impl Fn(VariableIndex) -> NumericValue,
     ) -> usize {
         let mut node_id = 0;
@@ -152,7 +155,7 @@ impl CartesianRefinementHierarchy {
                     wanted_child,
                     other_child,
                 } => {
-                    let value = propositional[var_id.index()];
+                    let value = state.propositional(var_id.index());
                     node_id = if wanted.binary_search(&value).is_ok() {
                         *wanted_child
                     } else {

@@ -24,9 +24,7 @@ use crate::explicit_state::ExplicitState;
 use crate::numeric_task::{
     Effect, ExplicitFact, ExplicitValueIndex, NumericValue, Operator, TaskRef, VariableIndex,
 };
-use crate::utils::errors::{
-    AssignmentAxiomError, AxiomEvalError, InvalidIndex, StateInsertError, StateNotFoundError,
-};
+use crate::utils::errors::{AssignmentAxiomError, StateInsertError, StateNotFoundError};
 use crate::utils::segmented_vector::SegmentedArrayVector;
 use crate::{numeric_task::NumericType, utils::state_packer::StatePacker};
 use hashbrown::HashTable;
@@ -1056,9 +1054,6 @@ impl<'a> StateRegistry<'a> {
         }
         ctx.parent_metric = if self.layout.metric_use_metric {
             self.evaluate_metric(&ctx.parent_numeric)
-                .map_err(|e| StateInsertError {
-                    message: format!("Failed to evaluate metric for parent state: {e:?}"),
-                })?
         } else {
             NumericValue::new(0.0)
         };
@@ -1124,9 +1119,6 @@ impl<'a> StateRegistry<'a> {
         // 1.0 for `op_cost` but still want to pre-fill the metric cache).
         let new_metric = if self.layout.metric_use_metric {
             self.evaluate_metric(successor_values)
-                .map_err(|e| StateInsertError {
-                    message: format!("Failed to evaluate metric: {e:?}"),
-                })?
         } else {
             NumericValue::new(0.0)
         };
@@ -1141,13 +1133,11 @@ impl<'a> StateRegistry<'a> {
         let (id, is_new_state) = match self.lookup(&next_buffer) {
             (_, Some(existing_id)) => (existing_id, false),
             (key, None) => {
+                // The arithmetic axioms already ran with the effects.
                 if defer_full_axioms {
                     self.layout
                         .axiom_evaluator
-                        .evaluate(&mut next_buffer, successor_values)
-                        .map_err(|e| StateInsertError {
-                            message: format!("Failed to evaluate axioms: {:?}", e),
-                        })?;
+                        .evaluate_derived_facts(&mut next_buffer, successor_values);
                 }
                 (self.register_new(key, &next_buffer), true)
             }
@@ -1239,38 +1229,20 @@ impl<'a> StateRegistry<'a> {
     ///
     /// This corresponds to the C++ evaluate_metric function that retrieves
     /// the value of the metric fluent from the numeric state.
-    pub fn evaluate_metric(
-        &self,
-        numeric_state: &[NumericValue],
-    ) -> Result<NumericValue, InvalidIndex> {
+    pub fn evaluate_metric(&self, numeric_state: &[NumericValue]) -> NumericValue {
         match self.layout.metric_var {
-            Some((metric, _)) => {
-                if metric < numeric_state.len() {
-                    Ok(numeric_state[metric])
-                } else {
-                    Err(InvalidIndex {
-                        length: numeric_state.len(),
-                        index: metric,
-                    })
-                }
-            }
-            None => Ok(NumericValue::new(0.0)),
+            Some((metric, _)) => numeric_state[metric],
+            None => NumericValue::new(0.0),
         }
     }
 
     fn metric_value_for_state(
         &self,
         state: &ConcreteState,
-    ) -> Result<NumericValue, AxiomEvalError> {
+    ) -> Result<NumericValue, AssignmentAxiomError> {
         let Some((metric_fluent_id, metric_type)) = self.layout.metric_var else {
             return Ok(NumericValue::new(0.0));
         };
-        if metric_fluent_id >= self.layout.numeric_var_types.len() {
-            return Err(AxiomEvalError::InvalidIndex(InvalidIndex {
-                length: self.layout.numeric_var_types.len(),
-                index: metric_fluent_id,
-            }));
-        }
 
         match metric_type {
             NumericType::Regular => {
@@ -1295,11 +1267,8 @@ impl<'a> StateRegistry<'a> {
                 Ok(value)
             }
             NumericType::Derived => {
-                let numeric_vals = self
-                    .get_numeric_vars(state)
-                    .map_err(AxiomEvalError::Assignment)?;
-                self.evaluate_metric(&numeric_vals)
-                    .map_err(AxiomEvalError::InvalidIndex)
+                let numeric_vals = self.get_numeric_vars(state)?;
+                Ok(self.evaluate_metric(&numeric_vals))
             }
         }
     }
@@ -1314,15 +1283,13 @@ impl<'a> StateRegistry<'a> {
         &self,
         existing_state: &ConcreteState,
         successor_numeric_vals: &[NumericValue],
-    ) -> Result<bool, AxiomEvalError> {
+    ) -> Result<bool, AssignmentAxiomError> {
         if !self.task.metric().use_metric() {
             return Ok(false);
         }
 
         let old_metric_val = self.metric_value_for_state(existing_state)?;
-        let new_metric_val = self
-            .evaluate_metric(successor_numeric_vals)
-            .map_err(AxiomEvalError::InvalidIndex)?;
+        let new_metric_val = self.evaluate_metric(successor_numeric_vals);
 
         Ok(if self.task.metric().is_min() {
             old_metric_val < new_metric_val

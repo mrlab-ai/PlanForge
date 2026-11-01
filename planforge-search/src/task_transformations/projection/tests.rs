@@ -1,6 +1,7 @@
 use planforge_sas::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
+use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
@@ -598,8 +599,7 @@ fn source_state_projection_is_a_direct_index_mapping() {
     let mut projected_prop = Vec::new();
     let mut projected_numeric = Vec::new();
     projected.project_state_values_into(
-        &propositional,
-        &numeric,
+        StateValues::new(&propositional, &numeric),
         &mut projected_prop,
         &mut projected_numeric,
     );

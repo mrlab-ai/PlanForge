@@ -6,6 +6,7 @@
 //! collects every flaw of one replay: after a deviation it continues from the
 //! abstract state the concrete successor actually lies in.
 
+use planforge_sas::explicit_state::StateValues;
 use std::collections::HashSet;
 
 use anyhow::{Context, Result, ensure};
@@ -64,7 +65,7 @@ pub(crate) fn replay_plan(
 ) -> Result<PlanCheck> {
     let mut state = refinement_root.clone();
     let mut successor = refinement_root.clone();
-    let initial_abstract_state = view.abstract_state(&state.propositional, &state.numeric);
+    let initial_abstract_state = view.abstract_state(StateValues::from(&state));
     if !view.goal_distance(initial_abstract_state).is_finite() {
         return Ok(PlanCheck::AbstractDeadEnd);
     }
@@ -73,7 +74,7 @@ pub(crate) fn replay_plan(
     let mut concrete_cost = 0.0;
 
     loop {
-        let abstract_state = view.abstract_state(&state.propositional, &state.numeric);
+        let abstract_state = view.abstract_state(StateValues::from(&state));
         let abstract_distance = view.goal_distance(abstract_state);
         ensure!(
             costs_agree(concrete_cost + abstract_distance, abstract_plan_cost),
@@ -146,7 +147,7 @@ pub(crate) fn replay_plan(
             semantics
                 .states()
                 .successor_into(&state, op, &mut successor)?;
-            let concrete_target = view.abstract_state(&successor.propositional, &successor.numeric);
+            let concrete_target = view.abstract_state(StateValues::from(&successor));
             if concrete_target != transition.target {
                 deviation_splits.extend(split_deviation_candidates(
                     view,
@@ -226,7 +227,7 @@ fn replay_whole_plan(
 
     // The replay ends with the flaws it witnessed.
     let candidates = loop {
-        let abstract_state = view.abstract_state(&state.propositional, &state.numeric);
+        let abstract_state = view.abstract_state(StateValues::from(&state));
         if !visited_abstract_states.insert(abstract_state) {
             ensure!(
                 !candidates.is_empty(),
@@ -326,7 +327,7 @@ fn replay_whole_plan(
         semantics
             .states()
             .apply_effects_into(&state, op, &mut successor)?;
-        let concrete_target = view.abstract_state(&successor.propositional, &successor.numeric);
+        let concrete_target = view.abstract_state(StateValues::from(&successor));
         if concrete_target != transition.target {
             for split in split_deviation_candidates(
                 view,

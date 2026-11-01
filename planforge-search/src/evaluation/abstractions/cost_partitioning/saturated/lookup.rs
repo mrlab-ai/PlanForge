@@ -1,6 +1,5 @@
+use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::utils::float_tolerance;
-
-use planforge_sas::explicit_state::ExplicitState;
 
 use super::OrderSelection;
 use crate::evaluation::abstractions::component::AbstractionComponent;
@@ -59,12 +58,13 @@ impl CostPartitioningHeuristic {
 }
 
 /// The abstract state of `eval_state` in every component, or in those
-/// `lookup_mask` selects; `values` is scratch for the state's values.
+/// `lookup_mask` selects; `numeric` is scratch for the state's numeric
+/// values.
 pub(super) fn abstract_state_ids_into(
     components: &[AbstractionComponent<'_>],
     eval_state: &EvaluationState<'_, '_>,
     lookup_mask: Option<&[bool]>,
-    values: &mut ExplicitState,
+    numeric: &mut Vec<NumericValue>,
     ids: &mut Vec<Option<usize>>,
 ) -> Result<(), EvaluationError> {
     if let Some(mask) = lookup_mask {
@@ -76,7 +76,7 @@ pub(super) fn abstract_state_ids_into(
     }
     ids.clear();
     ids.resize(components.len(), None);
-    eval_state.fill_values(values)?;
+    let values = eval_state.values(numeric)?;
     for (component_id, component) in components.iter().enumerate() {
         if lookup_mask.is_none_or(|mask| mask[component_id]) {
             ids[component_id] = component.abstract_state_id(values);

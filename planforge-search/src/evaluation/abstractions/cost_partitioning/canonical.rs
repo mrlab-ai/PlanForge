@@ -18,7 +18,7 @@ use crate::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 
-use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::NumericValue;
 
 use super::standalone_estimate;
 use crate::evaluation::abstractions::component::AbstractionComponent;
@@ -31,7 +31,7 @@ pub struct CanonicalAbstractionHeuristic<'task> {
     component_values: Vec<Option<f64>>,
     /// Estimates by the state ids of the search's registry.
     state_value_cache: StateValueCache,
-    state_values: ExplicitState,
+    numeric_values: Vec<NumericValue>,
 }
 
 impl<'task> CanonicalAbstractionHeuristic<'task> {
@@ -91,7 +91,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
             components,
             max_additive_subsets,
             state_value_cache: StateValueCache::default(),
-            state_values: ExplicitState::default(),
+            numeric_values: Vec::new(),
         }
     }
 
@@ -101,7 +101,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
-        eval_state.fill_values(&mut self.state_values)?;
+        let state = eval_state.values(&mut self.numeric_values)?;
         self.component_values.fill(None);
         let mut best = 0.0_f64;
         for subset in &self.max_additive_subsets {
@@ -113,7 +113,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
                         let value = standalone_estimate(
                             &self.components[component_id],
                             component_id,
-                            &self.state_values,
+                            state,
                         );
                         self.component_values[component_id] = Some(value);
                         value
