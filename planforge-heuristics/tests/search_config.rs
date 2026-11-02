@@ -293,14 +293,14 @@ fn task_requirements_follow_typed_sources_and_wrappers() {
     register();
     let spec = parse_search_spec("astar(check_admissible(scp([domain(),pdb()])))").unwrap();
     let requirements = spec.requirements();
-    assert!(requirements.restricted);
-    assert!(requirements.abstractable_goal);
-    assert_eq!(requirements.transformation, None);
+    assert!(requirements.requires("restricted"));
+    assert!(requirements.requires("abstractable_goal"));
+    assert!(requirements.transformations.is_empty());
 
     let spec = parse_search_spec("astar(blind(), lazy=canonical([icaps26_cartesian()]))").unwrap();
     let requirements = spec.requirements();
-    assert!(requirements.restricted);
-    assert_eq!(requirements.transformation, Some("icaps26_restrict"));
+    assert!(requirements.requires("restricted"));
+    assert_eq!(requirements.transformations, ["icaps26_restrict"]);
 }
 
 #[test]
@@ -321,12 +321,10 @@ fn maximum_accepts_any_heuristic_and_unions_nested_requirements() {
         assert_eq!(parse_search_spec(&config.to_string()).unwrap(), config);
     }
     let config = parse_search_spec("astar(max([ff(),pdb(),numeric_potential()]))").unwrap();
-    assert!(config.requirements().restricted);
-    assert!(config.requirements().abstractable_goal);
-    assert_eq!(
-        config.heuristics().next().unwrap().required_backend(),
-        planforge_search::heuristic_factory::RequiredBackend::Cplex
-    );
+    assert!(config.requirements().requires("restricted"));
+    assert!(config.requirements().requires("abstractable_goal"));
+    #[cfg(not(feature = "cplex"))]
+    assert!(config.preflight().is_err(), "numeric_potential needs CPLEX");
     let error = parse_search_spec("astar(max([ff(),scp(domian())]))").unwrap_err();
     assert!(
         error.contains("max.heuristics[1].scp.sources: unknown AbstractionSource `domian`"),

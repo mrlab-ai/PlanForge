@@ -1051,11 +1051,11 @@ fn translate_pddl_to_task(
 }
 
 /// `task` transformed by the transformation specifications `transforms`,
-/// in order, which must include the one `requirements` names.
+/// in order, which must include the ones `requirements` names.
 fn transform_numeric_task(
     task: planforge_sas::numeric_task::Task,
     transforms: &[String],
-    requirements: TaskRequirements,
+    requirements: &TaskRequirements,
 ) -> Result<planforge_sas::numeric_task::Task, String> {
     let transformations = transforms
         .iter()
@@ -1187,7 +1187,7 @@ impl Task {
         let task = transform_numeric_task(
             planforge_sas::numeric_task::Task::try_from_str(text).map_err(ParseError::new_err)?,
             &transforms,
-            TaskRequirements::ANY,
+            &TaskRequirements::default(),
         )
         .map_err(PlanforgeError::new_err)?;
         Ok(Self::build(Arc::new(task)))
@@ -1218,7 +1218,7 @@ impl Task {
                 translate_pddl_to_task(&domain, &problem)
             })
             .map_err(TranslateError::new_err)?;
-        let task = transform_numeric_task(task, &transforms, TaskRequirements::ANY)
+        let task = transform_numeric_task(task, &transforms, &TaskRequirements::default())
             .map_err(PlanforgeError::new_err)?;
         Ok(Self::build(Arc::new(task)))
     }
@@ -1694,7 +1694,7 @@ fn solve(
             planforge_sas::numeric_task::Task::try_from_str(&sas_text).map_err(SolveError::Parse)?
         };
 
-        let task = transform_numeric_task(task, &transforms, spec.requirements())
+        let task = transform_numeric_task(task, &transforms, &spec.requirements())
             .map_err(SolveError::Transform)?;
         let task: Arc<planforge_sas::numeric_task::Task> = Arc::new(task);
         spec.solve(

@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use planforge_search::config::{ApplyOptions, ConfigError, TimeLimit};
 use planforge_search::heuristic_factory::{EmptyConfig, HeuristicBuildError, TaskRequirements};
+
+use crate::requirements::{ABSTRACTABLE_GOAL, RESTRICTED};
 use planforge_search::resource_limits::{Deadline, min_time_limit};
 use planforge_search::task_transformations::TransformationFeature;
 
@@ -101,12 +103,20 @@ impl AbstractionSource {
     }
 
     pub fn requirements(&self) -> TaskRequirements {
+        let restricted = matches!(self, Self::Pdb(_) | Self::Icaps26Cartesian(_));
+        let icaps26 = matches!(self, Self::Icaps26Cartesian(_));
         TaskRequirements {
-            restricted: matches!(self, Self::Pdb(_) | Self::Icaps26Cartesian(_)),
-            abstractable_goal: true,
-            transformation: matches!(self, Self::Icaps26Cartesian(_)).then_some(
-                <crate::abstractions::icaps26::Icaps26RestrictFeature as TransformationFeature>::NAME,
-            ),
+            transformations: icaps26
+                .then_some(
+                    <crate::abstractions::icaps26::Icaps26RestrictFeature as TransformationFeature>::NAME,
+                )
+                .into_iter()
+                .collect(),
+            checks: restricted
+                .then_some(RESTRICTED)
+                .into_iter()
+                .chain([ABSTRACTABLE_GOAL])
+                .collect(),
         }
     }
 
@@ -278,7 +288,7 @@ impl<O: ApplyOptions> CombinationConfig<O> {
     pub fn requirements(&self) -> TaskRequirements {
         self.sources
             .iter()
-            .fold(TaskRequirements::ANY, |requirements, source| {
+            .fold(TaskRequirements::default(), |requirements, source| {
                 requirements.union(source.requirements())
             })
     }

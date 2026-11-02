@@ -7,7 +7,6 @@
 use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, configure};
 use crate::evaluation::Heuristic;
 use crate::registry::{Entry, Registry, options_of};
-use crate::task_transformations::restriction::validate_restricted_task;
 use planforge_sas::numeric_task::Task;
 use std::any::Any;
 use std::fmt::{self, Debug};
@@ -15,67 +14,46 @@ use std::sync::Arc;
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RequiredBackend {
-    None,
-    Cplex,
+/// A property a heuristic needs its task to have, such as a normal form
+/// or a goal it can express. Checks of the same name are one check.
+#[derive(Debug, Clone, Copy)]
+pub struct TaskCheck {
+    pub name: &'static str,
+    pub check: fn(&Task) -> Result<(), HeuristicBuildError>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// What a heuristic needs of its task: the task transformations to apply
+/// first, by name, and the checks the transformed task must pass.
+#[derive(Debug, Clone, Default)]
 pub struct TaskRequirements {
-    pub restricted: bool,
-    pub abstractable_goal: bool,
-    /// The task transformation the heuristic needs applied, by name, when it
-    /// needs another normal form than the standard restriction.
-    pub transformation: Option<&'static str>,
+    pub transformations: Vec<&'static str>,
+    pub checks: Vec<TaskCheck>,
 }
 
 impl TaskRequirements {
-    pub const ANY: Self = Self {
-        restricted: false,
-        abstractable_goal: false,
-        transformation: None,
-    };
-    pub const ABSTRACTABLE_GOAL: Self = Self {
-        restricted: false,
-        abstractable_goal: true,
-        transformation: None,
-    };
-    pub const RESTRICTED_ABSTRACTABLE_GOAL: Self = Self {
-        restricted: true,
-        abstractable_goal: true,
-        transformation: None,
-    };
-
-    pub fn union(self, other: Self) -> Self {
-        Self {
-            restricted: self.restricted || other.restricted,
-            abstractable_goal: self.abstractable_goal || other.abstractable_goal,
-            transformation: match (self.transformation, other.transformation) {
-                (Some(left), Some(right)) => {
-                    assert_eq!(
-                        left, right,
-                        "one search cannot need two task transformations"
-                    );
-                    Some(left)
-                }
-                (left, right) => left.or(right),
-            },
+    /// What both `self` and `other` need.
+    pub fn union(mut self, other: Self) -> Self {
+        for transformation in other.transformations {
+            if !self.transformations.contains(&transformation) {
+                self.transformations.push(transformation);
+            }
         }
+        for check in other.checks {
+            if !self.requires(check.name) {
+                self.checks.push(check);
+            }
+        }
+        self
     }
 
-    /// A task that is not restricted is a usage error, since `--transform
-    /// restrict` would restrict it; a goal no abstraction can express is a task the
-    /// heuristic does not support.
-    pub fn validate(self, task: &Task) -> Result<(), HeuristicBuildError> {
-        if self.restricted {
-            validate_restricted_task(task).map_err(HeuristicBuildError::Failure)?;
-        }
-        if self.abstractable_goal {
-            crate::evaluation::validate_abstractable_goal(task)
-                .map_err(HeuristicBuildError::Unsupported)?;
-        }
-        Ok(())
+    /// Whether the check `name` is required.
+    pub fn requires(&self, name: &str) -> bool {
+        self.checks.iter().any(|check| check.name == name)
+    }
+
+    /// Whether `task` passes every check.
+    pub fn validate(&self, task: &Task) -> Result<(), HeuristicBuildError> {
+        self.checks.iter().try_for_each(|check| (check.check)(task))
     }
 }
 
@@ -98,20 +76,25 @@ impl<'a> BuildContext<'a> {
 #[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
 pub struct EmptyConfig {}
 
-/// A heuristic the configuration grammar names: its typed configuration, the
-/// task properties and solver backend it needs, and its construction.
+/// A heuristic the configuration grammar names: its typed configuration,
+/// what it needs of the build and of the task, and its construction.
 pub trait HeuristicFeature: 'static {
     const NAME: &'static str;
     type Config: ApplyOptions + Default + Clone + Debug + Send + Sync + 'static;
-    const BACKEND: RequiredBackend = RequiredBackend::None;
+    /// Fails if this build cannot construct the heuristic, for example
+    /// without the LP solver it needs; checked before the task is
+    /// translated.
+    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+        Ok(())
+    }
     fn requirements(_: &Self::Config) -> TaskRequirements {
-        TaskRequirements::ANY
+        TaskRequirements::default()
     }
     fn validate(_: &Self::Config) -> Result<(), ConfigError> {
         Ok(())
     }
-    /// The heuristics the configuration contains, whose requirements and
-    /// backend it inherits.
+    /// The heuristics the configuration contains, whose preflight checks and
+    /// requirements it inherits.
     fn nested(_: &Self::Config) -> Vec<&HeuristicConfig> {
         Vec::new()
     }
@@ -123,8 +106,8 @@ pub trait HeuristicFeature: 'static {
 
 trait ErasedHeuristicConfig: Debug + Send + Sync {
     fn spec(&self) -> &ConfigCall;
+    fn preflight(&self) -> std::io::Result<()>;
     fn requirements(&self) -> TaskRequirements;
-    fn backend(&self) -> RequiredBackend;
     fn config(&self) -> &dyn Any;
     fn build<'a>(
         &self,
@@ -153,16 +136,11 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
                 requirements.union(child.requirements())
             })
     }
-    fn backend(&self) -> RequiredBackend {
-        if F::BACKEND == RequiredBackend::Cplex
-            || F::nested(&self.config)
-                .iter()
-                .any(|child| child.required_backend() == RequiredBackend::Cplex)
-        {
-            RequiredBackend::Cplex
-        } else {
-            RequiredBackend::None
-        }
+    fn preflight(&self) -> std::io::Result<()> {
+        F::preflight(&self.config)?;
+        F::nested(&self.config)
+            .into_iter()
+            .try_for_each(HeuristicConfig::preflight)
     }
     fn config(&self) -> &dyn Any {
         &self.config
@@ -182,8 +160,10 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
 #[derive(Debug, Clone)]
 pub struct HeuristicConfig(Arc<dyn ErasedHeuristicConfig>);
 impl HeuristicConfig {
+    /// Fails if this build cannot construct the heuristic or one it
+    /// contains.
     pub fn preflight(&self) -> std::io::Result<()> {
-        check_backend(self.required_backend())
+        self.0.preflight()
     }
 
     pub fn from_spec(spec: &ConfigCall) -> Result<Self, ConfigError> {
@@ -191,9 +171,6 @@ impl HeuristicConfig {
     }
     pub fn requirements(&self) -> TaskRequirements {
         self.0.requirements()
-    }
-    pub fn required_backend(&self) -> RequiredBackend {
-        self.0.backend()
     }
     /// The typed configuration, if the heuristic's configuration is a `T`.
     pub fn config<T: 'static>(&self) -> Option<&T> {
@@ -203,7 +180,7 @@ impl HeuristicConfig {
         &self,
         context: &BuildContext<'a>,
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        check_backend(self.required_backend())
+        self.preflight()
             .map_err(|error| HeuristicBuildError::Failure(error.to_string()))?;
         self.requirements().validate(context.task)?;
         self.0.build(context)
@@ -267,25 +244,6 @@ pub fn heuristic_help() -> String {
         "Heuristics: {}. `planforge heuristics` lists their options and defaults. Custom Rust heuristics can be passed directly as Box<dyn Heuristic>.",
         HEURISTICS.names().collect::<Vec<_>>().join(", ")
     )
-}
-fn check_backend(backend: RequiredBackend) -> std::io::Result<()> {
-    if backend == RequiredBackend::None {
-        return Ok(());
-    }
-    #[cfg(feature = "cplex")]
-    {
-        planforge_cplex::assert_unrestricted_license().map_err(|error| {
-            std::io::Error::other(format!(
-                "an unrestricted CPLEX installation is required: {error}"
-            ))
-        })
-    }
-    #[cfg(not(feature = "cplex"))]
-    {
-        Err(std::io::Error::other(
-            "the requested LP-backed heuristic requires unrestricted CPLEX, which is not compiled into this build; rebuild with `--features cplex` and set CPLEX_ROOT",
-        ))
-    }
 }
 #[derive(Debug)]
 pub enum HeuristicBuildError {

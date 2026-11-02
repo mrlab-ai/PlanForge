@@ -80,13 +80,13 @@ impl SearchConfig {
 
     pub fn requirements(&self) -> TaskRequirements {
         self.heuristics()
-            .fold(TaskRequirements::ANY, |requirements, heuristic| {
+            .fold(TaskRequirements::default(), |requirements, heuristic| {
                 requirements.union(heuristic.requirements())
             })
     }
 
-    /// Fail before translation if a heuristic needs a solver backend this
-    /// build does not have.
+    /// Fail before translation if this build cannot construct a heuristic,
+    /// for example without the LP solver it needs.
     pub fn preflight(&self) -> std::io::Result<()> {
         self.heuristics().try_for_each(HeuristicConfig::preflight)
     }

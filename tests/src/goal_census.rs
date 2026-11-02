@@ -11,7 +11,7 @@
 //!   This is what a numeric goal compiles to;
 //! * a **propositional-axiom-derived** variable. Nothing writes it but the axioms,
 //!   so the abstraction families refuse the task
-//!   (`planforge_search::evaluation::validate_abstractable_goal`) while blind A*,
+//!   (`planforge_search::task_transformations::projection::validate_abstractable_goal`) while blind A*,
 //!   `ff` and `lmcutnumeric` still solve it.
 //!
 //! The third kind is therefore a capability boundary, and the counts below are the

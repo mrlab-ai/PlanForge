@@ -387,7 +387,8 @@ fn load_enumeration_task(
     } else {
         Task::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
     };
-    transform_task(task, &arguments.transform, TaskRequirements::ANY).map_err(transformation_error)
+    transform_task(task, &arguments.transform, &TaskRequirements::default())
+        .map_err(transformation_error)
 }
 
 fn create_csv(path: &Path) -> std::io::Result<BufWriter<std::fs::File>> {
@@ -545,7 +546,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let task = Task::try_from_file(&path).map_err(std::io::Error::other)?;
         (task, path)
     };
-    let task = transform_task(task, &cli.transform, cli.search.requirements())
+    let task = transform_task(task, &cli.transform, &cli.search.requirements())
         .map_err(transformation_error)?;
     let task: Arc<Task> = Arc::new(task);
     let parse_time = start_time.elapsed();
