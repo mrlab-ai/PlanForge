@@ -29,7 +29,7 @@ use super::progress::SearchProgress;
 use super::search_space::{Reached, SearchSpace, Successor};
 use super::{SearchLimits, SearchOutcome, SearchResult};
 use crate::evaluation::Heuristic;
-use crate::evaluation::heuristic::minimum_action_cost;
+use crate::evaluation::minimum_action_cost;
 use crate::successor_generator::SuccessorGeneratorConfig;
 
 pub type AStarSearch<'a> = BestFirstSearch<'a, AStar, TieBreakingOpenList<AStar>>;

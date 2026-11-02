@@ -8,8 +8,8 @@ use planforge_heuristics::landmarks::lm_cut_numeric_heuristic::{
 };
 use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::StateRegistry;
-use planforge_search::evaluation::evaluator::EvaluationState;
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::EvaluationState;
+use planforge_search::evaluation::Heuristic;
 
 use crate::corpus::{self, translate_in_memory};
 

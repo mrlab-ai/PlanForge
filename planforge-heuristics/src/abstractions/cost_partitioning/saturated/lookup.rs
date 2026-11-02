@@ -3,7 +3,7 @@ use planforge_sas::utils::float_tolerance;
 
 use super::OrderSelection;
 use crate::abstractions::component::AbstractionComponent;
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct LookupTable {

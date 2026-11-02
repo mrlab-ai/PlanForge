@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use planforge_search::evaluation::evaluator::EvaluationError;
+use planforge_search::evaluation::EvaluationError;
 use planforge_search::resource_limits::Deadline;
 
 /// The deadline `limit` from now, for the time limit `option`.

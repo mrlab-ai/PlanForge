@@ -5,8 +5,8 @@ use tracing::info;
 use super::lookup::{CostPartitioningHeuristic, abstract_state_ids_into};
 use super::{OrderSelection, ScpBuilder};
 use crate::abstractions::component::AbstractionComponent;
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
 use planforge_search::evaluation::sampling::RandomWalkSampler;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 use planforge_search::resource_limits::Deadline;
 
 impl ScpBuilder {

@@ -72,9 +72,10 @@ use planforge_heuristics::abstractions::domain::config::DomainAbstractionConfig;
 use planforge_heuristics::abstractions::domain::generator::DomainAbstractionGenerator;
 use planforge_sas::numeric_task::{NumericType, Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
-use planforge_search::evaluation::evaluator::EvaluationState;
-use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
+use planforge_search::evaluation::EvaluationState;
+use planforge_search::evaluation::Heuristic;
+use planforge_search::search::SearchOutcome;
+use planforge_search::search::best_first::{AStarSearch, SearchParams};
 use planforge_search::task_transformations::restriction::build_restricted_task;
 
 use crate::corpus::{

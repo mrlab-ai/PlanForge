@@ -1,8 +1,8 @@
 use crate::abstractions::features::{abstraction_source, max_over_sources};
 use crate::combinations::maximum::MaximumHeuristic;
 use planforge_search::config::ConfigError;
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::Heuristic;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 use planforge_search::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
 };

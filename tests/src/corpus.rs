@@ -24,8 +24,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::evaluation::heuristic::BlindHeuristic;
-use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
+use planforge_search::evaluation::BlindHeuristic;
+use planforge_search::search::SearchOutcome;
+use planforge_search::search::best_first::{AStarSearch, SearchParams};
 use planforge_translate::{translate_to_sas_to_path_fast, translate_to_task};
 
 /// Root of the checked-in fixture tree.

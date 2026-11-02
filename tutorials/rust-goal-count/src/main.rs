@@ -4,7 +4,8 @@ use std::time::Duration;
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
-use planforge_search::search::{AStarSearch, SearchLimits, SearchOutcome, SearchParams};
+use planforge_search::search::best_first::{AStarSearch, SearchParams};
+use planforge_search::search::{SearchLimits, SearchOutcome};
 
 /// Goal-count heuristic: number of goal facts not satisfied in the state.
 struct GoalCountHeuristic;

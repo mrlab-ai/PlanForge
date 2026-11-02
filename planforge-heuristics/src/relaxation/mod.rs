@@ -69,8 +69,8 @@ use planforge_sas::numeric_task::{
     NEG_INF_VALUE, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::interval::Interval;
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::Heuristic;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 
 mod graph;
 mod numeric;

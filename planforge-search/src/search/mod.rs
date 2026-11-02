@@ -22,7 +22,6 @@ mod search_space;
 mod statistics;
 
 pub use algorithms::{AStarConfig, AStarFeature, GreedyBestFirstConfig, GreedyBestFirstFeature};
-pub use best_first::{AStarSearch, BestFirstSearch, GreedyBestFirstSearch, SearchParams};
 pub use config::{
     SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchFeature, SearchLimits, entry,
     parse_search_spec, search_algorithm_help,

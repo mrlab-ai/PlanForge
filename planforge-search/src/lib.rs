@@ -32,7 +32,8 @@
 //!
 //! use planforge_sas::numeric_task::Task;
 //! use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
-//! use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
+//! use planforge_search::search::SearchOutcome;
+//! use planforge_search::search::best_first::{AStarSearch, SearchParams};
 //!
 //! /// The number of unsatisfied goal facts.
 //! struct GoalCount;

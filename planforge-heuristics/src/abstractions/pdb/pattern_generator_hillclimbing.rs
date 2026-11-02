@@ -23,7 +23,7 @@ use crate::abstractions::cost_partitioning::canonical::{
     are_operator_sets_additive, compute_max_additive_subsets_from_relevant_operators,
 };
 use planforge_search::config::TimeLimit;
-use planforge_search::evaluation::evaluator::EvaluationError;
+use planforge_search::evaluation::EvaluationError;
 use planforge_search::evaluation::sampling::RandomWalkSampler;
 use planforge_search::evaluation::seed::DEFAULT_RANDOM_SEED;
 use planforge_search::resource_limits::{Deadline, min_time_limit};

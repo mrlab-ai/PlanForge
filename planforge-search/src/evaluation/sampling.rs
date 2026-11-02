@@ -10,7 +10,7 @@ use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use std::sync::Arc;
 
-use crate::evaluation::evaluator::EvaluationError;
+use crate::evaluation::EvaluationError;
 use crate::resource_limits::Deadline;
 use crate::successor_generator::{RegistryExpander, StandardGroundedTree};
 

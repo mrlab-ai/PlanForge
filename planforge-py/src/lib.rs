@@ -23,9 +23,9 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::heuristic_factory::TaskRequirements;
+use planforge_search::search::best_first::{AStarSearch, GreedyBestFirstSearch, SearchParams};
 use planforge_search::search::{
-    AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchLimits, SearchOutcome, SearchParams,
-    SearchResult, parse_search_spec,
+    SearchConfig, SearchLimits, SearchOutcome, SearchResult, parse_search_spec,
 };
 use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,

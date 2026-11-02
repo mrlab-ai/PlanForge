@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use planforge_sas::explicit_state::ExplicitState;
 
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::state_value_cache::StateValueCache;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use super::operator_conditions::ConditionTableLayout;

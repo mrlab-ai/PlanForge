@@ -2,10 +2,11 @@
 //! evaluates, and the shared helpers -- random walks, seeds and a per-state
 //! value cache. The heuristics themselves live in `planforge_heuristics`.
 
-pub mod evaluator;
-pub mod heuristic;
+mod evaluator;
+mod heuristic;
 pub mod sampling;
 pub mod seed;
 pub mod state_value_cache;
+
 pub use evaluator::{EvaluationError, EvaluationState};
-pub use heuristic::Heuristic;
+pub use heuristic::{BlindFeature, BlindHeuristic, Heuristic, minimum_action_cost};

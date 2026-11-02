@@ -12,8 +12,8 @@ use super::regions::RegionSemantics;
 use super::transition_system::AbstractOperatorSourceSets;
 use crate::abstractions::component::AbstractionKind;
 use crate::abstractions::cost_partitioning::costs::{RemainingCosts, SourceSetCostAllocation};
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::Heuristic;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 use planforge_search::resource_limits::Deadline;
 
 /// How CEGAR built an abstraction.

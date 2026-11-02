@@ -21,9 +21,9 @@ use ordered_float::NotNan;
 use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::evaluation::heuristic::minimum_action_cost;
+use planforge_search::evaluation::Heuristic;
+use planforge_search::evaluation::minimum_action_cost;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 use planforge_search::successor_generator::{RegistryExpander, StandardGroundedTree};
 
 /// Slack allowed on `h <= h*` before an estimate counts as inadmissible.
