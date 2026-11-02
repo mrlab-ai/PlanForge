@@ -11,9 +11,8 @@
 //! - [`SearchProgress`]: the time and memory limits, the
 //!   [`SearchStatistics`] and the progress reports.
 //!
-//! [`best_first`] builds best-first search (A*, greedy best-first search,
-//! uniform-cost search) on them; `tutorials/rust-custom-search` builds
-//! enforced hill-climbing.
+//! [`best_first`] builds best-first search (A*, greedy best-first search) on
+//! them; `tutorials/rust-custom-search` builds enforced hill-climbing.
 
 mod algorithms;
 pub mod best_first;

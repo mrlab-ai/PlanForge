@@ -1,5 +1,5 @@
-//! Best-first search: A*, greedy best-first search and uniform-cost search,
-//! one loop instantiated per [`NodeOrdering`] and [`OpenList`], built on the
+//! Best-first search: A* and greedy best-first search, one loop
+//! instantiated per [`NodeOrdering`] and [`OpenList`], built on the
 //! [`SearchSpace`] and [`SearchProgress`] blocks.
 
 #[cfg(test)]
