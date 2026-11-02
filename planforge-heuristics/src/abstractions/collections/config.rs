@@ -5,8 +5,6 @@ use planforge_search::config::TimeLimit;
 
 use std::time::Duration;
 
-use anyhow::{Result, ensure};
-
 use super::budget::CollectionLimits;
 use super::goal_focused::GoalFocusedSchedule;
 use super::member::MemberConstruction;
@@ -14,7 +12,7 @@ use super::standard::StandardSchedule;
 use super::strategy::CollectionStrategy;
 use crate::abstractions::common::cegar::options::CegarOptions;
 use crate::abstractions::common::cegar::{FlawKind, SplitKind};
-use planforge_search::config::ApplyOptions;
+use planforge_search::config::{ApplyOptions, ConfigError};
 use planforge_search::evaluation::seed::DEFAULT_RANDOM_SEED;
 use planforge_search::resource_limits::min_time_limit;
 
@@ -131,74 +129,57 @@ impl<M: MemberConfig + Default> Default for CollectionConfig<M> {
 
 impl<M: MemberConfig> CollectionConfig<M> {
     /// Rejects options the strategy does not follow.
-    pub(crate) fn validate(&self) -> Result<()> {
-        self.total_max_time.duration().map_err(anyhow::Error::msg)?;
-        self.stagnation_limit
-            .duration()
-            .map_err(anyhow::Error::msg)?;
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        self.total_max_time.duration()?;
+        self.stagnation_limit.duration()?;
         let strategy = self.collection_strategy;
-        ensure!(
-            self.max_collection_size > 0,
-            "`max_collection_size` must be > 0"
-        );
-        ensure!(
-            self.variants_per_goal > 0,
-            "`variants_per_goal` must be > 0"
-        );
-        ensure!(
-            self.variants_per_goal == 1 || strategy != CollectionStrategy::Standard,
-            "`variants_per_goal` requires `collection_strategy=per_goal` or `goal_focused`"
-        );
-        ensure!(
-            !self.progress_states || strategy != CollectionStrategy::Standard,
-            "`progress_states=true` requires `collection_strategy=per_goal` or `goal_focused`"
-        );
         let flaw_kind = self.member.cegar().flaw_kind;
-        ensure!(
-            !self.progress_states || flaw_kind == FlawKind::Progression,
-            "progress states advance along executed concrete plans and need flaw_kind=progression, not flaw_kind={flaw_kind}"
-        );
-        ensure!(
-            self.single_goal_tasks || strategy.is_goal_focused(),
-            "`single_goal_tasks=false` requires `collection_strategy=goal_focused`"
-        );
-        ensure!(
-            self.single_goal_tasks || !self.progress_states,
-            "{}",
-            super::goal_focused::FULL_TASK_PROGRESS_STATES_ERROR
-        );
-        ensure!(
-            self.alternate_split_kinds != Some(true) || strategy != CollectionStrategy::PerGoal,
+        let standard = strategy == CollectionStrategy::Standard;
+        let rejected = if self.max_collection_size == 0 {
+            "`max_collection_size` must be > 0".to_string()
+        } else if self.variants_per_goal == 0 {
+            "`variants_per_goal` must be > 0".to_string()
+        } else if self.variants_per_goal != 1 && standard {
+            "`variants_per_goal` requires `collection_strategy=per_goal` or `goal_focused`"
+                .to_string()
+        } else if self.progress_states && standard {
+            "`progress_states=true` requires `collection_strategy=per_goal` or `goal_focused`"
+                .to_string()
+        } else if self.progress_states && flaw_kind != FlawKind::Progression {
+            format!(
+                "progress states advance along executed concrete plans and need flaw_kind=progression, not flaw_kind={flaw_kind}"
+            )
+        } else if !self.single_goal_tasks && !strategy.is_goal_focused() {
+            "`single_goal_tasks=false` requires `collection_strategy=goal_focused`".to_string()
+        } else if !self.single_goal_tasks && self.progress_states {
+            super::goal_focused::FULL_TASK_PROGRESS_STATES_ERROR.to_string()
+        } else if self.alternate_split_kinds == Some(true)
+            && strategy == CollectionStrategy::PerGoal
+        {
             "`alternate_split_kinds=true` requires `collection_strategy=standard` or `goal_focused`"
-        );
-        ensure!(
-            !self.alternates_split_kinds() || self.split_kind.is_none(),
-            "`alternate_split_kinds` chooses the split kind per member; it cannot be combined with a fixed `split_kind`"
-        );
-        ensure!(
-            self.member.cegar().split_kind == SplitKind::default(),
-            "a collection chooses its members' split kinds with its own `split_kind`"
-        );
-        ensure!(
-            (0.0..=1.0).contains(&self.blacklist_trigger_percentage),
-            "`blacklist_trigger_percentage` must be between 0 and 1, got {}",
-            self.blacklist_trigger_percentage
-        );
-        if strategy != CollectionStrategy::Standard {
-            ensure!(
-                self.stagnation_limit
+                .to_string()
+        } else if self.alternates_split_kinds() && self.split_kind.is_some() {
+            "`alternate_split_kinds` chooses the split kind per member; it cannot be combined with a fixed `split_kind`".to_string()
+        } else if self.member.cegar().split_kind != SplitKind::default() {
+            "a collection chooses its members' split kinds with its own `split_kind`".to_string()
+        } else if !(0.0..=1.0).contains(&self.blacklist_trigger_percentage) {
+            format!(
+                "`blacklist_trigger_percentage` must be between 0 and 1, got {}",
+                self.blacklist_trigger_percentage
+            )
+        } else if !standard
+            && (self.stagnation_limit.duration()?
+                != DEFAULT_STAGNATION_LIMIT
                     .duration()
-                    .map_err(anyhow::Error::msg)?
-                    == DEFAULT_STAGNATION_LIMIT
-                        .duration()
-                        .expect("the default stagnation limit fits Duration")
-                    && self.blacklist_trigger_percentage == DEFAULT_BLACKLIST_TRIGGER_PERCENTAGE
-                    && self.enable_blacklist_on_stagnation
-                        == DEFAULT_ENABLE_BLACKLIST_ON_STAGNATION,
-                "`stagnation_limit`, `blacklist_trigger_percentage` and `enable_blacklist_on_stagnation` require `collection_strategy=standard`"
-            );
-        }
-        Ok(())
+                    .expect("the default stagnation limit fits Duration")
+                || self.blacklist_trigger_percentage != DEFAULT_BLACKLIST_TRIGGER_PERCENTAGE
+                || self.enable_blacklist_on_stagnation != DEFAULT_ENABLE_BLACKLIST_ON_STAGNATION)
+        {
+            "`stagnation_limit`, `blacklist_trigger_percentage` and `enable_blacklist_on_stagnation` require `collection_strategy=standard`".to_string()
+        } else {
+            return Ok(());
+        };
+        Err(rejected.into())
     }
 
     /// Whether members alternate split kinds: as configured, or by default
@@ -224,18 +205,10 @@ impl<M: MemberConfig> CollectionConfig<M> {
     }
 
     /// Bounds the collection and each member by `limit`.
-    pub(crate) fn cap_construction_time(&mut self, limit: Duration) -> Result<()> {
-        self.total_max_time = min_time_limit(
-            self.total_max_time.duration().map_err(anyhow::Error::msg)?,
-            Some(limit),
-        )
-        .into();
+    pub(crate) fn cap_construction_time(&mut self, limit: Duration) -> Result<(), ConfigError> {
+        self.total_max_time = min_time_limit(self.total_max_time.duration()?, Some(limit)).into();
         let cegar = self.member.cegar_mut();
-        cegar.max_time = min_time_limit(
-            cegar.max_time.duration().map_err(anyhow::Error::msg)?,
-            Some(limit),
-        )
-        .into();
+        cegar.max_time = min_time_limit(cegar.max_time.duration()?, Some(limit)).into();
         Ok(())
     }
 

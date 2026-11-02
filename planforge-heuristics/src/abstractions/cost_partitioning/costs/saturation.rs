@@ -257,12 +257,12 @@ fn label_source_sets<'a>(
 
 fn goal_distances<G: SaturationGraph>(graph: &mut G, deadline: Deadline) -> Result<Vec<f64>> {
     let goal_states = graph.goal_states().to_vec();
-    backward_goal_distances(
+    Ok(backward_goal_distances(
         graph,
         goal_states.iter().map(|&state| (state, 0.0)),
         || deadline.ensure(SCP_TABLE_CONSTRUCTION),
         None,
-    )
+    )?)
 }
 
 /// `distances` limited to the perimeter of `perimeter_state`: the states

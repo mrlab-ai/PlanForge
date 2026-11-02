@@ -5,8 +5,6 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
-
 static PADDING: OnceLock<Mutex<Option<Vec<u8>>>> = OnceLock::new();
 static LIMIT_BYTES: OnceLock<u64> = OnceLock::new();
 
@@ -26,10 +24,6 @@ impl fmt::Display for DeadlineExceeded {
 }
 
 impl std::error::Error for DeadlineExceeded {}
-
-pub fn is_deadline_exceeded(error: &anyhow::Error) -> bool {
-    error.is::<DeadlineExceeded>()
-}
 
 /// A time limit no deadline can follow.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -102,9 +96,9 @@ impl Deadline {
     }
 
     /// A [`DeadlineExceeded`] error for `operation` once the deadline passed.
-    pub fn ensure(self, operation: &'static str) -> Result<()> {
+    pub fn ensure(self, operation: &'static str) -> Result<(), DeadlineExceeded> {
         if self.passed() {
-            return Err(DeadlineExceeded { operation }.into());
+            return Err(DeadlineExceeded { operation });
         }
         Ok(())
     }
@@ -155,9 +149,12 @@ fn mib_to_bytes(name: &str, value: u64) -> std::result::Result<u64, String> {
         .ok_or_else(|| format!("{name} value {value} MiB is too large"))
 }
 
+/// Reserves the memory padding released on an out-of-memory condition,
+/// configured by `DA_MEMORY_PADDING_MB` and `DA_MEMORY_LIMIT_MB`; fails if
+/// those are invalid.
 pub fn reserve_memory_padding(
     cli_max_memory_bytes: Option<u64>,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), crate::config::ConfigError> {
     let padding_mib = parse_mib_env("DA_MEMORY_PADDING_MB")?.unwrap_or(DEFAULT_PADDING_MIB);
     if padding_mib == 0 {
         return Ok(());
@@ -342,7 +339,7 @@ mod tests {
         let later = Deadline::after(now, Some(Duration::from_secs(3600))).unwrap();
 
         assert!(passed.passed());
-        assert!(is_deadline_exceeded(&passed.ensure("test").unwrap_err()));
+        assert!(passed.ensure("test").is_err());
         assert_eq!(passed.remaining(), Some(Duration::ZERO));
         assert!(!later.passed());
         later.ensure("test").unwrap();

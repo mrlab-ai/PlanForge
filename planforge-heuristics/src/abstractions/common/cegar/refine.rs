@@ -120,7 +120,7 @@ pub(crate) fn refine<R: Refinable>(
         let split = {
             let view = match abstraction.view(deadline) {
                 Ok(view) => view,
-                Err(error) if planforge_search::resource_limits::is_deadline_exceeded(&error) => {
+                Err(error) if error.is::<planforge_search::resource_limits::DeadlineExceeded>() => {
                     return Ok(CegarIterationResult::Stop(CegarStopReason::TimeLimit));
                 }
                 Err(error) => return Err(error),

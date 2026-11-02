@@ -85,33 +85,29 @@ impl<C> Registry<C> {
 
     /// Registers the entries besides the built-in ones, once per process and
     /// before any configuration is parsed.
-    pub fn register(&self, entries: Vec<Entry<C>>) -> Result<(), String> {
+    pub fn register(&self, entries: Vec<Entry<C>>) -> Result<(), ConfigError> {
         let kind = self.kind;
         let mut names = std::collections::HashSet::new();
         for entry in &entries {
             if entry.name.is_empty() {
-                return Err(format!("{kind} names must not be empty"));
+                return Err(format!("{kind} names must not be empty").into());
             }
             if self
                 .builtin
                 .iter()
                 .any(|builtin| builtin.matches(entry.name))
             {
-                return Err(format!(
-                    "{kind} `{}` collides with a built-in {kind}",
-                    entry.name
-                ));
+                return Err(
+                    format!("{kind} `{}` collides with a built-in {kind}", entry.name).into(),
+                );
             }
             if !names.insert(entry.name.to_ascii_lowercase()) {
-                return Err(format!(
-                    "{kind} `{}` is registered more than once",
-                    entry.name
-                ));
+                return Err(format!("{kind} `{}` is registered more than once", entry.name).into());
             }
         }
         self.registered
             .set(entries)
-            .map_err(|_| format!("{kind}s have already been registered or used"))
+            .map_err(|_| format!("{kind}s have already been registered or used").into())
     }
 
     /// Registers `entries` unless entries were registered already: for test

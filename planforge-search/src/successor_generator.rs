@@ -248,7 +248,7 @@ impl PartialEq for SuccessorGeneratorConfig {
 
 impl FromOptionValue for SuccessorGeneratorConfig {
     fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
-        SUCCESSOR_GENERATORS.parse(&ConfigCall::from_value(value).map_err(ConfigError::from)?)
+        SUCCESSOR_GENERATORS.parse(&ConfigCall::from_value(value)?)
     }
 
     fn option_text(&self) -> String {

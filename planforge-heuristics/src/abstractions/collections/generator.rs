@@ -1,7 +1,9 @@
 //! The collection generator of every abstraction representation: a standard
 //! or goal-focused collection of the abstractions one generator builds.
 
+use crate::abstractions::build_error;
 use planforge_sas::numeric_task::Task;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::hash::Hash;
 
 use anyhow::Result;
@@ -29,7 +31,7 @@ pub trait AbstractionGenerator: Sized {
     const KIND: AbstractionKind;
 
     /// Rejects a configuration the generator cannot follow.
-    fn new(config: Self::Config) -> Result<Self>;
+    fn new(config: Self::Config) -> Result<Self, HeuristicBuildError>;
 
     /// Builds an abstraction of `task` whose CEGAR loop searches for flaws
     /// from `refinement_root`, or from the task's initial state when `None`,
@@ -39,11 +41,11 @@ pub trait AbstractionGenerator: Sized {
         task: &Task,
         refinement_root: Option<&ExplicitState>,
         scope: &RefinementScope,
-    ) -> Result<Self::Abstraction>;
+    ) -> Result<Self::Abstraction, HeuristicBuildError>;
 
     /// Builds an abstraction of `task` refined from its initial state, on
     /// every variable.
-    fn generate(&self, task: &Task) -> Result<Self::Abstraction> {
+    fn generate(&self, task: &Task) -> Result<Self::Abstraction, HeuristicBuildError> {
         self.generate_from_root(task, None, &RefinementScope::default())
     }
 
@@ -57,7 +59,7 @@ pub struct CollectionGenerator<G: AbstractionGenerator> {
 }
 
 impl<G: AbstractionGenerator> CollectionGenerator<G> {
-    pub fn new(config: CollectionConfig<G::Config>) -> Result<Self> {
+    pub fn new(config: CollectionConfig<G::Config>) -> Result<Self, HeuristicBuildError> {
         config.validate()?;
         G::new(config.member.clone())?;
         Ok(Self { config })
@@ -76,7 +78,14 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
     /// task, and every member still partitions the task's full state space,
     /// so the members remain admissible components for canonical and
     /// cost-partitioned collection heuristics.
-    pub fn generate(&self, task: &Task) -> Result<Vec<Member<G::Abstraction>>> {
+    pub fn generate(
+        &self,
+        task: &Task,
+    ) -> Result<Vec<Member<G::Abstraction>>, HeuristicBuildError> {
+        self.build_members(task).map_err(build_error)
+    }
+
+    fn build_members(&self, task: &Task) -> Result<Vec<Member<G::Abstraction>>> {
         let members = match self.config.collection_strategy {
             CollectionStrategy::Standard => build_standard_collection::<G>(
                 task,
@@ -119,10 +128,12 @@ impl<G: AbstractionGenerator> GoalFocusedBackend for CollectionGenerator<G> {
         root: Option<&ExplicitState>,
         construction: &MemberConstruction,
     ) -> Result<Self::Member> {
-        G::new(self.config.member.for_member(construction))?.generate_from_root(
-            task,
-            root,
-            &construction.scope,
+        Ok(
+            G::new(self.config.member.for_member(construction))?.generate_from_root(
+                task,
+                root,
+                &construction.scope,
+            )?,
         )
     }
 }

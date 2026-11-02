@@ -28,6 +28,7 @@ use planforge_sas::numeric_task::{
     VariableIndex,
 };
 
+use crate::task_transformations::TransformError;
 use crate::task_transformations::restriction::validate_restricted_task;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -153,10 +154,16 @@ pub struct ProjectedTask {
 
 impl ProjectedTask {
     pub fn new(base: &Task, pattern: &Pattern) -> Result<Self, ProjectedTaskBuildError> {
-        validate_restricted_task(base)
-            .map_err(|reason| ProjectedTaskBuildError::UnrestrictedTask { reason })?;
-        validate_abstractable_goal(base)
-            .map_err(|reason| ProjectedTaskBuildError::UnabstractableGoal { reason })?;
+        validate_restricted_task(base).map_err(|reason| {
+            ProjectedTaskBuildError::UnrestrictedTask {
+                reason: reason.to_string(),
+            }
+        })?;
+        validate_abstractable_goal(base).map_err(|reason| {
+            ProjectedTaskBuildError::UnabstractableGoal {
+                reason: reason.to_string(),
+            }
+        })?;
         let num_vars = base.variables().len();
         let num_numeric_vars = base.numeric_variables().len();
 
@@ -957,19 +964,19 @@ fn normalize_projected_variable_layers(
 /// quantified or nested goal. Every non-abstraction configuration — blind, `ff`,
 /// `lmcutnumeric` — still solves both, since it tests the goal fact in a state the
 /// axiom evaluator has closed.
-pub fn validate_abstractable_goal(task: &Task) -> std::result::Result<(), String> {
+pub fn validate_abstractable_goal(task: &Task) -> std::result::Result<(), TransformError> {
     for fact in task.goals() {
         if fact.is_condition() {
             continue;
         }
         let variable = &task.variables()[fact.var()];
         if let Some(layer) = variable.axiom_layer() {
-            return Err(format!(
+            return Err(TransformError::Unsupported(format!(
                 "abstractions support conjunctive goals only: goal fact {fact:?} names the \
                  derived variable {:?} ({:?}) in axiom layer {layer}, which no operator writes",
                 variable.name(),
                 task.fact_name(fact)
-            ));
+            )));
         }
     }
     Ok(())

@@ -1,18 +1,29 @@
 use super::*;
 use planforge_sas::numeric_task::Task;
+use planforge_search::config::ConfigError;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 
 pub struct Icaps26CartesianGenerator {
     config: Icaps26CartesianConfig,
 }
 
 impl Icaps26CartesianGenerator {
-    pub fn new(config: Icaps26CartesianConfig) -> Result<Self> {
-        ensure!(config.max_states > 0, "Cartesian max_states must be > 0");
+    pub fn new(config: Icaps26CartesianConfig) -> std::result::Result<Self, ConfigError> {
+        if config.max_states == 0 {
+            return Err("Cartesian max_states must be > 0".into());
+        }
         Ok(Self { config })
     }
 
     /// Refine from the task's initial state, as the artifact does.
-    pub fn generate(&self, task: &Task) -> Result<CartesianAbstraction> {
+    pub fn generate(
+        &self,
+        task: &Task,
+    ) -> std::result::Result<CartesianAbstraction, HeuristicBuildError> {
+        self.refine(task).map_err(crate::abstractions::build_error)
+    }
+
+    fn refine(&self, task: &Task) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
         let initial_region = semantics.trivial_region()?;

@@ -3,6 +3,7 @@ mod tests;
 
 use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::collections::{BTreeMap, BTreeSet};
 
 use planforge_sas::numeric_task::{
@@ -39,7 +40,7 @@ pub struct CausalGraph {
 }
 
 impl CausalGraph {
-    pub fn new(task: &Task) -> Result<Self, String> {
+    pub fn new(task: &Task) -> Result<Self, HeuristicBuildError> {
         validate_restricted_task(task)?;
         let comparison_numeric_vars = task
             .comparison_axioms()

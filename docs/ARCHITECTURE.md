@@ -154,6 +154,24 @@ shared `Arc<Task>`, so it is `Send` and outlives the context that built it. It
 returns an `Estimate`: a non-negative cost or `Estimate::DEAD_END`. It reports
 invalid internal states by panicking, never by returning a default.
 
+## Errors
+
+Each area of the libraries has one error type to match on; the binaries map
+them to exit codes.
+
+| Area | Error |
+|---|---|
+| loading a SAS+ task | `planforge_sas::numeric_task::TaskLoadError` |
+| translating PDDL | `planforge_translate::TranslateError` (with `ParseError`, `GroundingLimitError`) |
+| configuration strings | `planforge_search::config::ConfigError` |
+| task transformations | `planforge_search::task_transformations::TransformError` |
+| building a heuristic | `planforge_search::heuristic_factory::HeuristicBuildError` |
+| evaluating a state | `planforge_search::evaluation::EvaluationError` |
+| running a search | `planforge_search::search::SearchError` |
+
+A heuristic that reaches a state it cannot handle because of a bug panics
+instead of returning one of these.
+
 ## Verifying a change
 
 Before a commit, with the crates listed explicitly (`--workspace` would pull

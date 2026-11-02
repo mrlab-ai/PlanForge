@@ -31,6 +31,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::Task;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::collections::BTreeSet;
 
 use planforge_cplex::{
@@ -72,11 +73,9 @@ impl PostHocOptimizationHeuristic {
         name: Option<String>,
         task: &Task,
         components: Vec<AbstractionComponent>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HeuristicBuildError> {
         if components.is_empty() {
-            return Err(
-                "posthoc optimization heuristic requires at least one component".to_string(),
-            );
+            return Err("posthoc optimization heuristic requires at least one component".into());
         }
         let relevant_operators = components
             .iter()
@@ -179,7 +178,7 @@ impl PostHocOptimizationHeuristic {
             SolveStatus::Infeasible => {
                 unreachable!("posthoc_optimization: the dual LP is feasible at X = 0")
             }
-            other => Err(EvaluationError::ComputationFailed(format!(
+            other => Err(EvaluationError::Solver(format!(
                 "posthoc_optimization: CPLEX returned `{other:?}` for a well-formed LP \
                  (active={} abstractions, {} constraints); not falling back",
                 active.len(),
@@ -213,7 +212,7 @@ fn build_lp_model(num_abstractions: usize, constraints: &[Vec<usize>]) -> Result
 }
 
 fn lp_evaluation_error(error: planforge_cplex::Error) -> EvaluationError {
-    EvaluationError::ComputationFailed(format!("posthoc_optimization CPLEX failure: {error}"))
+    EvaluationError::Solver(format!("posthoc_optimization: {error}"))
 }
 
 impl Heuristic for PostHocOptimizationHeuristic {

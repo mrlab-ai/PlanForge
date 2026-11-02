@@ -5,13 +5,13 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::Task;
 use tracing::info;
 
-use super::SearchResult;
 use super::best_first::{
     AStar, BestFirstSearch, Greedy, NodeOrdering, OpenList, OpenListConfig, PreferredFirstOpenList,
     SearchParams, TieBreakingOpenList,
 };
 use super::config::{SearchFeature, SearchLimits};
-use crate::heuristic_factory::{BuildContext, HeuristicBuildError, HeuristicConfig};
+use super::{SearchError, SearchResult};
+use crate::heuristic_factory::{BuildContext, HeuristicConfig};
 use crate::successor_generator::SuccessorGeneratorConfig;
 
 /// `astar(heuristic, lazy=none, mpd=false, open_list=tiebreaking(),
@@ -58,14 +58,14 @@ impl SearchFeature for AStarFeature {
         config: &AStarConfig,
         task: Arc<Task>,
         limits: SearchLimits,
-    ) -> std::io::Result<SearchResult> {
+    ) -> Result<SearchResult, SearchError> {
         let context = BuildContext::new(task.clone());
         let params = SearchParams {
-            heuristic: build(&config.heuristic, &context)?,
+            heuristic: config.heuristic.build(&context)?,
             lazy: config
                 .lazy
                 .as_ref()
-                .map(|lazy| build(lazy, &context))
+                .map(|lazy| lazy.build(&context))
                 .transpose()?,
             mpd: config.mpd,
             successor_generator: config.successor_generator.clone(),
@@ -114,12 +114,12 @@ impl SearchFeature for GreedyBestFirstFeature {
         config: &GreedyBestFirstConfig,
         task: Arc<Task>,
         limits: SearchLimits,
-    ) -> std::io::Result<SearchResult> {
+    ) -> Result<SearchResult, SearchError> {
         let context = BuildContext::new(task.clone());
         let params = SearchParams {
             successor_generator: config.successor_generator.clone(),
             limits,
-            ..SearchParams::new(build(&config.heuristic, &context)?)
+            ..SearchParams::new(config.heuristic.build(&context)?)
         };
         info!("Starting GBFS search...");
         run_best_first::<Greedy>(task.clone(), params, &config.open_list)
@@ -133,8 +133,8 @@ fn run_best_first<O: NodeOrdering>(
     task: Arc<Task>,
     params: SearchParams,
     open_list: &OpenListConfig,
-) -> std::io::Result<SearchResult> {
-    let result = match open_list {
+) -> Result<SearchResult, SearchError> {
+    match open_list {
         OpenListConfig::TieBreaking => {
             BestFirstSearch::<O, TieBreakingOpenList<O>>::new(task, params).run()
         }
@@ -145,15 +145,5 @@ fn run_best_first<O: NodeOrdering>(
             BestFirstSearch::<O, Box<dyn OpenList>>::with_open_list(task, params, list.build())
                 .run()
         }
-    };
-    result.map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
-}
-
-fn build(
-    heuristic: &HeuristicConfig,
-    context: &BuildContext,
-) -> std::io::Result<Box<dyn crate::evaluation::Heuristic>> {
-    heuristic
-        .build(context)
-        .map_err(HeuristicBuildError::into_io_error)
+    }
 }

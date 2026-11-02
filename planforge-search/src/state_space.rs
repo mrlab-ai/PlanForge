@@ -4,12 +4,10 @@
 mod tests;
 
 use crate::graph::{BackwardGraph, backward_goal_distances};
-use std::cell::Cell;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result as AnyResult, bail};
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, Task};
 use planforge_sas::state_registry::StateRegistry;
@@ -59,7 +57,6 @@ pub enum StateSpaceEnumerationError {
         transitions: usize,
     },
     Enumeration(String),
-    GoalDistances(String),
 }
 
 impl fmt::Display for StateSpaceEnumerationError {
@@ -95,9 +92,6 @@ impl fmt::Display for StateSpaceEnumerationError {
             ),
             Self::Enumeration(message) => {
                 write!(formatter, "state-space enumeration failed: {message}")
-            }
-            Self::GoalDistances(message) => {
-                write!(formatter, "exact h* computation failed: {message}")
             }
         }
     }
@@ -402,29 +396,16 @@ pub fn enumerate_state_space(
         transition_operator_ids: &transition_operator_ids,
         transition_costs: &transition_costs,
     };
-    let timed_out = Cell::new(false);
     let h_star = backward_goal_distances(
         &mut backward_graph,
         goal_state_ids.iter().map(|&state| (state, 0.0)),
-        || -> AnyResult<()> {
-            if deadline.passed() {
-                timed_out.set(true);
-                bail!("state-space enumeration time limit reached");
-            }
-            Ok(())
-        },
+        || deadline.ensure("state-space enumeration"),
         None,
     )
-    .map_err(|error| {
-        if timed_out.get() {
-            StateSpaceEnumerationError::TimeLimit {
-                limit: limits.max_time,
-                states: num_states,
-                transitions: transition_costs.len(),
-            }
-        } else {
-            StateSpaceEnumerationError::GoalDistances(error.to_string())
-        }
+    .map_err(|_| StateSpaceEnumerationError::TimeLimit {
+        limit: limits.max_time,
+        states: num_states,
+        transitions: transition_costs.len(),
     })?;
 
     Ok(OwnedStateSpace {

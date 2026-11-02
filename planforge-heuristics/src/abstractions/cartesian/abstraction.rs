@@ -1,4 +1,6 @@
+use crate::abstractions::build_error;
 use planforge_sas::explicit_state::StateValues;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -95,6 +97,76 @@ impl CegarAbstraction for CartesianAbstraction {
         &mut self,
         regions: &RegionSemantics<'_>,
         deadline: Deadline,
+    ) -> Result<(), HeuristicBuildError> {
+        self.build_source_sets(regions, deadline)
+            .map_err(build_error)
+    }
+
+    fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
+        self.transitions.as_ref()?.source_sets.as_deref()
+    }
+
+    fn saturate_labels(
+        &self,
+        operator_costs: &[f64],
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, Vec<f64>), HeuristicBuildError> {
+        self.label_saturation(operator_costs, perimeter_state, deadline)
+            .map_err(build_error)
+    }
+
+    fn saturate_regions(
+        &self,
+        remaining: &RemainingCosts,
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation), HeuristicBuildError> {
+        self.regional_saturation(remaining, perimeter_state, deadline)
+            .map_err(build_error)
+    }
+}
+
+impl CartesianAbstraction {
+    fn regional_saturation(
+        &self,
+        remaining: &RemainingCosts,
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
+        let transitions = self.transitions()?;
+        let source_sets = transitions
+            .source_sets
+            .as_deref()
+            .context("regional saturation of a Cartesian abstraction needs its source sets")?;
+        saturate_regions(
+            &transitions.system,
+            source_sets,
+            |_, source_set| Ok(source_set.clone()),
+            remaining,
+            perimeter_state,
+            deadline,
+        )
+    }
+
+    fn label_saturation(
+        &self,
+        operator_costs: &[f64],
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, Vec<f64>)> {
+        saturate_labels(
+            &mut ExplicitSaturationGraph::new(&self.transitions()?.system),
+            operator_costs,
+            perimeter_state,
+            deadline,
+        )
+    }
+
+    fn build_source_sets(
+        &mut self,
+        regions: &RegionSemantics<'_>,
+        deadline: Deadline,
     ) -> Result<()> {
         let transitions = self
             .transitions
@@ -122,44 +194,5 @@ impl CegarAbstraction for CartesianAbstraction {
             .collect::<Result<_>>()?;
         transitions.source_sets = Some(source_sets);
         Ok(())
-    }
-
-    fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
-        self.transitions.as_ref()?.source_sets.as_deref()
-    }
-
-    fn saturate_labels(
-        &self,
-        operator_costs: &[f64],
-        perimeter_state: Option<usize>,
-        deadline: Deadline,
-    ) -> Result<(Vec<f64>, Vec<f64>)> {
-        saturate_labels(
-            &mut ExplicitSaturationGraph::new(&self.transitions()?.system),
-            operator_costs,
-            perimeter_state,
-            deadline,
-        )
-    }
-
-    fn saturate_regions(
-        &self,
-        remaining: &RemainingCosts,
-        perimeter_state: Option<usize>,
-        deadline: Deadline,
-    ) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
-        let transitions = self.transitions()?;
-        let source_sets = transitions
-            .source_sets
-            .as_deref()
-            .context("regional saturation of a Cartesian abstraction needs its source sets")?;
-        saturate_regions(
-            &transitions.system,
-            source_sets,
-            |_, source_set| Ok(source_set.clone()),
-            remaining,
-            perimeter_state,
-            deadline,
-        )
     }
 }

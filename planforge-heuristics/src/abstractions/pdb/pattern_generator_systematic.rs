@@ -32,7 +32,7 @@ impl Default for SystematicPatternGeneratorConfig {
 }
 
 impl SystematicPatternGeneratorConfig {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), planforge_search::config::ConfigError> {
         if self.max_pdb_states == 0 || self.max_pattern_size == 0 {
             return Err("max_pdb_states and max_pattern_size must be positive".into());
         }

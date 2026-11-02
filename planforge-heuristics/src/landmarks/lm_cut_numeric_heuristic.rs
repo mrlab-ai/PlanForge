@@ -2,6 +2,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::Task;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::fmt;
 use std::sync::Arc;
 
@@ -93,7 +94,10 @@ impl LmCutNumericConfig {
 }
 
 impl LandmarkCutNumericHeuristic {
-    pub fn from_config(task: Arc<Task>, config: LmCutNumericConfig) -> Result<Self, String> {
+    pub fn from_config(
+        task: Arc<Task>,
+        config: LmCutNumericConfig,
+    ) -> Result<Self, HeuristicBuildError> {
         config.validate().map_err(|error| error.to_string())?;
         Ok(Self {
             name: "lmcutnumeric".to_string(),
@@ -130,8 +134,7 @@ impl Heuristic for LandmarkCutNumericHeuristic {
 
         let (dead_end, total_cost) = self
             .landmark_generator
-            .compute_landmark_cost(&state.propositional, &state.numeric)
-            .map_err(EvaluationError::ComputationFailed)?;
+            .compute_landmark_cost(&state.propositional, &state.numeric)?;
 
         if dead_end {
             return Ok(Estimate::DEAD_END);

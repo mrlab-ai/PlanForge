@@ -13,6 +13,7 @@
 #[cfg(test)]
 mod tests;
 
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
@@ -46,7 +47,7 @@ pub struct CheckAdmissibleHeuristic {
 
 impl CheckAdmissibleHeuristic {
     /// Wrap `inner`, verifying it against the goal distances of `task`.
-    pub fn new(inner: Box<dyn Heuristic>, task: Arc<Task>) -> Result<Self, String> {
+    pub fn new(inner: Box<dyn Heuristic>, task: Arc<Task>) -> Result<Self, HeuristicBuildError> {
         let oracle = GoalDistanceOracle::new(task)?;
         Ok(Self {
             // Keep the wrapper distinct from the heuristic it checks in diagnostics.
@@ -90,12 +91,12 @@ impl CheckAdmissibleHeuristic {
     }
 
     fn inadmissible(&self, state_id: StateID, h_value: f64, goal_distance: f64) -> EvaluationError {
-        EvaluationError::ComputationFailed(format!(
-            "`{}` is inadmissible on state {state_id}: it returned h = {h_value} for a state \
-             whose true goal distance is h* = {goal_distance} (h - h* = {})",
-            self.inner.name(),
-            h_value - goal_distance,
-        ))
+        EvaluationError::Inadmissible {
+            heuristic: self.inner.name().to_string(),
+            state: state_id,
+            h: h_value,
+            goal_distance,
+        }
     }
 }
 
@@ -350,18 +351,19 @@ impl planforge_search::heuristic_factory::HeuristicFeature for CheckAdmissibleFe
 fn single_wrapped_heuristic_spec(
     wrapper: &str,
     args: &[planforge_search::config::ConfigArg],
-) -> Result<planforge_search::config::ConfigCall, String> {
+) -> Result<planforge_search::config::ConfigCall, planforge_search::config::ConfigError> {
     let [arg] = args else {
         return Err(format!(
             "`{wrapper}` expects exactly one heuristic, e.g. `{wrapper}(domain())`, \
              but got {} arguments",
             args.len()
-        ));
+        )
+        .into());
     };
     if let Some(key) = arg.key() {
-        return Err(format!(
-            "`{wrapper}` takes its heuristic positionally, not as `{key}=...`"
-        ));
+        return Err(
+            format!("`{wrapper}` takes its heuristic positionally, not as `{key}=...`").into(),
+        );
     }
     planforge_search::config::ConfigCall::from_value(arg.value())
 }

@@ -4,6 +4,7 @@
 use anyhow::Result;
 use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::{NumericValue, OperatorIndex};
+use planforge_search::heuristic_factory::HeuristicBuildError;
 
 use super::cegar::progression::ConcretePlan;
 use super::cegar::refine::CegarOutcome;
@@ -98,7 +99,7 @@ pub trait CegarAbstraction: std::fmt::Debug + Send {
         &mut self,
         regions: &RegionSemantics<'_>,
         deadline: Deadline,
-    ) -> Result<()>;
+    ) -> Result<(), HeuristicBuildError>;
 
     /// The source sets regional cost partitioning attaches costs to; `None`
     /// until [`Self::prepare_regional_saturation`] built them.
@@ -111,7 +112,7 @@ pub trait CegarAbstraction: std::fmt::Debug + Send {
         operator_costs: &[f64],
         perimeter_state: Option<usize>,
         deadline: Deadline,
-    ) -> Result<(Vec<f64>, Vec<f64>)>;
+    ) -> Result<(Vec<f64>, Vec<f64>), HeuristicBuildError>;
 
     /// The goal distances under `remaining` and what every transition
     /// needs of its labels' source sets; see
@@ -121,7 +122,7 @@ pub trait CegarAbstraction: std::fmt::Debug + Send {
         remaining: &RemainingCosts,
         perimeter_state: Option<usize>,
         deadline: Deadline,
-    ) -> Result<(Vec<f64>, SourceSetCostAllocation)>;
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation), HeuristicBuildError>;
 
     fn metadata(&self) -> &AbstractionMetadata {
         &self.core().metadata

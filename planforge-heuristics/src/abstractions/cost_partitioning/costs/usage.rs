@@ -231,7 +231,7 @@ impl SourceSetUsage {
                 new_cells.extend(old_cells);
                 self.cells = new_cells;
                 *self.index.get_mut() = UsageIndex::Stale;
-                return Err(error);
+                return Err(error.into());
             }
             let Some(intersection) = cartesian_set_intersection(&cell.region, region) else {
                 new_cells.push(cell);

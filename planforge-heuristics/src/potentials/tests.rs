@@ -92,13 +92,20 @@ fn every_cpp_numeric_potential_option_parses() {
     );
     let mut invalid = NumericPotentialConfig::default();
     invalid.num_samples = 0;
-    assert!(invalid.validate().unwrap_err().contains("num_samples"));
+    assert!(
+        invalid
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("num_samples")
+    );
     invalid = NumericPotentialConfig::default();
     invalid.online_reoptimization_interval = 0;
     assert!(
         invalid
             .validate()
             .unwrap_err()
+            .to_string()
             .contains("online_reoptimization_interval")
     );
 }

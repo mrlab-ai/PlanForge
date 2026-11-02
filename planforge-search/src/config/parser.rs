@@ -9,8 +9,8 @@
 use super::{ConfigArg, ConfigCall, ConfigValue};
 
 /// Parse one call, rejecting anything left over.
-pub fn parse_call(raw: &str) -> Result<ConfigCall, String> {
-    ConfigParser::new(raw.trim()).parse_all()
+pub fn parse_call(raw: &str) -> Result<ConfigCall, super::ConfigError> {
+    Ok(ConfigParser::new(raw.trim()).parse_all()?)
 }
 
 struct ConfigParser<'a> {
@@ -296,7 +296,10 @@ mod tests {
             "root(value=$x)",
         ] {
             let error = parse_call(text).unwrap_err();
-            assert!(error.contains("expected a value"), "{text}: {error}");
+            assert!(
+                error.to_string().contains("expected a value"),
+                "{text}: {error}"
+            );
         }
     }
 
@@ -332,12 +335,13 @@ mod tests {
     #[test]
     fn errors_identify_the_failed_construct() {
         let error = parse_call("outer(inner(value=))").unwrap_err();
-        assert!(error.contains("inner(...):"), "{error}");
-        assert!(error.contains("expected a value"), "{error}");
-        assert!(!error.contains("--search"));
+        assert!(error.to_string().contains("inner(...):"), "{error}");
+        assert!(error.to_string().contains("expected a value"), "{error}");
+        assert!(!error.to_string().contains("--search"));
         assert!(
             parse_call("root(value=\"unterminated)")
                 .unwrap_err()
+                .to_string()
                 .contains("unterminated quoted value")
         );
     }

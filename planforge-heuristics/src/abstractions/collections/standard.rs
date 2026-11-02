@@ -31,6 +31,7 @@ use super::member::{CollectionMember, CollectionMembership, Member, MemberConstr
 use crate::abstractions::common::abstraction::CegarAbstraction;
 use crate::abstractions::common::cegar::CegarStopReason;
 use crate::abstractions::common::cegar::initial_splits::{InitialSplitVar, RefinementScope};
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use planforge_search::resource_limits;
 
 /// The budgets and diversification of a standard collection.
@@ -119,7 +120,7 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
             .and_then(|generator| generator.generate_from_root(task, None, &construction.scope))
         {
             Ok(built) => built,
-            Err(error) if resource_limits::is_deadline_exceeded(&error) => {
+            Err(HeuristicBuildError::Timeout(_)) => {
                 info!(
                     "{} collection: generation deadline expired at restart {iteration}; keeping {} members",
                     G::KIND,

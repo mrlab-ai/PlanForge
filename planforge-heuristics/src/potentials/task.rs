@@ -103,7 +103,7 @@ impl PotentialTask {
         simple_action_bounds: bool,
         goal_strengthening: bool,
     ) -> Result<Self, String> {
-        validate_abstractable_goal(task)?;
+        validate_abstractable_goal(task).map_err(|error| error.to_string())?;
         reject_conditional_effects(task)?;
         let helper =
             NumericTaskHelper::new_potentials(task, precision, epsilon, simple_action_bounds);

@@ -119,7 +119,7 @@ impl CegarDriver {
     /// Runs refinement iterations, numbered from 1, until one stops, the
     /// iteration limit is reached, the deadline `max_time` after `start`
     /// passes, or every 64th iteration finds the memory limit reached.
-    pub fn run_from(
+    pub(crate) fn run_from(
         self,
         start: Instant,
         mut run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,

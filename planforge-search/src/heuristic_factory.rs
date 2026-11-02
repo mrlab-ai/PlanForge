@@ -84,7 +84,7 @@ pub trait HeuristicFeature: 'static {
     /// Fails if this build cannot construct the heuristic, for example
     /// without the LP solver it needs; checked before the task is
     /// translated.
-    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+    fn preflight(_: &Self::Config) -> Result<(), HeuristicBuildError> {
         Ok(())
     }
     fn requirements(_: &Self::Config) -> TaskRequirements {
@@ -106,7 +106,7 @@ pub trait HeuristicFeature: 'static {
 
 trait ErasedHeuristicConfig: Debug + Send + Sync {
     fn spec(&self) -> &ConfigCall;
-    fn preflight(&self) -> std::io::Result<()>;
+    fn preflight(&self) -> Result<(), HeuristicBuildError>;
     fn requirements(&self) -> TaskRequirements;
     fn config(&self) -> &dyn Any;
     fn build(&self, context: &BuildContext) -> Result<Box<dyn Heuristic>, HeuristicBuildError>;
@@ -133,7 +133,7 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
                 requirements.union(child.requirements())
             })
     }
-    fn preflight(&self) -> std::io::Result<()> {
+    fn preflight(&self) -> Result<(), HeuristicBuildError> {
         F::preflight(&self.config)?;
         F::nested(&self.config)
             .into_iter()
@@ -156,7 +156,7 @@ pub struct HeuristicConfig(Arc<dyn ErasedHeuristicConfig>);
 impl HeuristicConfig {
     /// Fails if this build cannot construct the heuristic or one it
     /// contains.
-    pub fn preflight(&self) -> std::io::Result<()> {
+    pub fn preflight(&self) -> Result<(), HeuristicBuildError> {
         self.0.preflight()
     }
 
@@ -171,8 +171,7 @@ impl HeuristicConfig {
         self.0.config().downcast_ref()
     }
     pub fn build(&self, context: &BuildContext) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
-        self.preflight()
-            .map_err(|error| HeuristicBuildError::Failure(error.to_string()))?;
+        self.preflight()?;
         self.requirements().validate(&context.task)?;
         self.0.build(context)
     }
@@ -200,7 +199,7 @@ impl fmt::Display for HeuristicConfig {
 }
 impl crate::config::FromOptionValue for HeuristicConfig {
     fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
-        Self::from_spec(&ConfigCall::from_value(value).map_err(ConfigError::from)?)
+        Self::from_spec(&ConfigCall::from_value(value)?)
     }
 
     fn option_text(&self) -> String {
@@ -234,51 +233,23 @@ pub(crate) fn heuristic_help() -> String {
         HEURISTICS.names().collect::<Vec<_>>().join(", ")
     )
 }
+/// Why a heuristic could not be built.
 #[derive(Debug)]
 pub enum HeuristicBuildError {
     Config(crate::config::ConfigError),
-    ConstructionTimeout,
+    /// A construction time limit passed; which one.
+    Timeout(String),
     /// The task uses a feature the heuristic does not support.
     Unsupported(String),
     Failure(String),
 }
 
-impl HeuristicBuildError {
-    /// The error building an abstraction source ended in, keeping whether
-    /// the task was unsupported.
-    pub fn from_source(error: anyhow::Error, context: String) -> Self {
-        let message = format!("{context}: {error:#}");
-        if crate::unsupported::is_unsupported_task(&error) {
-            Self::Unsupported(message)
-        } else {
-            Self::Failure(message)
-        }
-    }
-}
-
-impl HeuristicBuildError {
-    pub fn into_io_error(self) -> std::io::Error {
-        match self {
-            Self::ConstructionTimeout => std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "shared abstraction construction deadline exceeded",
-            ),
-            Self::Unsupported(message) => {
-                std::io::Error::new(std::io::ErrorKind::Unsupported, message)
-            }
-            Self::Failure(message) => std::io::Error::other(message),
-            Self::Config(error) => std::io::Error::new(std::io::ErrorKind::InvalidInput, error),
-        }
-    }
-}
-
 impl std::fmt::Display for HeuristicBuildError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ConstructionTimeout => {
-                formatter.write_str("shared abstraction construction deadline exceeded")
+            Self::Timeout(message) | Self::Unsupported(message) | Self::Failure(message) => {
+                formatter.write_str(message)
             }
-            Self::Unsupported(message) | Self::Failure(message) => formatter.write_str(message),
             Self::Config(error) => std::fmt::Display::fmt(error, formatter),
         }
     }
@@ -286,14 +257,58 @@ impl std::fmt::Display for HeuristicBuildError {
 
 impl std::error::Error for HeuristicBuildError {}
 
+impl HeuristicBuildError {
+    /// The error with `context` in front of its message; a configuration
+    /// error, whose message names its option path, stays as it is.
+    pub fn context(self, context: impl fmt::Display) -> Self {
+        match self {
+            Self::Timeout(message) => Self::Timeout(format!("{context}: {message}")),
+            Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),
+            Self::Failure(message) => Self::Failure(format!("{context}: {message}")),
+            Self::Config(error) => Self::Config(error),
+        }
+    }
+}
+
 impl From<String> for HeuristicBuildError {
     fn from(message: String) -> Self {
         Self::Failure(message)
     }
 }
 
+impl From<&str> for HeuristicBuildError {
+    fn from(message: &str) -> Self {
+        Self::Failure(message.to_string())
+    }
+}
+
 impl From<ConfigError> for HeuristicBuildError {
     fn from(error: ConfigError) -> Self {
         Self::Config(error)
+    }
+}
+
+impl From<crate::resource_limits::DeadlineExceeded> for HeuristicBuildError {
+    fn from(error: crate::resource_limits::DeadlineExceeded) -> Self {
+        Self::Timeout(error.to_string())
+    }
+}
+
+/// A task a heuristic needs in another form: unsupported if the
+/// transformation does not support it, a failure otherwise.
+impl From<crate::task_transformations::TransformError> for HeuristicBuildError {
+    fn from(error: crate::task_transformations::TransformError) -> Self {
+        match error {
+            crate::task_transformations::TransformError::Unsupported(message) => {
+                Self::Unsupported(message)
+            }
+            error => Self::Failure(error.to_string()),
+        }
+    }
+}
+
+impl From<crate::unsupported::UnsupportedTask> for HeuristicBuildError {
+    fn from(error: crate::unsupported::UnsupportedTask) -> Self {
+        Self::Unsupported(error.to_string())
     }
 }

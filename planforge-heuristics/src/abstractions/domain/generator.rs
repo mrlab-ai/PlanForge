@@ -3,7 +3,9 @@
 #[cfg(test)]
 mod tests;
 
+use crate::abstractions::build_error;
 use planforge_sas::numeric_task::Task;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -100,7 +102,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
 
     const KIND: AbstractionKind = AbstractionKind::Domain;
 
-    fn new(config: DomainAbstractionConfig) -> Result<Self> {
+    fn new(config: DomainAbstractionConfig) -> Result<Self, HeuristicBuildError> {
         config.cegar.validate()?;
         Ok(Self { config })
     }
@@ -113,6 +115,18 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
     /// the full state space of `task`, and the distance table's initial state
     /// is the initial state of `task`.
     fn generate_from_root(
+        &self,
+        task: &Task,
+        refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
+    ) -> Result<DomainAbstraction, HeuristicBuildError> {
+        self.refine(task, refinement_root, scope)
+            .map_err(build_error)
+    }
+}
+
+impl DomainAbstractionGenerator {
+    fn refine(
         &self,
         task: &Task,
         refinement_root: Option<&ExplicitState>,

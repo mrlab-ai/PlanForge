@@ -12,7 +12,10 @@ fn registration_rejects_builtin_name_collision() {
     let error = HEURISTICS
         .register(vec![entry::<BlindFeature>()])
         .unwrap_err();
-    assert!(error.contains("collides with a built-in"), "got `{error}`");
+    assert!(
+        error.to_string().contains("collides with a built-in"),
+        "got `{error}`"
+    );
 }
 
 #[test]
@@ -20,7 +23,10 @@ fn registration_rejects_duplicate_names() {
     let error = HEURISTICS
         .register(vec![entry::<Duplicate>(), entry::<Duplicate>()])
         .unwrap_err();
-    assert!(error.contains("registered more than once"), "got `{error}`");
+    assert!(
+        error.to_string().contains("registered more than once"),
+        "got `{error}`"
+    );
 }
 
 struct Duplicate;

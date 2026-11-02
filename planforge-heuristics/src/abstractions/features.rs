@@ -115,9 +115,7 @@ where
         config.cegar_mut().keep_transitions = false;
         let abstraction = G::new(config)
             .and_then(|generator| generator.generate(&context.task))
-            .map_err(|error| {
-                HeuristicBuildError::from_source(error, format!("failed to build {}", G::KIND))
-            })?;
+            .map_err(|error| error.context(format!("failed to build {}", G::KIND)))?;
         Ok(Box::new(AbstractionHeuristic::new(
             &context.name,
             abstraction,

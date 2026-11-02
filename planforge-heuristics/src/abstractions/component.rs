@@ -127,7 +127,10 @@ impl AbstractionComponent {
         }
     }
 
-    pub fn relevant_operator_ids(&self, task: &Task) -> Result<BTreeSet<OperatorIndex>, String> {
+    pub(crate) fn relevant_operator_ids(
+        &self,
+        task: &Task,
+    ) -> Result<BTreeSet<OperatorIndex>, String> {
         let ids: Vec<OperatorIndex> = match self {
             Self::Cegar { abstraction, .. } => abstraction.relevant_operator_ids().to_vec(),
             Self::PatternDatabase(pdb) => pdb.relevant_operator_ids().to_vec(),

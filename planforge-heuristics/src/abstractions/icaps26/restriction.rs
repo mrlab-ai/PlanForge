@@ -18,8 +18,8 @@ use planforge_sas::numeric_task::{
     TaskParts, VariableIndex, ZERO_VALUE,
 };
 use planforge_search::heuristic_factory::EmptyConfig;
-use planforge_search::task_transformations::TransformationFeature;
 use planforge_search::task_transformations::restriction::validate_restricted_task;
+use planforge_search::task_transformations::{TransformError, TransformationFeature};
 use tracing::info;
 
 /// `icaps26_restrict()`: the restriction `icaps26_cartesian` requires.
@@ -29,8 +29,10 @@ impl TransformationFeature for Icaps26RestrictFeature {
     const NAME: &'static str = "icaps26_restrict";
     type Config = EmptyConfig;
 
-    fn apply(_: &EmptyConfig, task: Task) -> Result<Task> {
-        Ok(build_icaps26_restricted_task(&task)?.unwrap_or(task))
+    fn apply(_: &EmptyConfig, task: Task) -> std::result::Result<Task, TransformError> {
+        Ok(build_icaps26_restricted_task(&task)
+            .map_err(crate::abstractions::transform_error)?
+            .unwrap_or(task))
     }
 }
 

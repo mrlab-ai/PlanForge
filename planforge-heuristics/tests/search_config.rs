@@ -59,10 +59,14 @@ fn parses_and_round_trips_astar_mpd() {
 #[test]
 fn rejects_invalid_or_duplicate_astar_mpd() {
     register();
-    let error = parse_search_spec("astar(blind(), mpd=yes)").unwrap_err();
+    let error = parse_search_spec("astar(blind(), mpd=yes)")
+        .unwrap_err()
+        .to_string();
     assert_eq!(error, "astar.mpd: expected boolean, got `yes`");
 
-    let error = parse_search_spec("astar(blind(), mpd=true, mpd=false)").unwrap_err();
+    let error = parse_search_spec("astar(blind(), mpd=true, mpd=false)")
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("duplicate option `mpd`"), "got `{error}`");
 }
 
@@ -99,7 +103,9 @@ fn parses_and_round_trips_collection_source_lists() {
 #[test]
 fn rejects_nested_collection_source_lists() {
     register();
-    let error = parse_search_spec("astar(scp([[domain_collection()]]))").unwrap_err();
+    let error = parse_search_spec("astar(scp([[domain_collection()]]))")
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("expected AbstractionSource, got a list"),
         "got `{error}`"
@@ -158,8 +164,9 @@ fn display_round_trips_scp_options() {
 #[test]
 fn rejects_heuristic_combinators_in_abstraction_source_positions() {
     register();
-    let error =
-        parse_search_spec("astar(scp(max(domain_collection()),saturator=perimstar))").unwrap_err();
+    let error = parse_search_spec("astar(scp(max(domain_collection()),saturator=perimstar))")
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("unknown AbstractionSource `max`"), "{error}");
 }
 
@@ -237,14 +244,16 @@ fn check_admissible_round_trips_through_display() {
 #[test]
 fn errors_are_human_readable() {
     register();
-    let err = parse_search_spec("astar(").unwrap_err();
+    let err = parse_search_spec("astar(").unwrap_err().to_string();
     assert!(err.to_lowercase().contains("invalid"));
 }
 
 #[test]
 fn unknown_heuristic_name_is_rejected_from_the_registry() {
     register();
-    let error = parse_search_spec("astar(does_not_exist)").unwrap_err();
+    let error = parse_search_spec("astar(does_not_exist)")
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("unknown heuristic `does_not_exist`"));
     assert!(error.contains("blind"));
     assert!(error.contains("lmcutnumeric"));
@@ -253,7 +262,9 @@ fn unknown_heuristic_name_is_rejected_from_the_registry() {
 #[test]
 fn lists_are_typed_errors_where_heuristics_are_expected() {
     register();
-    let error = parse_search_spec("astar([blind()])").unwrap_err();
+    let error = parse_search_spec("astar([blind()])")
+        .unwrap_err()
+        .to_string();
     assert_eq!(error, "astar.heuristic: expected heuristic, got a list");
 }
 
@@ -325,7 +336,9 @@ fn maximum_accepts_any_heuristic_and_unions_nested_requirements() {
     assert!(config.requirements().requires("abstractable_goal"));
     #[cfg(not(feature = "cplex"))]
     assert!(config.preflight().is_err(), "numeric_potential needs CPLEX");
-    let error = parse_search_spec("astar(max([ff(),scp(domian())]))").unwrap_err();
+    let error = parse_search_spec("astar(max([ff(),scp(domian())]))")
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("max.heuristics[1].scp.sources: unknown AbstractionSource `domian`"),
         "{error}"
@@ -343,7 +356,7 @@ fn construction_clock_overflow_is_rejected_without_rejecting_capped_source_budge
     assert!(std::time::Duration::try_from_secs_f64(1e19).is_ok());
     for combinator in ["canonical", "scp", "posthoc_optimization"] {
         let text = format!("astar({combinator}(domain(),construction_max_time=1e19))");
-        let error = parse_search_spec(&text).unwrap_err();
+        let error = parse_search_spec(&text).unwrap_err().to_string();
         assert!(error.contains("construction_max_time"), "{error}");
         assert!(error.contains("platform clock"), "{error}");
     }
