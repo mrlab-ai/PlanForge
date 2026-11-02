@@ -24,8 +24,8 @@ use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::heuristic_factory::TaskRequirements;
 use planforge_search::search::{
-    AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchOutcome, SearchParams, SearchResult,
-    parse_search_spec,
+    AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchLimits, SearchOutcome, SearchParams,
+    SearchResult, parse_search_spec,
 };
 use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,
@@ -1520,12 +1520,13 @@ impl Task {
             error: error.clone(),
             name: "python".to_string(),
         });
-        let time_limit = max_time.map(Duration::from_secs_f64);
         // GIL is held for the whole search: the heuristic calls back into Python
         // once per evaluated state. This is intentionally NOT allow_threads.
         let params = SearchParams {
-            time_limit,
-            max_memory_bytes: max_memory,
+            limits: SearchLimits {
+                time: max_time.map(Duration::from_secs_f64),
+                memory_bytes: max_memory,
+            },
             ..SearchParams::new(heur)
         };
         let result = if greedy {

@@ -48,8 +48,7 @@ impl SearchFeature for AStarFeature {
                 .map(|lazy| build(lazy, &context))
                 .transpose()?,
             mpd: config.mpd,
-            time_limit: limits.time,
-            max_memory_bytes: limits.memory_bytes,
+            limits,
         };
         info!(
             "Starting A* search, mpd={}, lazy={}",
@@ -84,8 +83,7 @@ impl SearchFeature for GreedyBestFirstFeature {
     ) -> std::io::Result<SearchResult> {
         let context = BuildContext::new(&task);
         let params = SearchParams {
-            time_limit: limits.time,
-            max_memory_bytes: limits.memory_bytes,
+            limits,
             ..SearchParams::new(build(&config.heuristic, &context)?)
         };
         info!("Starting GBFS search...");
