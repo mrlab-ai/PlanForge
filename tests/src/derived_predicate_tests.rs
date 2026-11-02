@@ -38,9 +38,10 @@ use planforge_heuristics::relaxation::FfHeuristic;
 use planforge_sas::numeric_task::{Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::config::parse_call;
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_factory::{BuildContext, HeuristicConfig};
-use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
+use planforge_search::search::SearchOutcome;
+use planforge_search::search::best_first::{AStarSearch, SearchParams};
 
 use crate::corpus::{
     self, Scratch, Solution, assert_fixture_set_is_pinned, blind_astar, subdirectory_names,

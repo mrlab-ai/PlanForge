@@ -234,10 +234,8 @@ fn parse_feature<F: HeuristicFeature>(spec: &ConfigCall) -> Result<HeuristicConf
 
 /// Every heuristic the configuration grammar names: blind search is built
 /// in, a binary registers the others.
-pub static HEURISTICS: Registry<HeuristicConfig> = Registry::new(
-    "heuristic",
-    &[entry::<crate::evaluation::heuristic::BlindFeature>()],
-);
+pub static HEURISTICS: Registry<HeuristicConfig> =
+    Registry::new("heuristic", &[entry::<crate::evaluation::BlindFeature>()]);
 
 pub(crate) fn heuristic_help() -> String {
     format!(

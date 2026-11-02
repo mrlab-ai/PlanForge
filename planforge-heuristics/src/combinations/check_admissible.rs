@@ -21,10 +21,10 @@ use ordered_float::NotNan;
 use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::evaluation::heuristic::minimum_action_cost;
-use planforge_search::successor_generator::{DecisionTree, RegistryExpander};
+use planforge_search::evaluation::Heuristic;
+use planforge_search::evaluation::minimum_action_cost;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::successor_generator::{RegistryExpander, StandardGroundedTree};
 
 /// Slack allowed on `h <= h*` before an estimate counts as inadmissible.
 const ADMISSIBILITY_TOLERANCE: f64 = 1e-9;
@@ -138,7 +138,7 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
 struct GoalDistanceOracle {
     task: Arc<Task>,
     registry: StateRegistry,
-    expander: RegistryExpander<DecisionTree>,
+    expander: RegistryExpander<StandardGroundedTree>,
     operator_costs: Vec<f64>,
     min_action_cost: f64,
 }
@@ -151,7 +151,7 @@ impl GoalDistanceOracle {
         registry.get_initial_state();
         let operator_costs = task.effective_operator_costs().to_vec();
         let min_action_cost = minimum_action_cost(&operator_costs);
-        let expander = RegistryExpander::new(DecisionTree::new(&task));
+        let expander = RegistryExpander::new(StandardGroundedTree::new(&task));
         Ok(Self {
             task,
             registry,

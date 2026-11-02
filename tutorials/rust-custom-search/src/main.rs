@@ -22,7 +22,7 @@ use planforge_search::search::{
 };
 use planforge_search::successor_generator::SuccessorGeneratorConfig;
 
-/// `ehc(heuristic, successor_generator=decision_tree())`; the heuristic
+/// `ehc(heuristic, successor_generator=standard_grounded_tree())`; the heuristic
 /// defaults to blind.
 #[derive(Debug, Default, ApplyOptions)]
 struct EhcConfig {

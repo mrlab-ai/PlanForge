@@ -23,15 +23,15 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::heuristic_factory::TaskRequirements;
+use planforge_search::search::best_first::{AStarSearch, GreedyBestFirstSearch, SearchParams};
 use planforge_search::search::{
-    AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchLimits, SearchOutcome, SearchParams,
-    SearchResult, parse_search_spec,
+    SearchConfig, SearchLimits, SearchOutcome, SearchResult, parse_search_spec,
 };
 use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,
     StateSpaceEnumerationError as RustStateSpaceEnumerationError, enumerate_state_space,
 };
-use planforge_search::successor_generator::{DecisionTree, SuccessorGenerator};
+use planforge_search::successor_generator::{StandardGroundedTree, SuccessorGenerator};
 use planforge_search::task_transformations::{parse_transformation_spec, transform_task};
 
 create_exception!(planforge, PlanforgeError, PyException);
@@ -1006,7 +1006,7 @@ impl Heuristic for PyHeuristic {
 struct Task {
     task: Arc<planforge_sas::numeric_task::Task>,
     registry: RefCell<StateRegistry>,
-    succ: DecisionTree,
+    succ: StandardGroundedTree,
 }
 
 struct GilReleasedTask(Arc<planforge_sas::numeric_task::Task>);
@@ -1546,7 +1546,7 @@ impl Task {
 impl Task {
     fn build(task: Arc<planforge_sas::numeric_task::Task>) -> Self {
         let registry = StateRegistry::for_task(task.clone());
-        let succ = DecisionTree::new(&task);
+        let succ = StandardGroundedTree::new(&task);
         Task {
             task,
             registry: RefCell::new(registry),

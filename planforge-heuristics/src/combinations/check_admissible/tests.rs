@@ -131,7 +131,9 @@ fn rejects_a_heuristic_that_invents_a_dead_end() {
 fn checks_a_blind_heuristic() {
     let h_value = evaluate_initial_state(
         chain_task(),
-        Box::new(planforge_search::evaluation::heuristic::BlindHeuristic::for_task(&chain_task())),
+        Box::new(planforge_search::evaluation::BlindHeuristic::for_task(
+            &chain_task(),
+        )),
     )
     .expect("the blind estimate is the minimum action cost");
     assert_eq!(h_value, 1.0);
@@ -149,7 +151,9 @@ fn wrapper_name_differs_from_the_wrapped_name() {
 fn goal_distance_is_computed_per_state() {
     let task = chain_task();
     let mut heuristic = CheckAdmissibleHeuristic::new(
-        Box::new(planforge_search::evaluation::heuristic::BlindHeuristic::for_task(&task)),
+        Box::new(planforge_search::evaluation::BlindHeuristic::for_task(
+            &task,
+        )),
         task.clone(),
     )
     .expect("the chain task has finite non-negative costs");

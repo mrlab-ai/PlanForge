@@ -6,7 +6,7 @@ use super::deadline::deadline_from_now;
 use super::lookup::{CostPartitioningHeuristic, abstraction_heuristic_values};
 use super::partition::{Completion, PartitionedCollection};
 use super::{OrderSelection, ScpBuilder};
-use planforge_search::evaluation::evaluator::EvaluationError;
+use planforge_search::evaluation::EvaluationError;
 use planforge_search::resource_limits::Deadline;
 
 impl ScpBuilder {

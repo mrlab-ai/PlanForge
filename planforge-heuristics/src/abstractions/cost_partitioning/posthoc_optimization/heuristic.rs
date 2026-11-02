@@ -43,9 +43,9 @@ use planforge_sas::utils::float_tolerance;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::info;
 
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::state_value_cache::StateValueCache;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 
 use super::super::standalone_estimate;
 use crate::abstractions::component::AbstractionComponent;

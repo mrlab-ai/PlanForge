@@ -372,7 +372,7 @@ impl ExplicitFact {
 /// it means the tag can never split one fact into two that compare unequal but
 /// order equal, which would quietly break `sort` + `dedup` pairs and mutex
 /// lookups. Ordering stays variable-major, which is what the successor
-/// generator's decision tree is built from.
+/// generator's standard grounded tree is built from.
 impl PartialEq for ExplicitFact {
     #[inline]
     fn eq(&self, other: &Self) -> bool {

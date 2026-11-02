@@ -9,7 +9,7 @@ use super::diagnostics::{log_abstract_source_set_summary, log_transition_residua
 use super::lookup::{CostPartitioningHeuristic, current_h_for_distances};
 use crate::abstractions::component::AbstractionComponent;
 use crate::abstractions::cost_partitioning::costs::{RemainingCosts, SourceSetCostAllocation};
-use planforge_search::evaluation::evaluator::EvaluationError;
+use planforge_search::evaluation::EvaluationError;
 use planforge_search::resource_limits::Deadline;
 
 /// Everything a cost partitioning over this collection needs except the order

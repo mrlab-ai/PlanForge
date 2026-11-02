@@ -1,6 +1,6 @@
 //! Base trait for heuristic evaluators.
 
-use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
+use crate::evaluation::{EvaluationError, EvaluationState};
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::numeric_task::Task;
 

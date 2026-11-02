@@ -14,7 +14,7 @@ use planforge_sas::state_registry::StateRegistry;
 use crate::abstractions::cartesian::{CartesianAbstractionConfig, CartesianAbstractionGenerator};
 use crate::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 use crate::abstractions::pdb::pattern_database::PatternDatabase;
-use planforge_search::evaluation::evaluator::EvaluationState;
+use planforge_search::evaluation::EvaluationState;
 use planforge_search::task_transformations::projection::{Pattern, ProjectedTask};
 
 use super::*;

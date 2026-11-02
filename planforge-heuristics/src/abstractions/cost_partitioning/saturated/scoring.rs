@@ -4,7 +4,7 @@ use planforge_sas::utils::float_tolerance;
 
 use crate::abstractions::common::cartesian_set::CartesianSet;
 use crate::abstractions::component::AbstractionComponent;
-use planforge_search::evaluation::evaluator::EvaluationError;
+use planforge_search::evaluation::EvaluationError;
 
 /// The greedy-order score of an abstraction (Seipp 2017): its heuristic
 /// value per cost it steals from the others.

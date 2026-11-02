@@ -1,7 +1,7 @@
 //! Successor generation: a [`SuccessorGenerator`] lists the operators
 //! applicable in a state, and the [`StateRegistry`] applies them and
 //! registers the successors. Generators are features the configuration
-//! grammar names ([`SUCCESSOR_GENERATORS`]); the [`DecisionTree`] is built in
+//! grammar names ([`SUCCESSOR_GENERATORS`]); the [`StandardGroundedTree`] is built in
 //! and the default.
 //!
 //! A generator only reads the state, so it takes `&self` and writes into a
@@ -9,7 +9,7 @@
 //!
 //! ```
 //! use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorIndex, Task};
-//! use planforge_search::successor_generator::{DecisionTree, SuccessorGenerator};
+//! use planforge_search::successor_generator::{StandardGroundedTree, SuccessorGenerator};
 //!
 //! /// Tests the preconditions of every operator: slow, but plainly correct.
 //! struct EveryOperator {
@@ -45,7 +45,7 @@
 //! let initial = task.initial_propositional_values();
 //! let (mut every, mut tree) = (Vec::new(), Vec::new());
 //! EveryOperator::new(&task).applicable_operators(initial, &mut every);
-//! DecisionTree::new(&task).applicable_operators(initial, &mut tree);
+//! StandardGroundedTree::new(&task).applicable_operators(initial, &mut tree);
 //! every.sort();
 //! tree.sort();
 //! assert_eq!(every, tree);
@@ -54,9 +54,9 @@
 #[cfg(test)]
 mod tests;
 
-mod decision_tree;
+mod standard_grounded_tree;
 
-pub use decision_tree::DecisionTree;
+pub use standard_grounded_tree::StandardGroundedTree;
 
 use std::fmt::{self, Debug};
 use std::sync::Arc;
@@ -215,7 +215,7 @@ impl<F: SuccessorGeneratorFeature> ErasedGeneratorConfig for Configured<F> {
     }
 }
 
-/// A configured successor generator; the decision tree by default.
+/// A configured successor generator; the standard grounded tree by default.
 #[derive(Debug, Clone)]
 pub struct SuccessorGeneratorConfig(Arc<dyn ErasedGeneratorConfig>);
 
@@ -227,7 +227,9 @@ impl SuccessorGeneratorConfig {
 
 impl Default for SuccessorGeneratorConfig {
     fn default() -> Self {
-        Self(Arc::new(Configured::<DecisionTreeFeature>(EmptyConfig {})))
+        Self(Arc::new(Configured::<StandardGroundedTreeFeature>(
+            EmptyConfig {},
+        )))
     }
 }
 
@@ -268,18 +270,20 @@ fn parse_feature<F: SuccessorGeneratorFeature>(
     Ok(SuccessorGeneratorConfig(Arc::new(Configured::<F>(config))))
 }
 
-/// `decision_tree()`: the [`DecisionTree`].
-pub struct DecisionTreeFeature;
+/// `standard_grounded_tree()`: the [`StandardGroundedTree`].
+pub struct StandardGroundedTreeFeature;
 
-impl SuccessorGeneratorFeature for DecisionTreeFeature {
-    const NAME: &'static str = "decision_tree";
+impl SuccessorGeneratorFeature for StandardGroundedTreeFeature {
+    const NAME: &'static str = "standard_grounded_tree";
     type Config = EmptyConfig;
     fn build(_: &EmptyConfig, task: &Task) -> Box<dyn SuccessorGenerator> {
-        Box::new(DecisionTree::new(task))
+        Box::new(StandardGroundedTree::new(task))
     }
 }
 
 /// Every successor generator the `successor_generator` option of a search
-/// names: the decision tree is built in, a binary registers others.
-pub static SUCCESSOR_GENERATORS: Registry<SuccessorGeneratorConfig> =
-    Registry::new("successor generator", &[entry::<DecisionTreeFeature>()]);
+/// names: the standard grounded tree is built in, a binary registers others.
+pub static SUCCESSOR_GENERATORS: Registry<SuccessorGeneratorConfig> = Registry::new(
+    "successor generator",
+    &[entry::<StandardGroundedTreeFeature>()],
+);

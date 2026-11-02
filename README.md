@@ -47,7 +47,7 @@ Production-quality on the admissible search and heuristic paths (A\* with blind,
 
 Both take `open_list=...` (`tiebreaking()`: smallest key first, ties first in,
 first out; `preferred_first()`) and `successor_generator=...`
-(`decision_tree()`, the default). A binary that registers its own open lists,
+(`standard_grounded_tree()`, the default). A binary that registers its own open lists,
 successor generators, search algorithms or heuristics names them the same way;
 see [ARCHITECTURE.md](docs/ARCHITECTURE.md#extending-planforge).
 

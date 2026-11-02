@@ -4,7 +4,7 @@ use super::{
     entry,
 };
 use crate::evaluation::Heuristic;
-use crate::evaluation::heuristic::{BlindFeature, BlindHeuristic};
+use crate::evaluation::{BlindFeature, BlindHeuristic};
 use planforge_sas::numeric_task::Task;
 
 #[test]

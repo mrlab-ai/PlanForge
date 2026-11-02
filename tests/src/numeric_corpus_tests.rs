@@ -18,8 +18,9 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericType, Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
-use planforge_search::evaluation::heuristic::BlindHeuristic;
-use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
+use planforge_search::evaluation::BlindHeuristic;
+use planforge_search::search::SearchOutcome;
+use planforge_search::search::best_first::{AStarSearch, SearchParams};
 
 use crate::corpus::{
     self, Scratch, Solution, assert_fixture_set_is_pinned, blind_astar, problem_file, single_file,

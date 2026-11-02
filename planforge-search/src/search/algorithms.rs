@@ -5,17 +5,17 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::Task;
 use tracing::info;
 
+use super::SearchResult;
 use super::best_first::{
     AStar, BestFirstSearch, Greedy, NodeOrdering, OpenList, OpenListConfig, PreferredFirstOpenList,
-    TieBreakingOpenList,
+    SearchParams, TieBreakingOpenList,
 };
 use super::config::{SearchFeature, SearchLimits};
-use super::{SearchParams, SearchResult};
 use crate::heuristic_factory::{BuildContext, HeuristicBuildError, HeuristicConfig};
 use crate::successor_generator::SuccessorGeneratorConfig;
 
 /// `astar(heuristic, lazy=none, mpd=false, open_list=tiebreaking(),
-/// successor_generator=decision_tree())`; the heuristic defaults to blind.
+/// successor_generator=standard_grounded_tree())`; the heuristic defaults to blind.
 #[derive(Debug, crate::config::ApplyOptions)]
 pub struct AStarConfig {
     #[option(positional)]
@@ -81,7 +81,7 @@ impl SearchFeature for AStarFeature {
 }
 
 /// `gbfs(heuristic, open_list=preferred_first(),
-/// successor_generator=decision_tree())`; the heuristic defaults to blind.
+/// successor_generator=standard_grounded_tree())`; the heuristic defaults to blind.
 #[derive(Debug, crate::config::ApplyOptions)]
 pub struct GreedyBestFirstConfig {
     #[option(positional)]

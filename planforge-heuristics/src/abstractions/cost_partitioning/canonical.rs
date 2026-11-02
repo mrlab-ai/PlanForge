@@ -12,9 +12,9 @@ use crate::abstractions::sources::{
 };
 use crate::maximal_cliques::maximal_cliques;
 use planforge_search::config::ConfigError;
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::state_value_cache::StateValueCache;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 use planforge_search::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };

@@ -9,7 +9,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use super::*;
-use crate::evaluation::heuristic::BlindHeuristic;
+use crate::evaluation::BlindHeuristic;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use crate::search::SearchOutcome;
 use crate::test_tasks::{one_step_task, start_to_goal_task};

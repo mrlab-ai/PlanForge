@@ -10,15 +10,15 @@ use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use std::sync::Arc;
 
-use crate::evaluation::evaluator::EvaluationError;
+use crate::evaluation::EvaluationError;
 use crate::resource_limits::Deadline;
-use crate::successor_generator::{DecisionTree, RegistryExpander};
+use crate::successor_generator::{RegistryExpander, StandardGroundedTree};
 
 /// Samples states as the ends of random walks from the initial state.
 pub struct RandomWalkSampler {
     task: Arc<Task>,
     registry: StateRegistry,
-    expander: RegistryExpander<DecisionTree>,
+    expander: RegistryExpander<StandardGroundedTree>,
     initial_state: ConcreteState,
     average_operator_cost: f64,
 }
@@ -37,7 +37,7 @@ impl RandomWalkSampler {
                 / num_operators as f64
         };
         Self {
-            expander: RegistryExpander::new(DecisionTree::new(&task)),
+            expander: RegistryExpander::new(StandardGroundedTree::new(&task)),
             task,
             registry,
             initial_state,

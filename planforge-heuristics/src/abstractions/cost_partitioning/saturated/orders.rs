@@ -16,7 +16,7 @@ use super::partition::{Completion, PartitionedCollection};
 use super::scoring::compute_score;
 use super::{OrderSelection, ScpBuilder};
 use crate::abstractions::component::AbstractionComponent;
-use planforge_search::evaluation::evaluator::EvaluationError;
+use planforge_search::evaluation::EvaluationError;
 use planforge_search::resource_limits::Deadline;
 
 /// How many components of an order an info line shows.

@@ -21,7 +21,7 @@ impl HeuristicFeature for ExternalTest {
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
         BUILD_CALLED.store(true, Ordering::SeqCst);
         Ok(Box::new(
-            planforge_search::evaluation::heuristic::BlindHeuristic::for_task(context.task),
+            planforge_search::evaluation::BlindHeuristic::for_task(context.task),
         ))
     }
 }

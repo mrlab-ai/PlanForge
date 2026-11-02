@@ -31,10 +31,11 @@ use planforge_heuristics::abstractions::domain::config::{
 };
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
-use planforge_search::evaluation::evaluator::EvaluationState;
-use planforge_search::evaluation::heuristic::BlindHeuristic;
-use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
+use planforge_search::evaluation::BlindHeuristic;
+use planforge_search::evaluation::EvaluationState;
+use planforge_search::evaluation::Heuristic;
+use planforge_search::search::SearchOutcome;
+use planforge_search::search::best_first::{AStarSearch, SearchParams};
 use planforge_search::task_transformations::restriction::build_restricted_task;
 
 use crate::corpus::{self, Scratch, translate_to_disk};

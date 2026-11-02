@@ -11,8 +11,8 @@ use crate::abstractions::sources::{
     AbstractionPurpose, CombinationConfig, build_components, remaining_construction_time,
 };
 use planforge_search::config::ConfigError;
-use planforge_search::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::Heuristic;
+use planforge_search::evaluation::{EvaluationError, EvaluationState};
 use planforge_search::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
