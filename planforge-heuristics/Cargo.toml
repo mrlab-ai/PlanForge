@@ -25,7 +25,7 @@ planforge-cplex = { path = "../planforge-cplex", version = "0.1.0", optional = t
 
 [features]
 # Enables the native CPLEX backend of the LP-based heuristics.
-cplex = ["dep:planforge-cplex", "planforge-cplex/cplex", "planforge-search/cplex"]
+cplex = ["dep:planforge-cplex", "planforge-cplex/cplex"]
 
 [package.metadata.docs.rs]
 # Never ask docs.rs to build the proprietary native backend.

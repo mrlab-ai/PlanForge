@@ -24,14 +24,14 @@ use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::heuristic_factory::TaskRequirements;
 use planforge_search::search::{
-    AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchOutcome, SearchParams, SearchResult,
-    parse_search_spec,
+    AStarSearch, GreedyBestFirstSearch, SearchConfig, SearchLimits, SearchOutcome, SearchParams,
+    SearchResult, parse_search_spec,
 };
 use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,
     StateSpaceEnumerationError as RustStateSpaceEnumerationError, enumerate_state_space,
 };
-use planforge_search::successor_generator::SuccessorTree;
+use planforge_search::successor_generator::{DecisionTree, SuccessorGenerator};
 use planforge_search::task_transformations::{parse_transformation_spec, transform_task};
 
 create_exception!(planforge, PlanforgeError, PyException);
@@ -1006,7 +1006,7 @@ impl Heuristic for PyHeuristic {
 struct Task {
     task: Arc<planforge_sas::numeric_task::Task>,
     registry: RefCell<StateRegistry>,
-    succ: SuccessorTree,
+    succ: DecisionTree,
 }
 
 struct GilReleasedTask(Arc<planforge_sas::numeric_task::Task>);
@@ -1051,11 +1051,11 @@ fn translate_pddl_to_task(
 }
 
 /// `task` transformed by the transformation specifications `transforms`,
-/// in order, which must include the one `requirements` names.
+/// in order, which must include the ones `requirements` names.
 fn transform_numeric_task(
     task: planforge_sas::numeric_task::Task,
     transforms: &[String],
-    requirements: TaskRequirements,
+    requirements: &TaskRequirements,
 ) -> Result<planforge_sas::numeric_task::Task, String> {
     let transformations = transforms
         .iter()
@@ -1187,7 +1187,7 @@ impl Task {
         let task = transform_numeric_task(
             planforge_sas::numeric_task::Task::try_from_str(text).map_err(ParseError::new_err)?,
             &transforms,
-            TaskRequirements::ANY,
+            &TaskRequirements::default(),
         )
         .map_err(PlanforgeError::new_err)?;
         Ok(Self::build(Arc::new(task)))
@@ -1218,7 +1218,7 @@ impl Task {
                 translate_pddl_to_task(&domain, &problem)
             })
             .map_err(TranslateError::new_err)?;
-        let task = transform_numeric_task(task, &transforms, TaskRequirements::ANY)
+        let task = transform_numeric_task(task, &transforms, &TaskRequirements::default())
             .map_err(PlanforgeError::new_err)?;
         Ok(Self::build(Arc::new(task)))
     }
@@ -1520,12 +1520,13 @@ impl Task {
             error: error.clone(),
             name: "python".to_string(),
         });
-        let time_limit = max_time.map(Duration::from_secs_f64);
         // GIL is held for the whole search: the heuristic calls back into Python
         // once per evaluated state. This is intentionally NOT allow_threads.
         let params = SearchParams {
-            time_limit,
-            max_memory_bytes: max_memory,
+            limits: SearchLimits {
+                time: max_time.map(Duration::from_secs_f64),
+                memory_bytes: max_memory,
+            },
             ..SearchParams::new(heur)
         };
         let result = if greedy {
@@ -1545,7 +1546,7 @@ impl Task {
 impl Task {
     fn build(task: Arc<planforge_sas::numeric_task::Task>) -> Self {
         let registry = StateRegistry::for_task(task.clone());
-        let succ = SuccessorTree::new(&task);
+        let succ = DecisionTree::new(&task);
         Task {
             task,
             registry: RefCell::new(registry),
@@ -1571,7 +1572,7 @@ impl Task {
         let mut values = Vec::new();
         state.fill_state(registry, &mut values);
         let mut ids = Vec::new();
-        self.succ.get_applicable_operators(&values, &mut ids);
+        self.succ.applicable_operators(&values, &mut ids);
         ids.iter().map(OperatorIndex::index).collect()
     }
 
@@ -1693,7 +1694,7 @@ fn solve(
             planforge_sas::numeric_task::Task::try_from_str(&sas_text).map_err(SolveError::Parse)?
         };
 
-        let task = transform_numeric_task(task, &transforms, spec.requirements())
+        let task = transform_numeric_task(task, &transforms, &spec.requirements())
             .map_err(SolveError::Transform)?;
         let task: Arc<planforge_sas::numeric_task::Task> = Arc::new(task);
         spec.solve(

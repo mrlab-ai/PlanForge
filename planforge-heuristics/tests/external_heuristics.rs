@@ -6,7 +6,7 @@ use planforge_search::config::parse_call;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_factory::{
     BuildContext, EmptyConfig, HEURISTICS, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
-    RequiredBackend, entry,
+    entry,
 };
 
 static BUILD_CALLED: AtomicBool = AtomicBool::new(false);
@@ -28,8 +28,10 @@ impl HeuristicFeature for ExternalTest {
 struct ExternalCplexTest;
 impl HeuristicFeature for ExternalCplexTest {
     const NAME: &'static str = "external_cplex_test";
-    const BACKEND: RequiredBackend = RequiredBackend::Cplex;
     type Config = EmptyConfig;
+    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+        planforge_heuristics::requirements::require_cplex()
+    }
     fn build<'a>(
         config: &Self::Config,
         context: &BuildContext<'a>,

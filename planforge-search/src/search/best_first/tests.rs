@@ -12,13 +12,13 @@ use super::*;
 use crate::evaluation::heuristic::BlindHeuristic;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use crate::search::SearchOutcome;
-use crate::test_tasks::one_step_task;
+use crate::test_tasks::{one_step_task, start_to_goal_task};
 
 /// Step `search` until it terminates.
 fn finish(mut search: AStarSearch<'_>) -> SearchResult {
     loop {
-        if let Step::Terminate(termination) = search.step().unwrap() {
-            return search.core.finish(termination);
+        if let Some(outcome) = search.step().unwrap() {
+            return search.progress.finish(outcome, &search.space);
         }
     }
 }
@@ -126,12 +126,6 @@ fn metric_operator_costs_are_the_constant_increments() {
     assert!((min_cost - 0.002).abs() < 1e-12);
 }
 
-#[test]
-fn progress_values_print_six_decimals() {
-    assert_eq!(format_progress_value(95.4940004), "95.494000");
-    assert_eq!(format_progress_value(95.49400049), "95.494000");
-}
-
 struct FailingHeuristic;
 
 impl Heuristic for FailingHeuristic {
@@ -168,16 +162,7 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
         assignment_axioms: vec![],
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
-    let search = AStarSearch::new(
-        task.clone(),
-        SearchParams {
-            heuristic: Box::new(FailingHeuristic),
-            lazy: None,
-            mpd: false,
-            time_limit: None,
-            max_memory_bytes: None,
-        },
-    );
+    let search = AStarSearch::new(task.clone(), SearchParams::new(Box::new(FailingHeuristic)));
 
     let error = search.run().unwrap_err();
     assert!(
@@ -232,19 +217,16 @@ fn mpd_reevaluates_and_reinserts_a_stale_open_entry() {
     let mut search = AStarSearch::new(
         task.clone(),
         SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
             mpd: true,
-            time_limit: None,
-            max_memory_bytes: None,
+            ..SearchParams::new(Box::new(heuristic))
         },
     );
 
-    search.core.initialize().unwrap();
+    search.initialize().unwrap();
     assert_eq!(calls.get(), 1);
 
     revision.set(1);
-    assert_eq!(search.step().unwrap(), Step::Continue);
+    assert_eq!(search.step().unwrap(), None);
     assert_eq!(calls.get(), 2, "stale initial entry must be re-evaluated");
 
     let result = finish(search);
@@ -263,18 +245,9 @@ fn static_astar_does_not_pay_for_revision_checks() {
         reevaluate_on_every_pop: false,
     };
     let task = one_step_task();
-    let mut search = AStarSearch::new(
-        task.clone(),
-        SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
-            mpd: false,
-            time_limit: None,
-            max_memory_bytes: None,
-        },
-    );
+    let mut search = AStarSearch::new(task.clone(), SearchParams::new(Box::new(heuristic)));
 
-    search.core.initialize().unwrap();
+    search.initialize().unwrap();
     revision.set(1);
     let result = finish(search);
 
@@ -299,15 +272,12 @@ fn uncached_mpd_reevaluates_every_popped_entry() {
     let mut search = AStarSearch::new(
         task.clone(),
         SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
             mpd: true,
-            time_limit: None,
-            max_memory_bytes: None,
+            ..SearchParams::new(Box::new(heuristic))
         },
     );
 
-    search.core.initialize().unwrap();
+    search.initialize().unwrap();
     let result = finish(search);
 
     assert_eq!(solved_cost(&result), 1.0);
@@ -343,25 +313,25 @@ fn lazy_astar_defers_each_expansion_even_when_the_estimate_does_not_increase() {
         calls: calls.clone(),
     }));
     let mut search = AStarSearch::new(task.clone(), params);
-    search.core.initialize().unwrap();
+    search.initialize().unwrap();
     assert_eq!(
         calls.get(),
         0,
         "initialization evaluates only the primary heuristic"
     );
-    assert_eq!(search.step().unwrap(), Step::Continue);
+    assert_eq!(search.step().unwrap(), None);
     assert_eq!(
         calls.get(),
         1,
         "first pop evaluates and requeues the initial entry"
     );
-    assert_eq!(search.step().unwrap(), Step::Continue);
+    assert_eq!(search.step().unwrap(), None);
     assert_eq!(
         calls.get(),
         1,
         "second pop expands without another lazy evaluation"
     );
-    assert_eq!(search.step().unwrap(), Step::Continue);
+    assert_eq!(search.step().unwrap(), None);
     assert_eq!(calls.get(), 2, "goal entries also get a lazy evaluation");
     let result = finish(search);
     assert_eq!(solved_cost(&result), 1.0);
@@ -422,18 +392,37 @@ fn mpd_and_lazy_compare_dynamic_estimates_with_the_primary_estimate() {
         calls: lazy_calls.clone(),
     }));
     let mut search = AStarSearch::new(task.clone(), params);
-    search.core.initialize().unwrap();
-    assert_eq!(search.step().unwrap(), Step::Continue);
+    search.initialize().unwrap();
+    assert_eq!(search.step().unwrap(), None);
     assert_eq!(lazy_calls.get(), 1);
     revision.set(1);
     // Primary h grows from 1 to 2 while the lazy entry already has h=5.
-    assert_eq!(search.step().unwrap(), Step::Continue);
+    assert_eq!(search.step().unwrap(), None);
     assert_eq!(
         primary_calls.get(),
         3,
         "re-evaluate primary, then generate the goal"
     );
     assert_eq!(lazy_calls.get(), 1);
-    assert_eq!(search.step().unwrap(), Step::Continue);
+    assert_eq!(search.step().unwrap(), None);
     assert_eq!(solved_cost(&finish(search)), 1.0);
+}
+
+#[test]
+fn a_cheaper_duplicate_within_one_expansion_is_evaluated_and_queued_again() {
+    // `expensive` is generated first.
+    let task = start_to_goal_task(&[("expensive", 2), ("cheap", 1)]);
+    let result = AStarSearch::new(
+        task.clone(),
+        SearchParams::new(Box::new(BlindHeuristic::for_task(&task))),
+    )
+    .run()
+    .unwrap();
+    assert_eq!(solved_cost(&result), 1.0);
+    let nodes = result.statistics.nodes;
+    assert_eq!(
+        (nodes.expanded, nodes.generated, nodes.evaluated),
+        (2, 2, 2)
+    );
+    assert_eq!(result.statistics.evaluations, 3);
 }

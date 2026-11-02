@@ -25,6 +25,15 @@ impl fmt::Display for EvaluationError {
 
 impl std::error::Error for EvaluationError {}
 
+// What an evaluation reads is shared, so the states of one expansion can be
+// evaluated on several threads without copying them.
+const _: () = {
+    const fn assert_sync<T: Sync + ?Sized>() {}
+    assert_sync::<Task>();
+    assert_sync::<StateRegistry>();
+    assert_sync::<EvaluationState<'static, 'static>>();
+};
+
 /// State and task context for a single heuristic evaluation.
 pub struct EvaluationState<'state, 'task> {
     backing_state: &'state ConcreteState,

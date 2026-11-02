@@ -1,7 +1,8 @@
 //! Registries of the features the configuration grammar names: heuristics
 //! ([`crate::heuristic_factory::HEURISTICS`]), search algorithms
-//! ([`crate::search::SEARCH_ALGORITHMS`]) and task transformations
-//! ([`crate::task_transformations::TRANSFORMATIONS`]).
+//! ([`crate::search::SEARCH_ALGORITHMS`]), successor generators
+//! ([`crate::successor_generator::SUCCESSOR_GENERATORS`]) and task
+//! transformations ([`crate::task_transformations::TRANSFORMATIONS`]).
 //!
 //! Each registry has built-in entries; a binary registers every other entry
 //! once, before it parses a configuration, and a crate adds a feature by
@@ -54,7 +55,7 @@ impl<C> Entry<C> {
 }
 
 /// The options a configuration type accepts, with its defaults.
-pub fn options_of<C: ApplyOptions + Default>() -> Vec<OptionDoc> {
+pub(crate) fn options_of<C: ApplyOptions + Default>() -> Vec<OptionDoc> {
     let mut options = Vec::new();
     C::default().describe_options(&mut options);
     options

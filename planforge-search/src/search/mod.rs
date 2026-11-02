@@ -3,13 +3,22 @@
 //! - [`SearchConfig::solve`] runs the search a [`SearchConfig`] describes.
 //! - `config`: the `--search` grammar and its registry,
 //!   [`SEARCH_ALGORITHMS`]; `algorithms`: the built-in algorithms.
-//! - [`best_first`]: best-first search (A*, greedy best-first search,
-//!   uniform-cost search) and its open lists and node bookkeeping.
-//! - `statistics`: what a search counts.
+//!
+//! A search algorithm is composed of two building blocks:
+//!
+//! - [`SearchSpace`]: the registered states, successor generation, duplicate
+//!   detection on the search node of each reached state, and plan extraction;
+//! - [`SearchProgress`]: the time and memory limits, the
+//!   [`SearchStatistics`] and the progress reports.
+//!
+//! [`best_first`] builds best-first search (A*, greedy best-first search) on
+//! them; `tutorials/rust-custom-search` builds enforced hill-climbing.
 
 mod algorithms;
 pub mod best_first;
 mod config;
+mod progress;
+mod search_space;
 mod statistics;
 
 pub use algorithms::{AStarConfig, AStarFeature, GreedyBestFirstConfig, GreedyBestFirstFeature};
@@ -18,6 +27,8 @@ pub use config::{
     SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchFeature, SearchLimits, entry,
     parse_search_spec, search_algorithm_help,
 };
+pub use progress::SearchProgress;
+pub use search_space::{Reached, SearchNode, SearchSpace, Successor};
 pub use statistics::{NodeCounters, SearchStatistics};
 
 use planforge_sas::numeric_task::Operator;

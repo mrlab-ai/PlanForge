@@ -10,7 +10,7 @@ Website: <https://mrlab.ai/PlanForge/> (source in [`docs/`](docs/))
 
 ## Status
 
-Production-quality on the admissible search and heuristic paths (A\* with blind, lmcutnumeric, pattern databases, canonical and SCP-based domain abstractions). Greedy best-first search and an FF-style relaxed-plan heuristic with Metric-FF monotonic numeric relaxation are also available. Preferred-operator integration is still planned.
+Production-quality on the admissible search and heuristic paths (A\* with blind, lmcutnumeric, pattern databases, canonical and SCP-based domain abstractions). Greedy best-first search and an FF-style relaxed-plan heuristic with Metric-FF monotonic numeric relaxation are also available. Greedy best-first search expands the successors reached by FF's preferred operators (helpful actions) first.
 
 ## Input formats
 
@@ -41,7 +41,15 @@ Production-quality on the admissible search and heuristic paths (A\* with blind,
 
 - **A\*** — admissible best-first search (`f = g + h`). The production path for guaranteed-optimal planning under an admissible heuristic.
 - **Greedy best-first search (GBFS)** — non-admissible best-first search (`f = h`). Often finds plans far faster than A\* with the same heuristic, at the cost of optimality.
-- **FF-style preferred operators** — planned.
+- **Preferred operators** — `gbfs` expands the successors reached by the
+  operators its heuristic prefers (FF's helpful actions) first
+  (`open_list=preferred_first()`, the default).
+
+Both take `open_list=...` (`tiebreaking()`: smallest key first, ties first in,
+first out; `preferred_first()`) and `successor_generator=...`
+(`decision_tree()`, the default). A binary that registers its own open lists,
+successor generators, search algorithms or heuristics names them the same way;
+see [ARCHITECTURE.md](docs/ARCHITECTURE.md#extending-planforge).
 
 ## Building
 
@@ -187,15 +195,18 @@ where each extension point lives. Workspace crates:
 - `planforge-sas` — the task: variables, operators, axioms, states and the
   state registry, and the SAS format.
 - `planforge-translate` — PDDL to task translation.
-- `planforge-search` — the search core: search algorithms, the `Heuristic`
-  trait and the heuristic registry, successor generation, the exact state
-  space, task transformations and the `--search` language. It knows no
-  heuristic but blind search.
+- `planforge-search` — the search core: the building blocks of a search
+  (`SearchSpace`, `SearchProgress`), best-first search with its node orderings
+  and open lists, the `Heuristic` trait, successor generation, the exact state
+  space, task transformations, the registries and the `--search` language. It
+  knows no heuristic but blind search. Its crate documentation lists every
+  extension point.
 - `planforge-heuristics` — the heuristics, one module per technique:
   abstractions (with cost partitioning), landmarks (numeric LM-cut),
   relaxation (FF), potentials and combinations. It depends on the core only.
   Adding a heuristic is a change to this crate alone: its own module, and one
-  entry in `heuristics()`, which `planforge` registers.
+  entry in `heuristics()`, which `planforge` registers. `requirements` holds
+  what its heuristics need of the task and of the build (CPLEX).
 - `planforge-config-derive` — `#[derive(ApplyOptions)]`, which cannot be merged: a
   `proc-macro` crate is its own compilation unit. Fields marked
   `#[option(positional)]` also take positional arguments, in field order; a

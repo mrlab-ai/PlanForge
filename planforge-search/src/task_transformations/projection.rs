@@ -28,7 +28,6 @@ use planforge_sas::numeric_task::{
     VariableIndex,
 };
 
-use crate::evaluation::validate_abstractable_goal;
 use crate::task_transformations::restriction::validate_restricted_task;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -84,29 +83,6 @@ impl Pattern {
             }
         }
     }
-
-    pub fn is_subset_of(&self, other: &Self) -> bool {
-        is_sorted_subset(&self.regular, &other.regular)
-            && is_sorted_subset(&self.numeric, &other.numeric)
-    }
-}
-
-fn is_sorted_subset(lhs: &[VariableIndex], rhs: &[VariableIndex]) -> bool {
-    let mut lhs_index = 0;
-    let mut rhs_index = 0;
-
-    while lhs_index < lhs.len() && rhs_index < rhs.len() {
-        match lhs[lhs_index].cmp(&rhs[rhs_index]) {
-            std::cmp::Ordering::Less => return false,
-            std::cmp::Ordering::Equal => {
-                lhs_index += 1;
-                rhs_index += 1;
-            }
-            std::cmp::Ordering::Greater => rhs_index += 1,
-        }
-    }
-
-    lhs_index == lhs.len()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -431,22 +407,6 @@ impl ProjectedTask {
     /// The projected task.
     pub fn task(&self) -> &Arc<Task> {
         &self.task
-    }
-
-    pub fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        let mut projected_prop_values = Vec::with_capacity(self.projected_var_to_original.len());
-        let mut projected_numeric_values =
-            Vec::with_capacity(self.projected_num_var_to_original.len());
-        self.project_state_values_into(
-            StateValues::new(propositional_values, numeric_values),
-            &mut projected_prop_values,
-            &mut projected_numeric_values,
-        );
-        Ok((projected_prop_values, projected_numeric_values))
     }
 
     /// Fill `projected_prop_values` and `projected_numeric_values` with the
@@ -973,4 +933,44 @@ fn normalize_projected_variable_layers(
     }
 
     layers
+}
+
+/// Rejects a task whose goal an abstraction cannot express, naming the variable
+/// that makes it one.
+///
+/// Every abstraction family here supports a *conjunctive* goal: a set of facts an
+/// abstract operator can bring about. A propositional variable an axiom writes is
+/// not one. No abstract operator ever writes it — abstract operators come from the
+/// task's operators, and a derived variable has no operator writing it either — so
+/// an abstraction over such a goal has nothing to reach, and reports the goal
+/// unreachable or drops it. Both answers have been wrong in this tree before, and
+/// both are silent, so the family refuses the task by name instead.
+///
+/// A numeric comparison is *not* affected, which is the point of the distinction:
+/// its variable is derived in the SAS sense too, but it is
+/// [`FactNamespace::Condition`](planforge_sas::numeric_task::FactNamespace::Condition),
+/// and the abstraction machinery reasons about the comparison itself — refining
+/// its operands is what the numeric CEGAR loop does all day.
+///
+/// What is left, then, is a `:derived` predicate the problem puts in its goal, and
+/// the `@goal-reachable` predicate the translator invents for a disjunctive,
+/// quantified or nested goal. Every non-abstraction configuration — blind, `ff`,
+/// `lmcutnumeric` — still solves both, since it tests the goal fact in a state the
+/// axiom evaluator has closed.
+pub fn validate_abstractable_goal(task: &Task) -> std::result::Result<(), String> {
+    for fact in task.goals() {
+        if fact.is_condition() {
+            continue;
+        }
+        let variable = &task.variables()[fact.var()];
+        if let Some(layer) = variable.axiom_layer() {
+            return Err(format!(
+                "abstractions support conjunctive goals only: goal fact {fact:?} names the \
+                 derived variable {:?} ({:?}) in axiom layer {layer}, which no operator writes",
+                variable.name(),
+                task.fact_name(fact)
+            ));
+        }
+    }
+    Ok(())
 }

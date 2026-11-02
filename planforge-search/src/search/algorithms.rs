@@ -5,12 +5,18 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::Task;
 use tracing::info;
 
+use super::best_first::{
+    AStar, BestFirstSearch, Greedy, NodeOrdering, OpenList, OpenListConfig, PreferredFirstOpenList,
+    TieBreakingOpenList,
+};
 use super::config::{SearchFeature, SearchLimits};
-use super::{AStarSearch, GreedyBestFirstSearch, SearchParams, SearchResult};
+use super::{SearchParams, SearchResult};
 use crate::heuristic_factory::{BuildContext, HeuristicBuildError, HeuristicConfig};
+use crate::successor_generator::SuccessorGeneratorConfig;
 
-/// `astar(heuristic, lazy=none, mpd=false)`; the heuristic defaults to blind.
-#[derive(Debug, Default, crate::config::ApplyOptions)]
+/// `astar(heuristic, lazy=none, mpd=false, open_list=tiebreaking(),
+/// successor_generator=decision_tree())`; the heuristic defaults to blind.
+#[derive(Debug, crate::config::ApplyOptions)]
 pub struct AStarConfig {
     #[option(positional)]
     pub heuristic: HeuristicConfig,
@@ -20,6 +26,20 @@ pub struct AStarConfig {
     /// Multi-path dependence: re-evaluate a popped node whose estimate
     /// predates the heuristic's current revision.
     pub mpd: bool,
+    pub open_list: OpenListConfig,
+    pub successor_generator: SuccessorGeneratorConfig,
+}
+
+impl Default for AStarConfig {
+    fn default() -> Self {
+        Self {
+            heuristic: HeuristicConfig::default(),
+            lazy: None,
+            mpd: false,
+            open_list: OpenListConfig::TieBreaking,
+            successor_generator: SuccessorGeneratorConfig::default(),
+        }
+    }
 }
 
 pub struct AStarFeature;
@@ -48,23 +68,36 @@ impl SearchFeature for AStarFeature {
                 .map(|lazy| build(lazy, &context))
                 .transpose()?,
             mpd: config.mpd,
-            time_limit: limits.time,
-            max_memory_bytes: limits.memory_bytes,
+            successor_generator: config.successor_generator.clone(),
+            limits,
         };
         info!(
             "Starting A* search, mpd={}, lazy={}",
             config.mpd,
             params.lazy.is_some()
         );
-        searched(AStarSearch::new(task.clone(), params).run())
+        run_best_first::<AStar>(task.clone(), params, &config.open_list)
     }
 }
 
-/// `gbfs(heuristic)`; the heuristic defaults to blind.
-#[derive(Debug, Default, crate::config::ApplyOptions)]
+/// `gbfs(heuristic, open_list=preferred_first(),
+/// successor_generator=decision_tree())`; the heuristic defaults to blind.
+#[derive(Debug, crate::config::ApplyOptions)]
 pub struct GreedyBestFirstConfig {
     #[option(positional)]
     pub heuristic: HeuristicConfig,
+    pub open_list: OpenListConfig,
+    pub successor_generator: SuccessorGeneratorConfig,
+}
+
+impl Default for GreedyBestFirstConfig {
+    fn default() -> Self {
+        Self {
+            heuristic: HeuristicConfig::default(),
+            open_list: OpenListConfig::PreferredFirst,
+            successor_generator: SuccessorGeneratorConfig::default(),
+        }
+    }
 }
 
 pub struct GreedyBestFirstFeature;
@@ -84,13 +117,36 @@ impl SearchFeature for GreedyBestFirstFeature {
     ) -> std::io::Result<SearchResult> {
         let context = BuildContext::new(&task);
         let params = SearchParams {
-            time_limit: limits.time,
-            max_memory_bytes: limits.memory_bytes,
+            successor_generator: config.successor_generator.clone(),
+            limits,
             ..SearchParams::new(build(&config.heuristic, &context)?)
         };
         info!("Starting GBFS search...");
-        searched(GreedyBestFirstSearch::new(task.clone(), params).run())
+        run_best_first::<Greedy>(task.clone(), params, &config.open_list)
     }
+}
+
+/// Best-first search ordered by `O` on the open list `open_list` names: a
+/// built-in list statically dispatched, a registered one through
+/// `Box<dyn OpenList>`.
+fn run_best_first<O: NodeOrdering>(
+    task: Arc<Task>,
+    params: SearchParams<'_>,
+    open_list: &OpenListConfig,
+) -> std::io::Result<SearchResult> {
+    let result = match open_list {
+        OpenListConfig::TieBreaking => {
+            BestFirstSearch::<O, TieBreakingOpenList<O>>::new(task, params).run()
+        }
+        OpenListConfig::PreferredFirst => {
+            BestFirstSearch::<O, PreferredFirstOpenList<O>>::new(task, params).run()
+        }
+        OpenListConfig::Registered(list) => {
+            BestFirstSearch::<O, Box<dyn OpenList>>::with_open_list(task, params, list.build())
+                .run()
+        }
+    };
+    result.map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }
 
 fn build<'a>(
@@ -100,8 +156,4 @@ fn build<'a>(
     heuristic
         .build(context)
         .map_err(HeuristicBuildError::into_io_error)
-}
-
-fn searched(result: anyhow::Result<SearchResult>) -> std::io::Result<SearchResult> {
-    result.map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }

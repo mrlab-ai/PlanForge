@@ -32,11 +32,5 @@ pub use optimizer::{NumericPotentialOptimizer, OptimizationOutcome};
 #[cfg(feature = "cplex")]
 pub use task::{FeatureBounds, PotentialTask};
 
-#[cfg(feature = "cplex")]
-pub fn assert_cplex_ready() -> Result<(), String> {
-    planforge_cplex::assert_unrestricted_license()
-        .map_err(|error| format!("an unrestricted CPLEX installation is required: {error}"))
-}
-
 #[cfg(all(test, feature = "cplex"))]
 mod tests;

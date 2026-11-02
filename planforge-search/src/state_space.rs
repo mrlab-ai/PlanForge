@@ -15,7 +15,7 @@ use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorInde
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::resource_limits::Deadline;
-use crate::successor_generator::RegistryExpander;
+use crate::successor_generator::{DecisionTree, RegistryExpander};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnumerationLimits {
@@ -229,7 +229,7 @@ pub fn enumerate_state_space(
         .map_err(|error| StateSpaceEnumerationError::InvalidLimit(format!("max_time: {error}")))?;
     check_time_limit(deadline, limits.max_time, 0, 0)?;
 
-    let mut expander = RegistryExpander::new(&task);
+    let mut expander = RegistryExpander::new(DecisionTree::new(&task));
     let operators = task.operators();
     let num_propositional_variables = task.variables().len();
     let num_numeric_variables = task.numeric_variables().len();

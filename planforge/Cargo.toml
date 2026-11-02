@@ -24,7 +24,7 @@ doc = false
 
 [features]
 # Forward to every LP-backed component.
-cplex = ["planforge-search/cplex", "planforge-heuristics/cplex"]
+cplex = ["planforge-heuristics/cplex"]
 
 [dependencies]
 planforge-sas = { path = "../planforge-sas", version = "0.1.0" }

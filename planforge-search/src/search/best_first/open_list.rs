@@ -1,21 +1,23 @@
 //! The open lists of best-first search.
 
-use ordered_float::OrderedFloat;
-use planforge_sas::state_registry::StateID;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::marker::PhantomData;
 
-/// A queued search node. Entries pop by smallest priority, then smallest
-/// heuristic estimate, then first in.
+use planforge_sas::state_registry::StateID;
+
+use super::NodeOrdering;
+
+/// A queued search node: its path cost `g`, its heuristic estimate `h`, its
+/// state and when it was queued. An open list orders entries by whatever it
+/// computes from these; the built-in ones by the [`NodeOrdering`]'s key.
 #[derive(Debug, Clone, Copy)]
 pub struct OpenEntry {
-    pub(super) priority: OrderedFloat<f64>,
-    pub(super) h_value: OrderedFloat<f64>,
-    pub(super) g_value: f64,
-    pub(super) insertion_order: u32,
-    /// Compact state ID plus the preferred and lazy-evaluated flags in
-    /// its two high bits. Keeping all priority values as `f64` while packing
-    /// these booleans makes an entry 32 rather than 40 bytes.
+    g: f64,
+    h: f64,
+    insertion_order: u32,
+    /// The state ID plus the preferred and lazy-evaluated flags in its two
+    /// high bits, which keeps an entry at 24 bytes.
     tagged_state_id: u32,
 }
 
@@ -24,27 +26,45 @@ const LAZY_EVALUATED_FLAG: u32 = 1 << 30;
 const STATE_ID_MASK: u32 = LAZY_EVALUATED_FLAG - 1;
 
 impl OpenEntry {
-    pub(super) fn new(state_id: StateID, g: f64, h: f64, priority: f64, preferred: bool) -> Self {
+    pub(super) fn new(
+        state_id: StateID,
+        g: f64,
+        h: f64,
+        preferred: bool,
+        insertion_order: u32,
+    ) -> Self {
         let compact = u32::try_from(state_id).expect("open-list state id exceeds u32");
         assert!(
             compact <= STATE_ID_MASK,
             "open-list state id exceeds the 30-bit compact representation"
         );
         Self {
-            priority: OrderedFloat(priority),
-            h_value: OrderedFloat(h),
-            g_value: g,
-            insertion_order: 0,
+            g,
+            h,
+            insertion_order,
             tagged_state_id: compact | if preferred { PREFERRED_FLAG } else { 0 },
         }
     }
 
-    pub(super) fn state_id(self) -> StateID {
+    pub fn state_id(self) -> StateID {
         (self.tagged_state_id & STATE_ID_MASK) as StateID
     }
 
+    pub fn g(self) -> f64 {
+        self.g
+    }
+
+    pub fn h(self) -> f64 {
+        self.h
+    }
+
+    /// The number of entries queued before this one.
+    pub fn insertion_order(self) -> u32 {
+        self.insertion_order
+    }
+
     /// Whether a preferred operator of its parent generated the node.
-    pub(super) fn is_preferred(self) -> bool {
+    pub fn is_preferred(self) -> bool {
         self.tagged_state_id & PREFERRED_FLAG != 0
     }
 
@@ -52,48 +72,26 @@ impl OpenEntry {
         self.tagged_state_id & LAZY_EVALUATED_FLAG != 0
     }
 
-    pub(super) fn with_estimate(mut self, h: f64, priority: f64) -> Self {
-        self.h_value = OrderedFloat(h);
-        self.priority = OrderedFloat(priority);
+    /// The entry requeued with the estimate `h` as the `insertion_order`th
+    /// entry; `lazy_evaluated` marks it as evaluated by the lazy heuristic.
+    pub(super) fn requeued(mut self, h: f64, insertion_order: u32, lazy_evaluated: bool) -> Self {
+        self.h = h;
+        self.insertion_order = insertion_order;
+        if lazy_evaluated {
+            self.tagged_state_id |= LAZY_EVALUATED_FLAG;
+        }
         self
     }
-
-    pub(super) fn mark_lazy_evaluated(&mut self) {
-        self.tagged_state_id |= LAZY_EVALUATED_FLAG;
-    }
 }
 
-impl PartialEq for OpenEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl Eq for OpenEntry {}
-
-impl PartialOrd for OpenEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for OpenEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // `BinaryHeap` is a max-heap, so the comparison is inverted: the
-        // smaller entry compares greater and pops first.
-        other
-            .priority
-            .cmp(&self.priority)
-            .then_with(|| other.h_value.cmp(&self.h_value))
-            .then_with(|| other.insertion_order.cmp(&self.insertion_order))
-    }
-}
-
-/// The queue discipline of best-first search over [`OpenEntry`]'s order.
-pub trait OpenList: Default {
+/// The queue discipline of best-first search. Object safe: a registered,
+/// user-written open list is a `Box<dyn OpenList>`, which works with every
+/// [`NodeOrdering`]; the built-in lists are generic over the ordering, so the
+/// search loop dispatches to them statically.
+pub trait OpenList {
     /// Whether the list treats preferred nodes differently, and the search
     /// must therefore ask its heuristic for preferred operators.
-    const USES_PREFERRED_OPERATORS: bool;
+    fn uses_preferred_operators(&self) -> bool;
     fn push(&mut self, entry: OpenEntry);
     fn pop(&mut self) -> Option<OpenEntry>;
     fn len(&self) -> usize;
@@ -102,30 +100,101 @@ pub trait OpenList: Default {
     }
 }
 
-/// One heap; preferred nodes are not distinguished.
-#[derive(Debug, Default)]
-pub struct TieBreakingOpenList(BinaryHeap<OpenEntry>);
-impl OpenList for TieBreakingOpenList {
-    const USES_PREFERRED_OPERATORS: bool = false;
+impl OpenList for Box<dyn OpenList> {
+    fn uses_preferred_operators(&self) -> bool {
+        (**self).uses_preferred_operators()
+    }
     fn push(&mut self, entry: OpenEntry) {
-        self.0.push(entry);
+        (**self).push(entry);
     }
     fn pop(&mut self) -> Option<OpenEntry> {
-        self.0.pop()
+        (**self).pop()
+    }
+    fn len(&self) -> usize {
+        (**self).len()
+    }
+}
+
+/// An entry in a heap ordered by `O`'s key, then first in, first out.
+struct Keyed<O>(OpenEntry, PhantomData<fn() -> O>);
+
+impl<O: NodeOrdering> Keyed<O> {
+    #[inline]
+    fn key(&self) -> (O::Key, u32) {
+        (O::key(self.0.g, self.0.h), self.0.insertion_order)
+    }
+}
+
+impl<O: NodeOrdering> PartialEq for Keyed<O> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl<O: NodeOrdering> Eq for Keyed<O> {}
+
+impl<O: NodeOrdering> PartialOrd for Keyed<O> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<O: NodeOrdering> Ord for Keyed<O> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        // `BinaryHeap` is a max-heap: the smaller key compares greater.
+        other.key().cmp(&self.key())
+    }
+}
+
+/// One heap by `O`'s key, ties first in, first out; preferred nodes are not
+/// distinguished.
+pub struct TieBreakingOpenList<O>(BinaryHeap<Keyed<O>>);
+
+impl<O: NodeOrdering> Default for TieBreakingOpenList<O> {
+    fn default() -> Self {
+        Self(BinaryHeap::new())
+    }
+}
+
+impl<O: NodeOrdering> OpenList for TieBreakingOpenList<O> {
+    fn uses_preferred_operators(&self) -> bool {
+        false
+    }
+    #[inline]
+    fn push(&mut self, entry: OpenEntry) {
+        self.0.push(Keyed(entry, PhantomData));
+    }
+    #[inline]
+    fn pop(&mut self) -> Option<OpenEntry> {
+        self.0.pop().map(|keyed| keyed.0)
     }
     fn len(&self) -> usize {
         self.0.len()
     }
 }
 
-/// Two heaps; the preferred one is drained strictly before the regular one.
-#[derive(Debug, Default)]
-pub struct PreferredFirstOpenList {
-    preferred: BinaryHeap<OpenEntry>,
-    regular: BinaryHeap<OpenEntry>,
+/// Two [`TieBreakingOpenList`]s; the one of preferred nodes is drained
+/// strictly before the other.
+pub struct PreferredFirstOpenList<O> {
+    preferred: TieBreakingOpenList<O>,
+    regular: TieBreakingOpenList<O>,
 }
-impl OpenList for PreferredFirstOpenList {
-    const USES_PREFERRED_OPERATORS: bool = true;
+
+impl<O: NodeOrdering> Default for PreferredFirstOpenList<O> {
+    fn default() -> Self {
+        Self {
+            preferred: TieBreakingOpenList::default(),
+            regular: TieBreakingOpenList::default(),
+        }
+    }
+}
+
+impl<O: NodeOrdering> OpenList for PreferredFirstOpenList<O> {
+    fn uses_preferred_operators(&self) -> bool {
+        true
+    }
+    #[inline]
     fn push(&mut self, entry: OpenEntry) {
         if entry.is_preferred() {
             self.preferred.push(entry);
@@ -133,6 +202,7 @@ impl OpenList for PreferredFirstOpenList {
             self.regular.push(entry);
         }
     }
+    #[inline]
     fn pop(&mut self) -> Option<OpenEntry> {
         self.preferred.pop().or_else(|| self.regular.pop())
     }
@@ -143,54 +213,47 @@ impl OpenList for PreferredFirstOpenList {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{AStar, Greedy};
     use super::*;
 
     #[test]
-    fn open_entry_is_32_bytes_and_preserves_flags_and_id() {
-        assert_eq!(std::mem::size_of::<OpenEntry>(), 32);
-        let mut open = TieBreakingOpenList::default();
-        let mut entry = OpenEntry::new(123, 2.0, 3.0, 5.0, true);
-        entry.mark_lazy_evaluated();
-        open.push(entry);
-        let entry = open.pop().unwrap();
+    fn an_open_entry_is_24_bytes_and_keeps_its_flags_and_id() {
+        assert_eq!(std::mem::size_of::<OpenEntry>(), 24);
+        let entry = OpenEntry::new(123, 2.0, 3.0, true, 0).requeued(4.0, 7, true);
         assert_eq!(entry.state_id(), 123);
-        assert!(entry.is_preferred());
-        assert!(entry.is_lazy_evaluated());
-        assert_eq!(entry.g_value, 2.0);
-        assert_eq!(entry.h_value.into_inner(), 3.0);
-        assert_eq!(entry.priority.into_inner(), 5.0);
+        assert!(entry.is_preferred() && entry.is_lazy_evaluated());
+        assert_eq!(
+            (entry.g(), entry.h(), entry.insertion_order()),
+            (2.0, 4.0, 7)
+        );
     }
 
-    #[test]
-    fn tie_breaking_orders_by_priority_then_estimate_then_fifo() {
-        let mut open = TieBreakingOpenList::default();
-        for (order, (f, preferred, h)) in [
-            (5.0, true, 3.0),
-            (4.0, false, 2.0),
-            (5.0, false, 1.0),
-            (5.0, true, 2.0),
-            (5.0, false, 2.0),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let mut entry = OpenEntry::new(order, 0.0, h, f, preferred);
-            entry.insertion_order = order as u32;
-            open.push(entry);
+    fn popped<Q: OpenList>(mut open: Q, entries: &[(f64, f64, bool)]) -> Vec<StateID> {
+        for (order, &(g, h, preferred)) in entries.iter().enumerate() {
+            open.push(OpenEntry::new(order, g, h, preferred, order as u32));
         }
-        let ids = std::iter::from_fn(|| open.pop())
+        std::iter::from_fn(|| open.pop())
             .map(OpenEntry::state_id)
-            .collect::<Vec<_>>();
-        assert_eq!(ids, [1, 2, 3, 4, 0]);
+            .collect()
     }
 
     #[test]
-    fn preferred_first_ignores_regular_priority_until_preferred_heap_is_empty() {
-        let mut open = PreferredFirstOpenList::default();
-        open.push(OpenEntry::new(1, 0.0, 1.0, 1.0, false));
-        open.push(OpenEntry::new(2, 0.0, 100.0, 100.0, true));
-        assert_eq!(open.pop().unwrap().state_id(), 2);
-        assert_eq!(open.pop().unwrap().state_id(), 1);
-        assert!(open.pop().is_none());
+    fn astar_orders_by_f_then_h_then_first_in() {
+        let entries = [
+            (2.0, 3.0, true),
+            (2.0, 2.0, false),
+            (4.0, 1.0, false),
+            (3.0, 2.0, true),
+            (1.0, 4.0, false),
+        ];
+        let open = TieBreakingOpenList::<AStar>::default();
+        assert_eq!(popped(open, &entries), [1, 2, 3, 0, 4]);
+    }
+
+    #[test]
+    fn preferred_first_drains_the_preferred_nodes_first() {
+        let entries = [(0.0, 1.0, false), (0.0, 100.0, true), (0.0, 50.0, true)];
+        let open = PreferredFirstOpenList::<Greedy>::default();
+        assert_eq!(popped(open, &entries), [2, 1, 0]);
     }
 }

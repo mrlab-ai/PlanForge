@@ -31,10 +31,12 @@ use limits::{
 };
 use planforge_sas::numeric_task::Task;
 use planforge_search::heuristic_factory::{HEURISTICS, HeuristicEntry, TaskRequirements};
+use planforge_search::search::best_first::{OPEN_LISTS, OpenListEntry};
 use planforge_search::search::{
     SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchLimits, SearchResult,
 };
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
+use planforge_search::successor_generator::{SUCCESSOR_GENERATORS, SuccessorGeneratorEntry};
 use planforge_search::task_transformations::{
     TRANSFORMATIONS, TransformationConfig, TransformationEntry, parse_transformation_spec,
     transform_task, transformation_help,
@@ -101,11 +103,37 @@ pub struct Extensions {
     pub heuristics: Vec<HeuristicEntry>,
     pub search_algorithms: Vec<SearchEntry>,
     pub transformations: Vec<TransformationEntry>,
+    pub successor_generators: Vec<SuccessorGeneratorEntry>,
+    pub open_lists: Vec<OpenListEntry>,
 }
 
 /// Run the standard PlanForge CLI, with `extensions` registered next to
 /// PlanForge's own features. This is the supported way to ship your own
-/// heuristic, search algorithm or task transformation inside the real binary.
+/// heuristic, search algorithm, open list, successor generator or task
+/// transformation inside the real binary:
+///
+/// ```no_run
+/// use planforge_search::search::{SearchFeature, SearchLimits, SearchResult, entry};
+/// # use planforge_search::heuristic_factory::{EmptyConfig, HeuristicConfig};
+/// # use planforge_sas::numeric_task::Task;
+/// # use std::sync::Arc;
+/// # struct MySearch;
+/// # impl SearchFeature for MySearch {
+/// #     const NAME: &'static str = "my_search";
+/// #     type Config = EmptyConfig;
+/// #     fn heuristics(_: &EmptyConfig) -> Vec<&HeuristicConfig> { Vec::new() }
+/// #     fn run(_: &EmptyConfig, _: Arc<Task>, _: SearchLimits) -> std::io::Result<SearchResult> {
+/// #         unimplemented!()
+/// #     }
+/// # }
+///
+/// fn main() -> std::io::Result<()> {
+///     planforge::run_with(planforge::Extensions {
+///         search_algorithms: vec![entry::<MySearch>()],
+///         ..Default::default()
+///     })
+/// }
+/// ```
 pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
     let mut heuristics = planforge_heuristics::heuristics();
     heuristics.extend(extensions.heuristics);
@@ -114,6 +142,12 @@ pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
         .map_err(std::io::Error::other)?;
     SEARCH_ALGORITHMS
         .register(extensions.search_algorithms)
+        .map_err(std::io::Error::other)?;
+    SUCCESSOR_GENERATORS
+        .register(extensions.successor_generators)
+        .map_err(std::io::Error::other)?;
+    OPEN_LISTS
+        .register(extensions.open_lists)
         .map_err(std::io::Error::other)?;
     let mut transformations = planforge_heuristics::transformations();
     transformations.extend(extensions.transformations);
@@ -377,7 +411,8 @@ fn load_enumeration_task(
     } else {
         Task::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
     };
-    transform_task(task, &arguments.transform, TaskRequirements::ANY).map_err(transformation_error)
+    transform_task(task, &arguments.transform, &TaskRequirements::default())
+        .map_err(transformation_error)
 }
 
 fn create_csv(path: &Path) -> std::io::Result<BufWriter<std::fs::File>> {
@@ -535,7 +570,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let task = Task::try_from_file(&path).map_err(std::io::Error::other)?;
         (task, path)
     };
-    let task = transform_task(task, &cli.transform, cli.search.requirements())
+    let task = transform_task(task, &cli.transform, &cli.search.requirements())
         .map_err(transformation_error)?;
     let task: Arc<Task> = Arc::new(task);
     let parse_time = start_time.elapsed();

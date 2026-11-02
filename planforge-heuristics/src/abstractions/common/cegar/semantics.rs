@@ -21,7 +21,7 @@ use crate::abstractions::common::coordinates::Coordinates;
 use crate::abstractions::common::operator_support::validate_abstraction_operator;
 use crate::abstractions::common::regions::RegionSemantics;
 use planforge_search::evaluation::seed::{RANDOM_SPLIT_SEED, mix_seed, stable_text_seed};
-use planforge_search::evaluation::validate_abstractable_goal;
+use planforge_search::task_transformations::projection::validate_abstractable_goal;
 
 /// How CEGAR places and chooses splits.
 #[derive(Debug, Clone, Copy)]

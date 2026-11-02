@@ -7,7 +7,9 @@
 //! - [`relaxation`]: the numeric FF heuristic;
 //! - [`potentials`]: numeric potential heuristics (with the `cplex` feature);
 //! - [`combinations`]: the maximum over heuristics and the admissibility
-//!   check around one.
+//!   check around one;
+//! - [`requirements`]: what these heuristics need of the task and of the
+//!   build.
 //!
 //! A binary registers [`heuristics`] and [`transformations`] with the core's
 //! registries before it parses a configuration; `planforge` does so for its
@@ -20,6 +22,7 @@ pub mod landmarks;
 pub(crate) mod maximal_cliques;
 pub mod potentials;
 pub mod relaxation;
+pub mod requirements;
 
 use abstractions::cartesian::CartesianAbstractionCollectionConfig;
 use abstractions::domain::config::DomainAbstractionCollectionConfig;

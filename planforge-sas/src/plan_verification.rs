@@ -9,7 +9,7 @@
 //! *which* literal broke a candidate sequence.
 //!
 //! Applicability is decided by [`Operator::preconditions`] alone. That is
-//! exactly the test the search uses: `SuccessorTree` consults only
+//! exactly the test the search uses: `DecisionTree` consults only
 //! `preconditions()`, and the SAS parser has already hoisted every effect
 //! `precondition_value` into the operator's preconditions. Compiled numeric
 //! conditions are covered too, since they arrive as ordinary preconditions on

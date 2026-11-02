@@ -88,7 +88,7 @@ use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use tracing::info;
 
-use planforge_search::evaluation::validate_abstractable_goal;
+use planforge_search::task_transformations::projection::validate_abstractable_goal;
 
 use super::common::cegar::{CegarDriver, CegarIterationResult, CegarStopReason};
 use super::common::coordinates::Coordinates;

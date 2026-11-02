@@ -429,7 +429,6 @@ dependencies = [
  "libc",
  "ordered-float",
  "planforge-config-derive",
- "planforge-cplex",
  "planforge-sas",
  "planforge-translate",
  "rand",
@@ -837,6 +836,7 @@ dependencies = [
 name = "tutorial-plugin-binary"
 version = "0.1.0"
 dependencies = [
+ "ordered-float",
  "planforge",
  "planforge-sas",
  "planforge-search",

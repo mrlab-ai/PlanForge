@@ -78,7 +78,7 @@ fn run(task: &Task, transformation: Option<&str>, spec: &str) -> String {
         .map(|raw| parse_transformation_spec(raw).unwrap_or_else(|error| panic!("{raw}: {error}")))
         .into_iter()
         .collect();
-    let task = match transform_task(task.clone(), &transformations, search.requirements()) {
+    let task = match transform_task(task.clone(), &transformations, &search.requirements()) {
         Ok(task) => task,
         Err(error) => return format!("restriction error: {}", first_line(&error.to_string())),
     };
