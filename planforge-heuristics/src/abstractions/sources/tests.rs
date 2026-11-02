@@ -374,7 +374,7 @@ fn typed_sources_take_one_list_or_a_single_source() {
         panic!("domain source");
     };
     assert_eq!(config.cegar.max_states, 7);
-    assert!(listed.sources[1].requirements().restricted);
+    assert!(listed.sources[1].requirements().requires("restricted"));
 }
 
 #[test]
@@ -417,7 +417,7 @@ fn shared_construction_limits_are_positive() {
 fn strict_icaps26_options_and_requirements_are_typed() {
     let mut sources =
         source_config("astar(canonical(icaps26_cartesian(pick=random,max_time=900)))").unwrap();
-    assert!(sources.sources[0].requirements().restricted);
+    assert!(sources.sources[0].requirements().requires("restricted"));
     let AbstractionSource::Icaps26Cartesian(config) = sources.sources.remove(0) else {
         panic!("ICAPS26 source");
     };

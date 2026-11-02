@@ -5,8 +5,8 @@ task, and search. Each stage is a crate, and dependencies point one way only,
 so a crate cannot reach into a stage after it.
 
 ```
-planforge-config-derive        planforge-cplex (optional, LP backend)
-          \                          |
+planforge-config-derive
+          \
 planforge-sas  <-  planforge-translate
       ^
       |
@@ -14,7 +14,8 @@ planforge-search   (search core: engine, Heuristic trait, registry)
       ^
       |
 planforge-heuristics   (abstractions, landmarks, relaxation, potentials, combinations)
-      ^
+      ^          \
+      |           planforge-cplex (optional, LP backend)
       |
 planforge   (binaries, CLI, limits; registers the heuristics)
 ```
@@ -61,8 +62,11 @@ propositional values without decoding a whole state.
 - `registry`: the registries of the features the configuration language
   names. Each feature is a typed configuration (derived with
   `#[derive(ApplyOptions)]`) plus what it does: a `HeuristicFeature`
-  (`heuristic_factory::HEURISTICS`) builds a heuristic and names the task
-  properties and backend it needs, a `SearchFeature`
+  (`heuristic_factory::HEURISTICS`) builds a heuristic, says what it needs
+  of the build (`preflight`, such as an LP solver, checked before
+  translation) and of the task (`TaskRequirements`: transformations by name
+  and `TaskCheck`s the transformed task must pass, such as
+  `planforge_heuristics::requirements::RESTRICTED`), a `SearchFeature`
   (`search::SEARCH_ALGORITHMS`, with A* and greedy best-first search built in)
   runs a search, a `TransformationFeature`
   (`task_transformations::TRANSFORMATIONS`, with `restrict` built in)

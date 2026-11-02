@@ -21,18 +21,10 @@ serde_json = "1"
 itertools = "0.13"
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "2"
-planforge-cplex = { path = "../planforge-cplex", version = "0.1.0", optional = true }
 
 [features]
-# Enables the native CPLEX backend used by every LP-based heuristic.
-cplex = ["dep:planforge-cplex", "planforge-cplex/cplex"]
 # Exposes the small tasks of the unit tests to the heuristics' tests.
 test-tasks = []
-
-[package.metadata.docs.rs]
-# Never ask docs.rs to build the proprietary native backend.
-no-default-features = true
-targets = ["x86_64-unknown-linux-gnu"]
 
 [dev-dependencies]
 planforge-translate = { path = "../planforge-translate", version = "0.1.0" }

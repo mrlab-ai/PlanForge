@@ -137,17 +137,17 @@ pub fn transformation_help() -> String {
 }
 
 /// `task` transformed by `transformations` in order, which must include the
-/// transformation `requirements` names.
+/// transformations `requirements` names.
 pub fn transform_task(
     task: Task,
     transformations: &[TransformationConfig],
-    requirements: TaskRequirements,
+    requirements: &TaskRequirements,
 ) -> anyhow::Result<Task> {
-    if let Some(required) = requirements.transformation {
+    for required in &requirements.transformations {
         ensure!(
             transformations
                 .iter()
-                .any(|transformation| transformation.name() == required),
+                .any(|transformation| transformation.name() == *required),
             "the search needs the task transformation `{required}`; add `--transform {required}`"
         );
     }

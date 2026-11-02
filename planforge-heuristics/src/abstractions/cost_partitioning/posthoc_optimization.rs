@@ -13,15 +13,17 @@ use crate::abstractions::sources::CombinationConfig;
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_factory::{
-    BuildContext, HeuristicBuildError, HeuristicFeature, RequiredBackend, TaskRequirements,
+    BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 
 /// `posthoc_optimization(sources)`.
 pub struct PostHocFeature;
 impl HeuristicFeature for PostHocFeature {
     const NAME: &'static str = "posthoc_optimization";
-    const BACKEND: RequiredBackend = RequiredBackend::Cplex;
     type Config = CombinationConfig;
+    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+        crate::requirements::require_cplex()
+    }
     fn requirements(config: &Self::Config) -> TaskRequirements {
         config.requirements()
     }

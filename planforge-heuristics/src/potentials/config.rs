@@ -1,7 +1,7 @@
 use planforge_search::config::{ConfigError, TimeLimit, option_enum};
 use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_factory::{
-    BuildContext, HeuristicBuildError, HeuristicFeature, RequiredBackend, TaskRequirements,
+    BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,10 +211,15 @@ impl NumericPotentialConfig {
 pub struct NumericPotentialFeature;
 impl HeuristicFeature for NumericPotentialFeature {
     const NAME: &'static str = "numeric_potential";
-    const BACKEND: RequiredBackend = RequiredBackend::Cplex;
     type Config = NumericPotentialConfig;
+    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+        crate::requirements::require_cplex()
+    }
     fn requirements(_: &Self::Config) -> TaskRequirements {
-        TaskRequirements::ABSTRACTABLE_GOAL
+        TaskRequirements {
+            checks: vec![crate::requirements::ABSTRACTABLE_GOAL],
+            ..TaskRequirements::default()
+        }
     }
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
         config.validate().map_err(Into::into)

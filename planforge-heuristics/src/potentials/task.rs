@@ -16,7 +16,7 @@ use planforge_sas::utils::value_lattice::ValueLattice;
 
 use super::BoundsProvider;
 use crate::landmarks::numeric_helper::{LinearNumericCondition, NumericTaskHelper};
-use planforge_search::evaluation::validate_abstractable_goal;
+use planforge_search::task_transformations::projection::validate_abstractable_goal;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FeatureBounds {
