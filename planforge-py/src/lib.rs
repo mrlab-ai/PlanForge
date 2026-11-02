@@ -8,7 +8,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -21,7 +20,7 @@ use planforge_sas::numeric_task::{
     Operator, OperatorIndex, VariableIndex,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
-use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
 use planforge_search::heuristic_factory::TaskRequirements;
 use planforge_search::search::best_first::{AStarSearch, GreedyBestFirstSearch, SearchParams};
 use planforge_search::search::{
@@ -965,14 +964,18 @@ impl State {
 struct PyHeuristic {
     callable: Py<PyAny>,
     /// First error raised by the Python callable, re-raised after search.
-    error: Rc<RefCell<Option<PyErr>>>,
+    error: Arc<Mutex<Option<PyErr>>>,
     name: String,
 }
 
 impl Heuristic for PyHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         // If a previous call already failed, stop doing work.
-        if self.error.borrow().is_some() {
+        let mut error = self.error.lock().expect("the error slot is never poisoned");
+        if error.is_some() {
             return Err(EvaluationError::ComputationFailed(
                 "Python heuristic callback previously failed".to_string(),
             ));
@@ -982,14 +985,21 @@ impl Heuristic for PyHeuristic {
         let value = Python::with_gil(|py| -> PyResult<f64> {
             let state_obj = Py::new(py, snapshot)?;
             let result = self.callable.call1(py, (state_obj,))?;
-            result.extract::<f64>(py)
+            let h = result.extract::<f64>(py)?;
+            if h >= 0.0 {
+                Ok(h)
+            } else {
+                Err(PyValueError::new_err(format!(
+                    "a heuristic estimate is non-negative or infinity, got {h}"
+                )))
+            }
         });
         match value {
-            Ok(h) => Ok(h),
+            Ok(h) => Ok(Estimate::new(h)),
             Err(err) => {
                 // Capture the first error and abort the Rust search immediately;
                 // `search_with_heuristic` re-raises the original Python error.
-                *self.error.borrow_mut() = Some(err);
+                *error = Some(err);
                 Err(EvaluationError::ComputationFailed(
                     "Python heuristic callback failed".to_string(),
                 ))
@@ -1514,7 +1524,7 @@ impl Task {
         max_time: Option<f64>,
         max_memory: Option<u64>,
     ) -> PyResult<PySearchResult> {
-        let error = Rc::new(RefCell::new(None));
+        let error = Arc::new(Mutex::new(None));
         let heur: Box<dyn Heuristic> = Box::new(PyHeuristic {
             callable: heuristic.clone_ref(py),
             error: error.clone(),
@@ -1534,7 +1544,11 @@ impl Task {
         } else {
             AStarSearch::new(self.task.clone(), params).run()
         };
-        if let Some(err) = error.borrow_mut().take() {
+        if let Some(err) = error
+            .lock()
+            .expect("the error slot is never poisoned")
+            .take()
+        {
             return Err(err);
         }
         let result =

@@ -329,9 +329,11 @@ fn derived_predicate_fixtures_keep_their_optima_and_shape() {
 fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
     for &(name, cost, length) in FIXTURE_OPTIMA {
         let task = fixture_task(name);
-        let heuristic =
-            LandmarkCutNumericHeuristic::from_config(&task as &Task, LmCutNumericConfig::default())
-                .expect("the default lmcutnumeric config is supported");
+        let heuristic = LandmarkCutNumericHeuristic::from_config(
+            Arc::new(task.clone()),
+            LmCutNumericConfig::default(),
+        )
+        .expect("the default lmcutnumeric config is supported");
         let found = astar_solution(&task, Box::new(heuristic), &format!("{name}/lmcutnumeric"));
         let expected = Solution { cost, length };
         assert!(
@@ -344,11 +346,7 @@ fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
 
 /// Cost and length of the plan A* returns for `task` under `heuristic`, insisting
 /// that it returns one.
-fn astar_solution<'task>(
-    task: &'task Task,
-    heuristic: Box<dyn Heuristic + 'task>,
-    what: &str,
-) -> Solution {
+fn astar_solution(task: &Task, heuristic: Box<dyn Heuristic>, what: &str) -> Solution {
     let result = AStarSearch::new(Arc::new(task.clone()), SearchParams::new(heuristic))
         .run()
         .unwrap_or_else(|error| panic!("{what}: A* failed: {error}"));
@@ -445,7 +443,7 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
     let task_ref: Arc<Task> = Arc::new(task.clone());
     let pdb = HeuristicConfig::from_spec(&parse_call("pdb(patterns=greedy())").unwrap())
         .unwrap()
-        .build(&BuildContext::new(&task_ref));
+        .build(&BuildContext::new(task_ref.clone()));
     assert_refusal(
         "the greedy numeric PDB",
         pdb.err()
@@ -487,8 +485,11 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
     let lmcut = astar_solution(
         &task,
         Box::new(
-            LandmarkCutNumericHeuristic::from_config(&task as &Task, LmCutNumericConfig::default())
-                .expect("the default lmcutnumeric config is supported"),
+            LandmarkCutNumericHeuristic::from_config(
+                Arc::new(task.clone()),
+                LmCutNumericConfig::default(),
+            )
+            .expect("the default lmcutnumeric config is supported"),
         ),
         &format!("{name}/lmcutnumeric"),
     );

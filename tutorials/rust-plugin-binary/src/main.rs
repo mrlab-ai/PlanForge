@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use ordered_float::OrderedFloat;
-use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
 use planforge_search::heuristic_factory::{
     BuildContext, EmptyConfig, HeuristicBuildError, HeuristicFeature, entry,
 };
@@ -11,7 +11,10 @@ use planforge_search::search::best_first::{self, OpenEntry, OpenList, OpenListFe
 struct GoalCountHeuristic;
 
 impl Heuristic for GoalCountHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state = eval_state.state_registry().view(eval_state.state());
         let unsatisfied = eval_state
             .task()
@@ -19,7 +22,7 @@ impl Heuristic for GoalCountHeuristic {
             .iter()
             .filter(|goal| !goal.is_held(state))
             .count();
-        Ok(unsatisfied as f64)
+        Ok(Estimate::new(unsatisfied as f64))
     }
 
     fn name(&self) -> &str {
@@ -31,10 +34,10 @@ struct GoalCountFeature;
 impl HeuristicFeature for GoalCountFeature {
     const NAME: &'static str = "goalcount";
     type Config = EmptyConfig;
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        _: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        _: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         Ok(Box::new(GoalCountHeuristic))
     }
 }

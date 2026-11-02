@@ -222,7 +222,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
     let value = heuristic.evaluate(&eval_state).unwrap();
 
-    assert_eq!(value, 5.0);
+    assert_eq!(value.value(), 5.0);
 }
 
 fn mixed_components(task: &Task) -> Vec<AbstractionComponent> {
@@ -262,7 +262,7 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
 
     let mut max = MaxAbstractionHeuristic::new(None, mixed_components(&task)).unwrap();
-    assert_eq!(max.evaluate(&eval_state).unwrap(), 5.0);
+    assert_eq!(max.evaluate(&eval_state).unwrap().value(), 5.0);
 
     let mut canonical =
         CanonicalAbstractionHeuristic::new(None, &task, mixed_components(&task)).unwrap();
@@ -272,7 +272,7 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
             .iter()
             .any(|subset| subset == &[0, 2])
     );
-    assert_eq!(canonical.evaluate(&eval_state).unwrap(), 5.0);
+    assert_eq!(canonical.evaluate(&eval_state).unwrap().value(), 5.0);
 }
 
 #[test]

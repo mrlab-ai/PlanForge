@@ -48,7 +48,7 @@ fn from_config_accepts_second_order_simple_flag() {
         ..Default::default()
     };
 
-    let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+    let heuristic = LandmarkCutNumericHeuristic::from_config(Arc::new(task), config)
         .expect("supported SOSE flag should construct the heuristic");
     assert!(heuristic.config().use_second_order_simple);
 }
@@ -74,7 +74,7 @@ fn from_config_accepts_irmax() {
         ..Default::default()
     };
 
-    let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+    let heuristic = LandmarkCutNumericHeuristic::from_config(Arc::new(task), config)
         .expect("irmax flag should construct the heuristic");
 
     assert!(heuristic.config().irmax);
@@ -101,7 +101,7 @@ fn from_config_accepts_disable_ma() {
         ..Default::default()
     };
 
-    let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+    let heuristic = LandmarkCutNumericHeuristic::from_config(Arc::new(task), config)
         .expect("disable_ma flag should construct the heuristic");
 
     assert!(heuristic.config().disable_ma);
@@ -128,7 +128,7 @@ fn from_config_accepts_constant_assignment() {
         ..Default::default()
     };
 
-    let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+    let heuristic = LandmarkCutNumericHeuristic::from_config(Arc::new(task), config)
         .expect("constant assignment flag should construct the heuristic");
 
     assert!(heuristic.config().use_constant_assignment);
@@ -155,7 +155,7 @@ fn from_config_accepts_bound_iterations() {
         ..Default::default()
     };
 
-    let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+    let heuristic = LandmarkCutNumericHeuristic::from_config(Arc::new(task), config)
         .expect("bound iterations should construct the heuristic once bounds are implemented");
 
     assert_eq!(heuristic.config().bound_iterations, 1);

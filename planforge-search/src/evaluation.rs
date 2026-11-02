@@ -9,4 +9,4 @@ pub mod seed;
 pub mod state_value_cache;
 
 pub use evaluator::{EvaluationError, EvaluationState};
-pub use heuristic::{BlindFeature, BlindHeuristic, Heuristic, minimum_action_cost};
+pub use heuristic::{BlindFeature, BlindHeuristic, Estimate, Heuristic, minimum_action_cost};

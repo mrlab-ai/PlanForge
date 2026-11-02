@@ -48,7 +48,7 @@ impl SearchFeature for EnforcedHillClimbing {
     ) -> std::io::Result<SearchResult> {
         let heuristic = config
             .heuristic
-            .build(&BuildContext::new(&task))
+            .build(&BuildContext::new(task.clone()))
             .map_err(|error| error.into_io_error())?;
         let space = SearchSpace::new(task.clone(), config.successor_generator.build(&task));
         enforced_hill_climbing(space, heuristic, limits)
@@ -58,7 +58,7 @@ impl SearchFeature for EnforcedHillClimbing {
 
 fn enforced_hill_climbing(
     mut space: SearchSpace,
-    mut heuristic: Box<dyn Heuristic + '_>,
+    mut heuristic: Box<dyn Heuristic>,
     limits: SearchLimits,
 ) -> Result<SearchResult> {
     let mut progress = SearchProgress::start(limits, heuristic.name());
@@ -70,8 +70,8 @@ fn enforced_hill_climbing(
     let mut best_h = heuristic.evaluate(&space.evaluation_state(&initial))?;
     progress.statistics.nodes.evaluated += 1;
     progress.statistics.evaluations += 1;
-    progress.report_initial_h(best_h);
-    if best_h == f64::INFINITY {
+    progress.report_initial_h(best_h.value());
+    if best_h.is_dead_end() {
         return Ok(progress.finish(SearchOutcome::Unsolvable, &space));
     }
     queue.push_back(initial);
@@ -103,13 +103,13 @@ fn enforced_hill_climbing(
             let h = heuristic.evaluate(&space.evaluation_state(&successor.state))?;
             progress.statistics.nodes.evaluated += 1;
             progress.statistics.evaluations += 1;
-            if h == f64::INFINITY {
+            if h.is_dead_end() {
                 space.mark_dead_end(successor_id);
                 progress.statistics.dead_ends += 1;
             } else if h < best_h || is_goal {
                 // A better state: the breadth-first search starts over from it.
                 best_h = h;
-                progress.report_best_h(h, g + successor.cost);
+                progress.report_best_h(h.value(), g + successor.cost);
                 queue.clear();
                 queue.push_back(successor.state.clone());
                 continue 'search;

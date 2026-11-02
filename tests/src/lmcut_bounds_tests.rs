@@ -20,7 +20,7 @@ fn load_dependent_cost_task() -> Task {
 
 fn initial_h(task: &Task, bound_iterations: usize) -> f64 {
     let mut heuristic = LandmarkCutNumericHeuristic::from_config(
-        task,
+        Arc::new(task.clone()),
         LmCutNumericConfig {
             bound_iterations,
             ..Default::default()
@@ -29,11 +29,11 @@ fn initial_h(task: &Task, bound_iterations: usize) -> f64 {
     .expect("the LM-cut configuration is supported");
     let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
     let initial = registry.get_initial_state();
-    let mut eval = EvaluationState::new(&initial, task as &Task, &registry);
-    eval.set_is_goal(false);
+    let eval = EvaluationState::new(&initial, task as &Task, &registry);
     heuristic
         .evaluate(&eval)
         .expect("the initial state evaluates")
+        .value()
 }
 
 /// `deliver` costs `1 + load`, and `load` only grows from 3, so its lower

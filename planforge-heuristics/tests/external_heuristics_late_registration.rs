@@ -18,7 +18,7 @@ fn external_registration_after_heuristic_construction_is_rejected() {
     )));
     HeuristicConfig::from_spec(&spec)
         .unwrap()
-        .build(&BuildContext::new(&task))
+        .build(&BuildContext::new(task.clone()))
         .unwrap();
 
     let error = HEURISTICS.register(vec![entry::<TooLate>()]).unwrap_err();
@@ -32,10 +32,10 @@ struct TooLate;
 impl HeuristicFeature for TooLate {
     const NAME: &'static str = "too_late";
     type Config = EmptyConfig;
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        Ok(Box::new(BlindHeuristic::for_task(context.task)))
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
+        Ok(Box::new(BlindHeuristic::for_task(&context.task)))
     }
 }

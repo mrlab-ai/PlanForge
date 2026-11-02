@@ -45,7 +45,7 @@ use tracing::info;
 
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::state_value_cache::StateValueCache;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 
 use super::super::standalone_estimate;
 use crate::abstractions::component::AbstractionComponent;
@@ -217,15 +217,18 @@ fn lp_evaluation_error(error: planforge_cplex::Error) -> EvaluationError {
 }
 
 impl Heuristic for PostHocOptimizationHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state_id = eval_state.state().get_id();
         if let Some(value) = self.state_value_cache.get(state_id) {
-            return Ok(value);
+            return Ok(Estimate::new(value));
         }
 
         let value = self.evaluate_lp(eval_state)?;
         self.state_value_cache.insert(state_id, value);
-        Ok(value)
+        Ok(Estimate::new(value))
     }
 
     fn name(&self) -> &str {

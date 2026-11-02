@@ -1,6 +1,6 @@
-use std::cell::Cell;
-use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 
 use planforge_sas::numeric_task::{
     ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericType, NumericValue,
@@ -10,12 +10,12 @@ use planforge_sas::state_registry::StateRegistry;
 
 use super::*;
 use crate::evaluation::BlindHeuristic;
-use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use crate::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
 use crate::search::SearchOutcome;
 use crate::test_tasks::{one_step_task, start_to_goal_task};
 
 /// Step `search` until it terminates.
-fn finish(mut search: AStarSearch<'_>) -> SearchResult {
+fn finish(mut search: AStarSearch) -> SearchResult {
     loop {
         if let Some(outcome) = search.step().unwrap() {
             return search.progress.finish(outcome, &search.space);
@@ -129,7 +129,10 @@ fn metric_operator_costs_are_the_constant_increments() {
 struct FailingHeuristic;
 
 impl Heuristic for FailingHeuristic {
-    fn evaluate(&mut self, _eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        _eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         Err(EvaluationError::ComputationFailed(
             "construction deadline".to_string(),
         ))
@@ -174,25 +177,28 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
 }
 
 struct RevisionControlledHeuristic {
-    revision: Rc<Cell<u64>>,
-    calls: Rc<Cell<usize>>,
+    revision: Arc<AtomicU64>,
+    calls: Arc<AtomicUsize>,
     reevaluate_on_every_pop: bool,
 }
 
 impl Heuristic for RevisionControlledHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        self.calls.set(self.calls.get() + 1);
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
+        self.calls.fetch_add(1, Relaxed);
         // Above the cheapest action cost, which search floors non-goal
         // values at, so a new revision raises the value.
-        Ok(if eval_state.is_goal() {
+        Ok(Estimate::new(if eval_state.is_goal() {
             0.0
         } else {
-            1.0 + self.revision.get() as f64
-        })
+            1.0 + self.revision.load(Relaxed) as f64
+        }))
     }
 
     fn revision(&self) -> u64 {
-        self.revision.get()
+        self.revision.load(Relaxed)
     }
 
     fn reevaluate_on_every_pop(&self) -> bool {
@@ -206,11 +212,11 @@ impl Heuristic for RevisionControlledHeuristic {
 
 #[test]
 fn mpd_reevaluates_and_reinserts_a_stale_open_entry() {
-    let revision = Rc::new(Cell::new(0));
-    let calls = Rc::new(Cell::new(0));
+    let revision = Arc::new(AtomicU64::new(0));
+    let calls = Arc::new(AtomicUsize::new(0));
     let heuristic = RevisionControlledHeuristic {
-        revision: Rc::clone(&revision),
-        calls: Rc::clone(&calls),
+        revision: Arc::clone(&revision),
+        calls: Arc::clone(&calls),
         reevaluate_on_every_pop: false,
     };
     let task = one_step_task();
@@ -223,11 +229,15 @@ fn mpd_reevaluates_and_reinserts_a_stale_open_entry() {
     );
 
     search.initialize().unwrap();
-    assert_eq!(calls.get(), 1);
+    assert_eq!(calls.load(Relaxed), 1);
 
-    revision.set(1);
+    revision.store(1, Relaxed);
     assert_eq!(search.step().unwrap(), None);
-    assert_eq!(calls.get(), 2, "stale initial entry must be re-evaluated");
+    assert_eq!(
+        calls.load(Relaxed),
+        2,
+        "stale initial entry must be re-evaluated"
+    );
 
     let result = finish(search);
     assert_eq!(solved_cost(&result), 1.0);
@@ -237,22 +247,22 @@ fn mpd_reevaluates_and_reinserts_a_stale_open_entry() {
 
 #[test]
 fn static_astar_does_not_pay_for_revision_checks() {
-    let revision = Rc::new(Cell::new(0));
-    let calls = Rc::new(Cell::new(0));
+    let revision = Arc::new(AtomicU64::new(0));
+    let calls = Arc::new(AtomicUsize::new(0));
     let heuristic = RevisionControlledHeuristic {
-        revision: Rc::clone(&revision),
-        calls: Rc::clone(&calls),
+        revision: Arc::clone(&revision),
+        calls: Arc::clone(&calls),
         reevaluate_on_every_pop: false,
     };
     let task = one_step_task();
     let mut search = AStarSearch::new(task.clone(), SearchParams::new(Box::new(heuristic)));
 
     search.initialize().unwrap();
-    revision.set(1);
+    revision.store(1, Relaxed);
     let result = finish(search);
 
     assert_eq!(solved_cost(&result), 1.0);
-    assert_eq!(calls.get(), 2);
+    assert_eq!(calls.load(Relaxed), 2);
     assert_eq!(
         result.statistics.nodes.evaluated,
         result.statistics.evaluations
@@ -261,11 +271,11 @@ fn static_astar_does_not_pay_for_revision_checks() {
 
 #[test]
 fn uncached_mpd_reevaluates_every_popped_entry() {
-    let revision = Rc::new(Cell::new(0));
-    let calls = Rc::new(Cell::new(0));
+    let revision = Arc::new(AtomicU64::new(0));
+    let calls = Arc::new(AtomicUsize::new(0));
     let heuristic = RevisionControlledHeuristic {
         revision,
-        calls: Rc::clone(&calls),
+        calls: Arc::clone(&calls),
         reevaluate_on_every_pop: true,
     };
     let task = one_step_task();
@@ -281,20 +291,24 @@ fn uncached_mpd_reevaluates_every_popped_entry() {
     let result = finish(search);
 
     assert_eq!(solved_cost(&result), 1.0);
-    assert_eq!(calls.get(), 4);
+    assert_eq!(calls.load(Relaxed), 4);
     assert_eq!(result.statistics.nodes.evaluated, 2);
     assert_eq!(result.statistics.evaluations, 4);
 }
 
 struct LazyHeuristic {
-    estimate: f64,
-    calls: Rc<Cell<usize>>,
+    estimate: Estimate,
+    calls: Arc<AtomicUsize>,
 }
 
 impl Heuristic for LazyHeuristic {
-    fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        self.calls.set(self.calls.get() + 1);
-        Ok(if state.is_goal() { 0.0 } else { self.estimate })
+    fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<Estimate, EvaluationError> {
+        self.calls.fetch_add(1, Relaxed);
+        Ok(if state.is_goal() {
+            Estimate::new(0.0)
+        } else {
+            self.estimate
+        })
     }
 
     fn name(&self) -> &str {
@@ -305,34 +319,38 @@ impl Heuristic for LazyHeuristic {
 #[test]
 fn lazy_astar_defers_each_expansion_even_when_the_estimate_does_not_increase() {
     let task = one_step_task();
-    let calls = Rc::new(Cell::new(0));
+    let calls = Arc::new(AtomicUsize::new(0));
     let mut params = SearchParams::new(Box::new(BlindHeuristic::for_task(&task)));
     // Below the non-goal floor: the single evaluation path must preserve it.
     params.lazy = Some(Box::new(LazyHeuristic {
-        estimate: 0.0,
+        estimate: Estimate::new(0.0),
         calls: calls.clone(),
     }));
     let mut search = AStarSearch::new(task.clone(), params);
     search.initialize().unwrap();
     assert_eq!(
-        calls.get(),
+        calls.load(Relaxed),
         0,
         "initialization evaluates only the primary heuristic"
     );
     assert_eq!(search.step().unwrap(), None);
     assert_eq!(
-        calls.get(),
+        calls.load(Relaxed),
         1,
         "first pop evaluates and requeues the initial entry"
     );
     assert_eq!(search.step().unwrap(), None);
     assert_eq!(
-        calls.get(),
+        calls.load(Relaxed),
         1,
         "second pop expands without another lazy evaluation"
     );
     assert_eq!(search.step().unwrap(), None);
-    assert_eq!(calls.get(), 2, "goal entries also get a lazy evaluation");
+    assert_eq!(
+        calls.load(Relaxed),
+        2,
+        "goal entries also get a lazy evaluation"
+    );
     let result = finish(search);
     assert_eq!(solved_cost(&result), 1.0);
     assert_eq!(result.statistics.nodes.expanded, 2);
@@ -342,16 +360,16 @@ fn lazy_astar_defers_each_expansion_even_when_the_estimate_does_not_increase() {
         result.statistics.evaluations, 4,
         "count both primary and lazy evaluations"
     );
-    assert_eq!(calls.get(), 2);
+    assert_eq!(calls.load(Relaxed), 2);
 }
 
 #[test]
 fn lazy_astar_prunes_a_lazy_dead_end() {
     let task = one_step_task();
-    let calls = Rc::new(Cell::new(0));
+    let calls = Arc::new(AtomicUsize::new(0));
     let mut params = SearchParams::new(Box::new(BlindHeuristic::for_task(&task)));
     params.lazy = Some(Box::new(LazyHeuristic {
-        estimate: f64::INFINITY,
+        estimate: Estimate::DEAD_END,
         calls: calls.clone(),
     }));
     let result = AStarSearch::new(task.clone(), params).run().unwrap();
@@ -362,7 +380,7 @@ fn lazy_astar_prunes_a_lazy_dead_end() {
         result.statistics.evaluations, 2,
         "count a lazy dead-end evaluation too"
     );
-    assert_eq!(calls.get(), 1);
+    assert_eq!(calls.load(Relaxed), 1);
 }
 
 #[test]
@@ -378,9 +396,9 @@ fn lazy_astar_propagates_evaluation_failures() {
 #[test]
 fn mpd_and_lazy_compare_dynamic_estimates_with_the_primary_estimate() {
     let task = one_step_task();
-    let revision = Rc::new(Cell::new(0));
-    let primary_calls = Rc::new(Cell::new(0));
-    let lazy_calls = Rc::new(Cell::new(0));
+    let revision = Arc::new(AtomicU64::new(0));
+    let primary_calls = Arc::new(AtomicUsize::new(0));
+    let lazy_calls = Arc::new(AtomicUsize::new(0));
     let mut params = SearchParams::new(Box::new(RevisionControlledHeuristic {
         revision: revision.clone(),
         calls: primary_calls.clone(),
@@ -388,22 +406,22 @@ fn mpd_and_lazy_compare_dynamic_estimates_with_the_primary_estimate() {
     }));
     params.mpd = true;
     params.lazy = Some(Box::new(LazyHeuristic {
-        estimate: 5.0,
+        estimate: Estimate::new(5.0),
         calls: lazy_calls.clone(),
     }));
     let mut search = AStarSearch::new(task.clone(), params);
     search.initialize().unwrap();
     assert_eq!(search.step().unwrap(), None);
-    assert_eq!(lazy_calls.get(), 1);
-    revision.set(1);
+    assert_eq!(lazy_calls.load(Relaxed), 1);
+    revision.store(1, Relaxed);
     // Primary h grows from 1 to 2 while the lazy entry already has h=5.
     assert_eq!(search.step().unwrap(), None);
     assert_eq!(
-        primary_calls.get(),
+        primary_calls.load(Relaxed),
         3,
         "re-evaluate primary, then generate the goal"
     );
-    assert_eq!(lazy_calls.get(), 1);
+    assert_eq!(lazy_calls.load(Relaxed), 1);
     assert_eq!(search.step().unwrap(), None);
     assert_eq!(solved_cost(&finish(search)), 1.0);
 }
@@ -425,4 +443,10 @@ fn a_cheaper_duplicate_within_one_expansion_is_evaluated_and_queued_again() {
         (2, 2, 2)
     );
     assert_eq!(result.statistics.evaluations, 3);
+}
+
+#[test]
+#[should_panic(expected = "non-negative")]
+fn an_estimate_rejects_nan() {
+    Estimate::new(f64::NAN);
 }

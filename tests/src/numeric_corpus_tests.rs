@@ -609,9 +609,11 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     }
 
     // The full search with the heuristic must still return the optimum.
-    let heuristic =
-        LandmarkCutNumericHeuristic::from_config(&task as &Task, LmCutNumericConfig::default())
-            .expect("default lmcutnumeric config should be supported");
+    let heuristic = LandmarkCutNumericHeuristic::from_config(
+        Arc::new(task.clone()),
+        LmCutNumericConfig::default(),
+    )
+    .expect("default lmcutnumeric config should be supported");
     let result = AStarSearch::new(
         Arc::new(task.clone()),
         SearchParams::new(Box::new(heuristic)),

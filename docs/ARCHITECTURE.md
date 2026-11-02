@@ -107,7 +107,7 @@ Batched evaluation, for example a neural network over all successors of an
 expansion, touches three places and nothing else:
 
 1. the `Heuristic` trait: a default method
-   `evaluate_batch(&mut self, states: &[EvaluationState], estimates: &mut Vec<f64>)`
+   `evaluate_batch(&mut self, states: &[EvaluationState], estimates: &mut Vec<Estimate>)`
    that calls `evaluate` per state, so every heuristic keeps working
    unchanged;
 2. the evaluation phase of `BestFirstSearch::expand`: build the
@@ -149,9 +149,10 @@ One module per technique, each depending on the core only:
 | a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::transformations()`, or `planforge::Extensions::transformations` | `task_transformations::restriction::RestrictFeature` |
 | what a heuristic needs | a `TaskCheck` (of the task) or `HeuristicFeature::preflight` (of the build) | returned from the heuristic's `HeuristicFeature` | `planforge_heuristics::requirements` |
 
-A heuristic owns its state (`&mut self`), reads the task through `&Task` or a
-shared `Arc<Task>`, and reports invalid internal states by panicking, never by
-returning a default.
+A heuristic owns its state (`&mut self`) and everything it reads, such as a
+shared `Arc<Task>`, so it is `Send` and outlives the context that built it. It
+returns an `Estimate`: a non-negative cost or `Estimate::DEAD_END`. It reports
+invalid internal states by panicking, never by returning a default.
 
 ## Verifying a change
 

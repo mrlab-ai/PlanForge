@@ -262,6 +262,13 @@ pub struct Model {
     last_status: Option<SolveStatus>,
 }
 
+// SAFETY: a `Model` owns its environment and problem exclusively: no other
+// value holds either pointer. The CPLEX Callable Library allows an
+// environment to be used from any thread as long as it is not used
+// concurrently, and `Model` is not `Sync`, so its methods never run
+// concurrently. Moving a model to another thread is therefore sound.
+unsafe impl Send for Model {}
+
 impl Model {
     pub fn new(name: &str) -> Result<Self, Error> {
         let environment = Environment::open()?;

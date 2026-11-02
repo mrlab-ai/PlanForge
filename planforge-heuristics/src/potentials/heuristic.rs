@@ -22,7 +22,7 @@ use planforge_sas::state_registry::{ConcreteState, ConcreteStateView, StateRegis
 use planforge_sas::utils::float_tolerance;
 use tracing::{debug, info, warn};
 
-use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
 
 use super::rays::{Ray, RayGenerator};
 use super::sampling::{RandomWalkSampler, SampleSpace};
@@ -514,9 +514,12 @@ fn log_construction(
 }
 
 impl Heuristic for NumericPotentialHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         if self.dead_end_certified {
-            return Ok(f64::INFINITY);
+            return Ok(Estimate::DEAD_END);
         }
         let registry = eval_state.state_registry();
         let state = registry.view(eval_state.state());
@@ -529,7 +532,7 @@ impl Heuristic for NumericPotentialHeuristic {
             if candidate > self.ray_epsilon {
                 self.ray_hit_counts[ray_id] += 1;
                 self.states_pruned_by_rays += 1;
-                return Ok(f64::INFINITY);
+                return Ok(Estimate::DEAD_END);
             }
         }
         let mut value: f64 = 0.0;
@@ -565,7 +568,7 @@ impl Heuristic for NumericPotentialHeuristic {
         }
         value = self.maybe_add_online_function(eval_state, value)?;
         self.track_online_cache_entry(eval_state.state().get_id());
-        Ok(value)
+        Ok(Estimate::new(value))
     }
 
     fn name(&self) -> &str {

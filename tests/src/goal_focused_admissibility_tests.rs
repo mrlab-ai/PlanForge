@@ -172,11 +172,11 @@ fn assert_admissible_along_plan(
     heuristic: &mut dyn Heuristic,
 ) {
     for (step, (state, optimal_cost)) in states.iter().enumerate() {
-        let mut eval = EvaluationState::new(state, task as &Task, registry);
-        eval.set_is_goal(step + 1 == states.len());
+        let eval = EvaluationState::new(state, task as &Task, registry);
         let h = heuristic
             .evaluate(&eval)
-            .unwrap_or_else(|error| panic!("{what}: evaluation failed at step {step}: {error:?}"));
+            .unwrap_or_else(|error| panic!("{what}: evaluation failed at step {step}: {error:?}"))
+            .value();
         assert!(
             h.is_finite(),
             "{what}: h={h} on solvable plan state {step} (h*={optimal_cost})"
