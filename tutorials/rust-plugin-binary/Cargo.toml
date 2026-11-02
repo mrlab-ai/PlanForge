@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+ordered-float = "5.1.0"
 planforge = { path = "../../planforge", version = "0.1.0" }
 planforge-sas = { path = "../../planforge-sas", version = "0.1.0" }
 planforge-search = { path = "../../planforge-search", version = "0.1.0" }
