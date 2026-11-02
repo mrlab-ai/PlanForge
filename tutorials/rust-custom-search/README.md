@@ -1,7 +1,7 @@
 # Custom search algorithm
 
 This crate adds enforced hill-climbing to the `--search` grammar as
-`ehc(heuristic)`: a `SearchFeature` registered in `SEARCH_ALGORITHMS` whose
+`ehc(heuristic)`: a `SearchFeature` added to a `Features` value whose
 search is composed of the public building blocks of `planforge_search::search`:
 
 - `SearchSpace` registers states, generates successors, detects duplicates on
@@ -10,7 +10,8 @@ search is composed of the public building blocks of `planforge_search::search`:
   reports progress.
 
 Best-first search (`astar`, `gbfs`) is built on the same blocks. A binary that
-ships the standard CLI registers its algorithms with `planforge::run_with`.
+ships the standard CLI adds its algorithms to `planforge_heuristics::features()`
+and hands the value to `planforge::run_with`.
 
 From the repository root:
 

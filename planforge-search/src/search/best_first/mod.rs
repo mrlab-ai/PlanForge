@@ -11,8 +11,9 @@ mod ordering;
 mod preferred_operators;
 
 pub use open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpenList};
+pub(crate) use open_list_config::builtin_entries;
 pub use open_list_config::{
-    OPEN_LISTS, OpenListConfig, OpenListEntry, OpenListFeature, RegisteredOpenList, entry,
+    ConfiguredOpenList, OpenListConfig, OpenListEntry, OpenListFeature, RegisteredOpenList, entry,
 };
 pub use ordering::{AStar, Greedy, NodeOrdering};
 

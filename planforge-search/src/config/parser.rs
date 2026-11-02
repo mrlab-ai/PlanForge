@@ -276,7 +276,10 @@ mod tests {
             parse_call(r#"root(path="Dir/My,File)=x.txt", other='A\\B', flag=TrUe)"#).unwrap();
         assert_eq!(spec.args[0].value.as_atom().unwrap(), "Dir/My,File)=x.txt");
         assert_eq!(spec.args[1].value.as_atom().unwrap(), "A\\B");
-        assert!(bool::from_option_value(&spec.args[2].value).unwrap());
+        assert!(
+            bool::from_option_value(&spec.args[2].value, &crate::registry::Features::builtin())
+                .unwrap()
+        );
         assert_eq!(parse_call(&spec.to_string()).unwrap(), spec);
     }
 

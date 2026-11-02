@@ -1,12 +1,12 @@
-//! The heuristic registry: every heuristic the configuration grammar names
-//! is a [`HeuristicFeature`], a typed configuration and how to build the
-//! heuristic from it. Only blind search is built in; a binary registers every
-//! other heuristic once, with [`HEURISTICS`]`.register`, before it parses a
-//! configuration.
+//! Heuristic features: every heuristic the configuration language names is
+//! a [`HeuristicFeature`], a typed configuration, what it needs of the build
+//! and of the task, and how to build the heuristic from it. Only blind search
+//! is built in; [`Features::heuristics`](crate::registry::Features) holds
+//! the others a program adds.
 
-use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, configure};
+use crate::config::{ApplyOptions, ConfigCall, ConfigError, ConfigValue, EmptyConfig, configure};
 use crate::evaluation::Heuristic;
-use crate::registry::{Entry, Registry, options_of};
+use crate::registry::{Configured, Entry, Features, Typed, options_of};
 use planforge_sas::numeric_task::Task;
 use std::any::Any;
 use std::fmt::{self, Debug};
@@ -100,28 +100,24 @@ pub trait HeuristicFeature: 'static {
     ) -> Result<Box<dyn Heuristic>, HeuristicBuildError>;
 }
 
-trait ErasedHeuristicConfig: Debug + Send + Sync {
-    fn spec(&self) -> &ConfigCall;
+/// The interface of a configured heuristic feature, whatever its
+/// configuration type: what [`HeuristicConfig`] dereferences to.
+pub trait ConfiguredHeuristic: Send + Sync {
+    /// Fails if this build cannot construct the heuristic or one it
+    /// contains.
     fn preflight(&self) -> Result<(), HeuristicBuildError>;
+    /// What the heuristic and those it contains need of the task.
     fn requirements(&self) -> TaskRequirements;
-    fn config(&self) -> &dyn Any;
-    fn build(&self, context: &BuildContext) -> Result<Box<dyn Heuristic>, HeuristicBuildError>;
+    /// The heuristic, built without checking its preflight or requirements;
+    /// [`HeuristicConfig::build`] checks them.
+    fn build_unchecked(
+        &self,
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError>;
+    fn config_any(&self) -> &dyn Any;
 }
-struct Configured<F: HeuristicFeature> {
-    config: F::Config,
-    spec: ConfigCall,
-}
-impl<F: HeuristicFeature> Debug for Configured<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(F::NAME)
-            .field("config", &self.config)
-            .finish()
-    }
-}
-impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
-    fn spec(&self) -> &ConfigCall {
-        &self.spec
-    }
+
+impl<F: HeuristicFeature> ConfiguredHeuristic for Typed<F, F::Config> {
     fn requirements(&self) -> TaskRequirements {
         F::nested(&self.config)
             .into_iter()
@@ -133,69 +129,58 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
         F::preflight(&self.config)?;
         F::nested(&self.config)
             .into_iter()
-            .try_for_each(HeuristicConfig::preflight)
+            .try_for_each(|child| child.preflight())
     }
-    fn config(&self) -> &dyn Any {
-        &self.config
-    }
-    fn build(&self, context: &BuildContext) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
+    fn build_unchecked(
+        &self,
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         let context = BuildContext {
             task: context.task.clone(),
-            name: self.spec.name.clone(),
+            name: F::NAME.to_string(),
         };
         F::build(&self.config, &context)
     }
+    fn config_any(&self) -> &dyn Any {
+        &self.config
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct HeuristicConfig(Arc<dyn ErasedHeuristicConfig>);
-impl HeuristicConfig {
-    /// Fails if this build cannot construct the heuristic or one it
-    /// contains.
-    pub fn preflight(&self) -> Result<(), HeuristicBuildError> {
-        self.0.preflight()
-    }
+/// A configured heuristic; blind search by default. It displays as the call
+/// that configured it.
+pub type HeuristicConfig = Configured<dyn ConfiguredHeuristic>;
 
-    pub fn from_spec(spec: &ConfigCall) -> Result<Self, ConfigError> {
-        HEURISTICS.parse(spec)
-    }
-    pub fn requirements(&self) -> TaskRequirements {
-        self.0.requirements()
-    }
+impl HeuristicConfig {
     /// The typed configuration, if the heuristic's configuration is a `T`.
     pub fn config<T: 'static>(&self) -> Option<&T> {
-        self.0.config().downcast_ref()
+        self.config_any().downcast_ref()
     }
+
+    /// The heuristic for `context`, after checking that this build can
+    /// construct it and that the task meets its requirements.
     pub fn build(&self, context: &BuildContext) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         self.preflight()?;
         self.requirements().validate(&context.task)?;
-        self.0.build(context)
+        self.build_unchecked(context)
     }
 }
-impl std::ops::Deref for HeuristicConfig {
-    type Target = ConfigCall;
-    fn deref(&self) -> &ConfigCall {
-        self.0.spec()
-    }
-}
+
 impl Default for HeuristicConfig {
     fn default() -> Self {
-        Self::from_spec(&ConfigCall::blind()).expect("the built-in blind configuration is valid")
+        Configured::new(
+            "blind()".to_string(),
+            Arc::new(Typed::<crate::evaluation::BlindFeature, _>::new(
+                EmptyConfig {},
+            )),
+        )
     }
 }
-impl PartialEq for HeuristicConfig {
-    fn eq(&self, other: &Self) -> bool {
-        **self == **other
-    }
-}
-impl fmt::Display for HeuristicConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self.0.spec(), f)
-    }
-}
+
 impl crate::config::FromOptionValue for HeuristicConfig {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
-        Self::from_spec(&ConfigCall::from_value(value)?)
+    fn from_option_value(value: &ConfigValue, features: &Features) -> Result<Self, ConfigError> {
+        features
+            .heuristics
+            .parse(&ConfigCall::from_value(value)?, features)
     }
 
     fn option_text(&self) -> String {
@@ -203,32 +188,28 @@ impl crate::config::FromOptionValue for HeuristicConfig {
     }
 }
 
-/// A registered heuristic feature. External features use the same entries as
-/// the built-ins.
+/// A heuristic feature's registry entry.
 pub type HeuristicEntry = Entry<HeuristicConfig>;
 
 pub const fn entry<F: HeuristicFeature>() -> HeuristicEntry {
     Entry::new(F::NAME, parse_feature::<F>, options_of::<F::Config>)
 }
-fn parse_feature<F: HeuristicFeature>(spec: &ConfigCall) -> Result<HeuristicConfig, ConfigError> {
-    let mut spec = spec.clone();
-    spec.name.make_ascii_lowercase();
-    let config = configure(&spec.name, F::Config::default(), &spec.args)?;
-    F::validate(&config).map_err(|error| error.at(&spec.name))?;
-    Ok(HeuristicConfig(Arc::new(Configured::<F> { config, spec })))
+
+/// The heuristic `spec` configures, which displays as `spec` itself.
+fn parse_feature<F: HeuristicFeature>(
+    spec: &ConfigCall,
+    features: &Features,
+) -> Result<HeuristicConfig, ConfigError> {
+    let config = configure(F::NAME, F::Config::default(), &spec.args, features)?;
+    F::validate(&config).map_err(|error| error.at(F::NAME))?;
+    let mut call = spec.clone();
+    call.name.make_ascii_lowercase();
+    Ok(Configured::new(
+        call.to_string(),
+        Arc::new(Typed::<F, _>::new(config)),
+    ))
 }
 
-/// Every heuristic the configuration grammar names: blind search is built
-/// in, a binary registers the others.
-pub static HEURISTICS: Registry<HeuristicConfig> =
-    Registry::new("heuristic", &[entry::<crate::evaluation::BlindFeature>()]);
-
-pub(crate) fn heuristic_help() -> String {
-    format!(
-        "Heuristics: {}. `planforge heuristics` lists their options and defaults. Custom Rust heuristics can be passed directly as Box<dyn Heuristic>.",
-        HEURISTICS.names().collect::<Vec<_>>().join(", ")
-    )
-}
 /// Why a heuristic could not be built.
 #[derive(Debug)]
 pub enum HeuristicBuildError {

@@ -4,11 +4,10 @@ use std::fmt::{self, Debug};
 use std::sync::Arc;
 
 use super::OpenList;
-use crate::config::EmptyConfig;
 use crate::config::{
-    ApplyOptions, ConfigCall, ConfigError, ConfigValue, FromOptionValue, canonical_call, configure,
+    ApplyOptions, ConfigCall, ConfigError, ConfigValue, EmptyConfig, FromOptionValue, configure,
 };
-use crate::registry::{Entry, Registry, options_of};
+use crate::registry::{Configured, Entry, Features, Typed, options_of, parse_configured};
 
 /// An open list the configuration grammar names: its typed configuration
 /// and how to build it. The search uses it as a `Box<dyn OpenList>`, so it
@@ -19,32 +18,22 @@ pub trait OpenListFeature: 'static {
     fn build(config: &Self::Config) -> Box<dyn OpenList>;
 }
 
-trait ErasedOpenListConfig: Debug + Send + Sync {
-    fn call(&self) -> String;
+/// The interface of a registered open list's configuration, whatever its
+/// type: what [`RegisteredOpenList`] dereferences to.
+pub trait ConfiguredOpenList: Send + Sync {
     fn build(&self) -> Box<dyn OpenList>;
 }
 
-struct Configured<F: OpenListFeature>(F::Config);
-
-impl<F: OpenListFeature> Debug for Configured<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple(F::NAME).field(&self.0).finish()
-    }
-}
-
-impl<F: OpenListFeature> ErasedOpenListConfig for Configured<F> {
-    fn call(&self) -> String {
-        canonical_call(F::NAME, &self.0)
-    }
+impl<F: OpenListFeature> ConfiguredOpenList for Typed<F, F::Config> {
     fn build(&self) -> Box<dyn OpenList> {
-        F::build(&self.0)
+        F::build(&self.config)
     }
 }
 
 /// A configured open list. The built-in lists are generic over the node
 /// ordering and dispatched statically; a registered one goes through
 /// `Box<dyn OpenList>`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OpenListConfig {
     /// `tiebreaking()`: [`super::TieBreakingOpenList`].
     TieBreaking,
@@ -53,15 +42,9 @@ pub enum OpenListConfig {
     Registered(RegisteredOpenList),
 }
 
-/// A registered open list's configuration.
-#[derive(Debug, Clone)]
-pub struct RegisteredOpenList(Arc<dyn ErasedOpenListConfig>);
-
-impl RegisteredOpenList {
-    pub fn build(&self) -> Box<dyn OpenList> {
-        self.0.build()
-    }
-}
+/// A registered open list's configuration. It displays as its canonical
+/// call.
+pub type RegisteredOpenList = Configured<dyn ConfiguredOpenList>;
 
 /// The canonical call, which parses back to an equal configuration.
 impl fmt::Display for OpenListConfig {
@@ -69,20 +52,16 @@ impl fmt::Display for OpenListConfig {
         match self {
             Self::TieBreaking => f.write_str("tiebreaking()"),
             Self::PreferredFirst => f.write_str("preferred_first()"),
-            Self::Registered(list) => f.write_str(&list.0.call()),
+            Self::Registered(list) => fmt::Display::fmt(list, f),
         }
     }
 }
 
-impl PartialEq for OpenListConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.to_string() == other.to_string()
-    }
-}
-
 impl FromOptionValue for OpenListConfig {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
-        OPEN_LISTS.parse(&ConfigCall::from_value(value)?)
+    fn from_option_value(value: &ConfigValue, features: &Features) -> Result<Self, ConfigError> {
+        features
+            .open_lists
+            .parse(&ConfigCall::from_value(value)?, features)
     }
 
     fn option_text(&self) -> String {
@@ -90,64 +69,47 @@ impl FromOptionValue for OpenListConfig {
     }
 }
 
-/// A registered open list.
+/// An open list's registry entry.
 pub type OpenListEntry = Entry<OpenListConfig>;
 
 pub const fn entry<F: OpenListFeature>() -> OpenListEntry {
     Entry::new(F::NAME, parse_feature::<F>, options_of::<F::Config>)
 }
 
-fn parse_feature<F: OpenListFeature>(spec: &ConfigCall) -> Result<OpenListConfig, ConfigError> {
-    let config = configure(F::NAME, F::Config::default(), &spec.args)?;
-    Ok(OpenListConfig::Registered(RegisteredOpenList(Arc::new(
-        Configured::<F>(config),
-    ))))
+fn parse_feature<F: OpenListFeature>(
+    spec: &ConfigCall,
+    features: &Features,
+) -> Result<OpenListConfig, ConfigError> {
+    let list = parse_configured(F::NAME, spec, features, |typed: Typed<F, F::Config>| {
+        Arc::new(typed) as Arc<dyn ConfiguredOpenList>
+    })?;
+    Ok(OpenListConfig::Registered(list))
 }
 
-fn parse_tiebreaking(spec: &ConfigCall) -> Result<OpenListConfig, ConfigError> {
-    configure("tiebreaking", EmptyConfig {}, &spec.args)?;
+fn parse_tiebreaking(
+    spec: &ConfigCall,
+    features: &Features,
+) -> Result<OpenListConfig, ConfigError> {
+    configure("tiebreaking", EmptyConfig {}, &spec.args, features)?;
     Ok(OpenListConfig::TieBreaking)
 }
 
-fn parse_preferred_first(spec: &ConfigCall) -> Result<OpenListConfig, ConfigError> {
-    configure("preferred_first", EmptyConfig {}, &spec.args)?;
+fn parse_preferred_first(
+    spec: &ConfigCall,
+    features: &Features,
+) -> Result<OpenListConfig, ConfigError> {
+    configure("preferred_first", EmptyConfig {}, &spec.args, features)?;
     Ok(OpenListConfig::PreferredFirst)
 }
 
-/// Every open list the `open_list` option names: the built-in ones, and
-/// those a binary registers.
-pub static OPEN_LISTS: Registry<OpenListConfig> = Registry::new(
-    "open list",
-    &[
+/// The built-in open lists, `tiebreaking()` and `preferred_first()`.
+pub(crate) fn builtin_entries() -> Vec<OpenListEntry> {
+    vec![
         Entry::new("tiebreaking", parse_tiebreaking, options_of::<EmptyConfig>),
         Entry::new(
             "preferred_first",
             parse_preferred_first,
             options_of::<EmptyConfig>,
         ),
-    ],
-);
-
-#[cfg(test)]
-mod tests {
-    use crate::search::parse_search_spec;
-
-    #[test]
-    fn a_best_first_search_names_its_open_list() {
-        for (spec, canonical) in [
-            ("astar(blind(), open_list=tiebreaking())", "astar(blind())"),
-            (
-                "astar(blind(), open_list=preferred_first())",
-                "astar(blind(), open_list=preferred_first())",
-            ),
-            (
-                "gbfs(blind(), open_list=preferred_first())",
-                "gbfs(blind())",
-            ),
-        ] {
-            assert_eq!(parse_search_spec(spec).unwrap().to_string(), canonical);
-        }
-        let error = parse_search_spec("astar(blind(), open_list=tiebreaking(x=1))").unwrap_err();
-        assert!(error.to_string().contains("tiebreaking"), "{error}");
-    }
+    ]
 }

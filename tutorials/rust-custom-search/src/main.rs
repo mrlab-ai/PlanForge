@@ -15,9 +15,10 @@ use planforge_sas::numeric_task::Task;
 use planforge_search::config::ApplyOptions;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_features::{BuildContext, HeuristicConfig};
+use planforge_search::registry::Features;
 use planforge_search::search::{
-    Reached, SEARCH_ALGORITHMS, SearchError, SearchFeature, SearchLimits, SearchOutcome,
-    SearchProgress, SearchResult, SearchSpace, entry, parse_search_spec,
+    Reached, SearchError, SearchFeature, SearchLimits, SearchOutcome, SearchProgress, SearchResult,
+    SearchSpace, entry,
 };
 use planforge_search::successor_generator::SuccessorGeneratorConfig;
 
@@ -129,10 +130,12 @@ fn enforced_hill_climbing(
 }
 
 fn main() -> anyhow::Result<()> {
-    // A binary registers its search algorithms once, before it parses a
-    // configuration; `planforge::run_with` does so for the real CLI.
-    SEARCH_ALGORITHMS.register(vec![entry::<EnforcedHillClimbing>()])?;
-    let search = parse_search_spec("ehc(blind())")?;
+    // The features the configuration names: the built-in ones and EHC.
+    let mut features = Features::builtin();
+    features
+        .search_algorithms
+        .add(entry::<EnforcedHillClimbing>())?;
+    let search = features.parse_search("ehc(blind())")?;
 
     let task: Arc<Task> = Arc::new(Task::from_file("tests/assets/numeric_sas/example5.sas"));
     let limits = SearchLimits {

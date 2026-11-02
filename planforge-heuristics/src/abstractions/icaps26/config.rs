@@ -38,6 +38,7 @@ impl planforge_search::config::ApplyOptions for Icaps26CartesianConfig {
     fn apply_options(
         &mut self,
         args: &[planforge_search::config::ConfigArg],
+        features: &planforge_search::registry::Features,
     ) -> Result<(), planforge_search::config::ConfigError> {
         use planforge_search::config::FromOptionValue;
 
@@ -51,7 +52,7 @@ impl planforge_search::config::ApplyOptions for Icaps26CartesianConfig {
             }
             match key {
                 "pick" => {
-                    let value = String::from_option_value(arg.value())?;
+                    let value = String::from_option_value(arg.value(), features)?;
                     self.pick = match value.to_ascii_lowercase().as_str() {
                         "random" => Icaps26SplitSelection::Random,
                         "min_unwanted" => Icaps26SplitSelection::MinUnwanted,
@@ -63,20 +64,24 @@ impl planforge_search::config::ApplyOptions for Icaps26CartesianConfig {
                         }
                     };
                 }
-                "max_states" => self.max_states = usize::from_option_value(arg.value())?,
+                "max_states" => self.max_states = usize::from_option_value(arg.value(), features)?,
                 "max_time" => {
-                    self.max_time =
-                        planforge_search::config::TimeLimit::from_option_value(arg.value())?
-                            .duration()?;
+                    self.max_time = planforge_search::config::TimeLimit::from_option_value(
+                        arg.value(),
+                        features,
+                    )?
+                    .duration()?;
                 }
                 "random_seed" => {
-                    let seed = u64::from_option_value(arg.value())?;
+                    let seed = u64::from_option_value(arg.value(), features)?;
                     self.random_seed = u32::try_from(seed).map_err(|_| {
                         format!("ICAPS 2026 random_seed {seed} exceeds the artifact's 32-bit seed")
                     })?;
                 }
-                "combine_labels" => self.combine_labels = bool::from_option_value(arg.value())?,
-                "debug" => self.debug = bool::from_option_value(arg.value())?,
+                "combine_labels" => {
+                    self.combine_labels = bool::from_option_value(arg.value(), features)?
+                }
+                "debug" => self.debug = bool::from_option_value(arg.value(), features)?,
                 other => {
                     return Err(format!("unknown option `{other}`").into());
                 }

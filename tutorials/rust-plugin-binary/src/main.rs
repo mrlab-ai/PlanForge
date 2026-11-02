@@ -107,9 +107,14 @@ impl OpenListFeature for FHeapFeature {
 }
 
 fn main() -> std::io::Result<()> {
-    planforge::run_with(planforge::Extensions {
-        heuristics: vec![entry::<GoalCountFeature>()],
-        open_lists: vec![best_first::entry::<FHeapFeature>()],
-        ..Default::default()
-    })
+    let mut features = planforge_heuristics::features();
+    features
+        .heuristics
+        .add(entry::<GoalCountFeature>())
+        .map_err(std::io::Error::other)?;
+    features
+        .open_lists
+        .add(best_first::entry::<FHeapFeature>())
+        .map_err(std::io::Error::other)?;
+    planforge::run_with(features)
 }

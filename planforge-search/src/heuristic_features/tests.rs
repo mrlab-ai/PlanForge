@@ -1,31 +1,45 @@
-use super::HEURISTICS;
 use super::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskCheck, TaskRequirements, entry,
 };
 use crate::config::EmptyConfig;
 use crate::evaluation::Heuristic;
 use crate::evaluation::{BlindFeature, BlindHeuristic};
+use crate::registry::Features;
 use planforge_sas::numeric_task::Task;
 
 #[test]
-fn registration_rejects_builtin_name_collision() {
-    let error = HEURISTICS
-        .register(vec![entry::<BlindFeature>()])
+fn a_registry_rejects_a_second_entry_of_a_name() {
+    let mut features = Features::builtin();
+    let error = features
+        .heuristics
+        .add(entry::<BlindFeature>())
         .unwrap_err();
     assert!(
-        error.to_string().contains("collides with a built-in"),
+        error
+            .to_string()
+            .contains("heuristic named `blind` already"),
         "got `{error}`"
     );
+    features.heuristics.add(entry::<Duplicate>()).unwrap();
+    assert!(features.heuristics.add(entry::<Duplicate>()).is_err());
 }
 
 #[test]
-fn registration_rejects_duplicate_names() {
-    let error = HEURISTICS
-        .register(vec![entry::<Duplicate>(), entry::<Duplicate>()])
-        .unwrap_err();
+fn two_feature_sets_parse_side_by_side() {
+    let builtin = Features::builtin();
+    let mut extended = Features::builtin();
+    extended.heuristics.add(entry::<Duplicate>()).unwrap();
+
+    let search = extended.parse_search("astar(duplicate())").unwrap();
+    assert_eq!(search.to_string(), "astar(duplicate())");
+    let error = builtin.parse_search("astar(duplicate())").unwrap_err();
     assert!(
-        error.to_string().contains("registered more than once"),
+        error.to_string().contains("unknown heuristic `duplicate`"),
         "got `{error}`"
+    );
+    assert_eq!(
+        builtin.parse_search("astar(blind())").unwrap(),
+        extended.parse_search("astar(blind())").unwrap()
     );
 }
 
