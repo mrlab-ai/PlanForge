@@ -30,16 +30,18 @@ use limits::{
     parse_time_limit,
 };
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::{HEURISTICS, HeuristicEntry, TaskRequirements};
+use planforge_search::heuristic_factory::{
+    HEURISTICS, HeuristicBuildError, HeuristicEntry, TaskRequirements,
+};
 use planforge_search::search::best_first::{OPEN_LISTS, OpenListEntry};
 use planforge_search::search::{
-    SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchLimits, SearchResult,
+    SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchError, SearchLimits, SearchResult,
 };
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::successor_generator::{SUCCESSOR_GENERATORS, SuccessorGeneratorEntry};
 use planforge_search::task_transformations::{
-    TRANSFORMATIONS, TransformationConfig, TransformationEntry, parse_transformation_spec,
-    transform_task, transformation_help,
+    TRANSFORMATIONS, TransformError, TransformationConfig, TransformationEntry,
+    parse_transformation_spec, transform_task, transformation_help,
 };
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
@@ -113,7 +115,7 @@ pub struct Extensions {
 /// transformation inside the real binary:
 ///
 /// ```no_run
-/// use planforge_search::search::{SearchFeature, SearchLimits, SearchResult, entry};
+/// use planforge_search::search::{SearchError, SearchFeature, SearchLimits, SearchResult, entry};
 /// # use planforge_search::heuristic_factory::{EmptyConfig, HeuristicConfig};
 /// # use planforge_sas::numeric_task::Task;
 /// # use std::sync::Arc;
@@ -122,7 +124,7 @@ pub struct Extensions {
 /// #     const NAME: &'static str = "my_search";
 /// #     type Config = EmptyConfig;
 /// #     fn heuristics(_: &EmptyConfig) -> Vec<&HeuristicConfig> { Vec::new() }
-/// #     fn run(_: &EmptyConfig, _: Arc<Task>, _: SearchLimits) -> std::io::Result<SearchResult> {
+/// #     fn run(_: &EmptyConfig, _: Arc<Task>, _: SearchLimits) -> Result<SearchResult, SearchError> {
 /// #         unimplemented!()
 /// #     }
 /// # }
@@ -548,7 +550,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         "subcommands are dispatched before the search pipeline"
     );
     register_event_handlers();
-    cli.search.preflight()?;
+    cli.search.preflight().map_err(heuristic_build_error)?;
 
     let start_time = std::time::Instant::now();
     let (task, sas_label) = if cli.inputs.len() == 2 {
@@ -586,13 +588,16 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 
     let time_limit = cli.max_time;
     let memory_limit = cli.max_memory;
-    let result = cli.search.solve(
-        task.clone(),
-        SearchLimits {
-            time: time_limit,
-            memory_bytes: memory_limit,
-        },
-    )?;
+    let result = cli
+        .search
+        .solve(
+            task.clone(),
+            SearchLimits {
+                time: time_limit,
+                memory_bytes: memory_limit,
+            },
+        )
+        .map_err(search_error)?;
 
     write_plan_file(&result)?;
     print_search_result(&result);
@@ -602,26 +607,44 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 
 /// The error a failed task transformation ends the run with: a task the
 /// transformation does not support is `Unsupported`.
-fn transformation_error(error: anyhow::Error) -> std::io::Error {
-    let kind = if planforge_search::unsupported::is_unsupported_task(&error) {
-        std::io::ErrorKind::Unsupported
-    } else {
-        std::io::ErrorKind::Other
+fn transformation_error(error: TransformError) -> std::io::Error {
+    let kind = match error {
+        TransformError::Unsupported(_) => std::io::ErrorKind::Unsupported,
+        TransformError::Missing(_) | TransformError::Failed(_) => std::io::ErrorKind::Other,
     };
-    std::io::Error::new(kind, format!("task transformation failed: {error:#}"))
+    std::io::Error::new(kind, format!("task transformation failed: {error}"))
 }
 
 /// The error a failed translation ends the run with: PDDL the translator does
 /// not implement is `Unsupported`, so the run exits with the unsupported code.
-fn translation_error(error: anyhow::Error) -> std::io::Error {
-    let unsupported = error
-        .chain()
-        .filter_map(|cause| cause.downcast_ref::<planforge_translate::ParseError>())
-        .any(|parse_error| parse_error.kind == planforge_translate::ParseErrorKind::Unsupported);
-    let kind = if unsupported {
-        std::io::ErrorKind::Unsupported
-    } else {
-        std::io::ErrorKind::Other
+fn translation_error(error: planforge_translate::TranslateError) -> std::io::Error {
+    let kind = match &error {
+        planforge_translate::TranslateError::Parse(parse_error)
+            if parse_error.kind == planforge_translate::ParseErrorKind::Unsupported =>
+        {
+            std::io::ErrorKind::Unsupported
+        }
+        _ => std::io::ErrorKind::Other,
     };
-    std::io::Error::new(kind, format!("{error:#}"))
+    std::io::Error::new(kind, error)
+}
+
+/// The error a heuristic that cannot be built ends the run with: a timeout
+/// and an unsupported task select their exit codes.
+fn heuristic_build_error(error: HeuristicBuildError) -> std::io::Error {
+    let kind = match error {
+        HeuristicBuildError::Timeout(_) => std::io::ErrorKind::TimedOut,
+        HeuristicBuildError::Unsupported(_) => std::io::ErrorKind::Unsupported,
+        HeuristicBuildError::Config(_) => std::io::ErrorKind::InvalidInput,
+        HeuristicBuildError::Failure(_) => std::io::ErrorKind::Other,
+    };
+    std::io::Error::new(kind, error)
+}
+
+/// The error a failed search ends the run with.
+fn search_error(error: SearchError) -> std::io::Error {
+    match error {
+        SearchError::Build(error) => heuristic_build_error(error),
+        error => std::io::Error::other(format!("search failed: {error}")),
+    }
 }

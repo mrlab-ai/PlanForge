@@ -10,10 +10,10 @@ use std::time::Duration;
 
 use planforge_sas::numeric_task::Task;
 
-use super::SearchResult;
 use super::algorithms::{AStarFeature, GreedyBestFirstFeature};
+use super::{SearchError, SearchResult};
 use crate::config::{ApplyOptions, ConfigCall, ConfigError, canonical_call, configure, parse_call};
-use crate::heuristic_factory::{HeuristicConfig, TaskRequirements};
+use crate::heuristic_factory::{HeuristicBuildError, HeuristicConfig, TaskRequirements};
 use crate::registry::{Entry, Registry, options_of};
 
 /// The limits a search runs within.
@@ -35,14 +35,14 @@ pub trait SearchFeature: 'static {
         config: &Self::Config,
         task: Arc<Task>,
         limits: SearchLimits,
-    ) -> std::io::Result<SearchResult>;
+    ) -> Result<SearchResult, SearchError>;
 }
 
 trait ErasedSearchConfig: Debug + Send + Sync {
     fn heuristics(&self) -> Vec<&HeuristicConfig>;
     fn config(&self) -> &dyn Any;
     fn call(&self) -> String;
-    fn run(&self, task: Arc<Task>, limits: SearchLimits) -> std::io::Result<SearchResult>;
+    fn run(&self, task: Arc<Task>, limits: SearchLimits) -> Result<SearchResult, SearchError>;
 }
 
 struct Configured<F: SearchFeature>(F::Config);
@@ -63,7 +63,7 @@ impl<F: SearchFeature> ErasedSearchConfig for Configured<F> {
     fn call(&self) -> String {
         canonical_call(F::NAME, &self.0)
     }
-    fn run(&self, task: Arc<Task>, limits: SearchLimits) -> std::io::Result<SearchResult> {
+    fn run(&self, task: Arc<Task>, limits: SearchLimits) -> Result<SearchResult, SearchError> {
         F::run(&self.0, task, limits)
     }
 }
@@ -87,7 +87,7 @@ impl SearchConfig {
 
     /// Fail before translation if this build cannot construct a heuristic,
     /// for example without the LP solver it needs.
-    pub fn preflight(&self) -> std::io::Result<()> {
+    pub fn preflight(&self) -> Result<(), HeuristicBuildError> {
         self.heuristics().try_for_each(HeuristicConfig::preflight)
     }
 
@@ -97,7 +97,11 @@ impl SearchConfig {
     }
 
     /// Searches `task` within `limits`.
-    pub fn solve(&self, task: Arc<Task>, limits: SearchLimits) -> std::io::Result<SearchResult> {
+    pub fn solve(
+        &self,
+        task: Arc<Task>,
+        limits: SearchLimits,
+    ) -> Result<SearchResult, SearchError> {
         self.0.run(task, limits)
     }
 }
@@ -159,6 +163,6 @@ pub fn search_algorithm_help() -> String {
     )
 }
 
-pub fn parse_search_spec(raw: &str) -> Result<SearchConfig, String> {
-    Ok(SEARCH_ALGORITHMS.parse(&parse_call(raw)?)?)
+pub fn parse_search_spec(raw: &str) -> Result<SearchConfig, ConfigError> {
+    SEARCH_ALGORITHMS.parse(&parse_call(raw)?)
 }

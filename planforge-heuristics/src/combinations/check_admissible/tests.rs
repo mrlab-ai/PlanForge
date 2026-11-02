@@ -97,7 +97,11 @@ fn rejects_an_inadmissible_heuristic() {
     let error = evaluate_initial_state(chain_task(), ConstantHeuristic::boxed(1000.0, "huge"))
         .expect_err("h = 1000 must be rejected against a true goal distance of 2");
 
-    let EvaluationError::ComputationFailed(message) = error;
+    assert!(
+        matches!(error, EvaluationError::Inadmissible { .. }),
+        "{error}"
+    );
+    let message = error.to_string();
     assert!(message.contains("huge"), "{message}");
     assert!(message.contains("inadmissible"), "{message}");
     assert!(message.contains("1000"), "{message}");
@@ -126,7 +130,7 @@ fn rejects_a_heuristic_that_invents_a_dead_end() {
         ConstantHeuristic::boxed(f64::INFINITY, "fake_dead_end"),
     )
     .expect_err("a solvable state must not be reported as a dead end");
-    assert!(matches!(error, EvaluationError::ComputationFailed(_)));
+    assert!(matches!(error, EvaluationError::Inadmissible { .. }));
 }
 
 #[test]
@@ -185,8 +189,8 @@ fn the_wrapped_heuristic_is_one_positional_heuristic() {
     let spec =
         planforge_search::config::parse_call("check_admissible([domain_collection()])").unwrap();
     let error = super::single_wrapped_heuristic_spec("check_admissible", &spec.args).unwrap_err();
-    assert_eq!(error, "expected heuristic, got a list");
+    assert_eq!(error.to_string(), "expected heuristic, got a list");
     let spec = planforge_search::config::parse_call("check_admissible(h=blind())").unwrap();
     let error = super::single_wrapped_heuristic_spec("check_admissible", &spec.args).unwrap_err();
-    assert!(error.contains("positionally"), "{error}");
+    assert!(error.to_string().contains("positionally"), "{error}");
 }

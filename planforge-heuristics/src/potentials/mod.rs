@@ -24,13 +24,13 @@ pub use config::{
     BoundsProvider, DiverseFallback, NumericPotentialConfig, NumericPotentialFeature, OptimizeFor,
 };
 #[cfg(feature = "cplex")]
-pub use function::NumericPotentialFunction;
+pub(crate) use function::NumericPotentialFunction;
 #[cfg(feature = "cplex")]
 pub use heuristic::NumericPotentialHeuristic;
 #[cfg(feature = "cplex")]
-pub use optimizer::{NumericPotentialOptimizer, OptimizationOutcome};
+pub(crate) use optimizer::{NumericPotentialOptimizer, OptimizationOutcome};
 #[cfg(feature = "cplex")]
-pub use task::{FeatureBounds, PotentialTask};
+pub(crate) use task::PotentialTask;
 
 #[cfg(all(test, feature = "cplex"))]
 mod tests;

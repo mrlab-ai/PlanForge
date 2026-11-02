@@ -10,6 +10,7 @@ use super::lookup::{CostPartitioningHeuristic, current_h_for_distances};
 use crate::abstractions::component::AbstractionComponent;
 use crate::abstractions::cost_partitioning::costs::{RemainingCosts, SourceSetCostAllocation};
 use planforge_search::evaluation::EvaluationError;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use planforge_search::resource_limits::Deadline;
 
 /// Everything a cost partitioning over this collection needs except the order
@@ -60,7 +61,7 @@ fn saturate_component(
     method: CostPartitioningMethod,
     perimeter_state: Option<usize>,
     deadline: Deadline,
-) -> anyhow::Result<(Vec<f64>, SaturatedCosts)> {
+) -> Result<(Vec<f64>, SaturatedCosts), HeuristicBuildError> {
     match (method, component) {
         (CostPartitioningMethod::Region, AbstractionComponent::Cegar { abstraction, .. }) => {
             abstraction
@@ -86,7 +87,7 @@ pub(super) fn saturate_component_labels(
     operator_costs: &[f64],
     perimeter_state: Option<usize>,
     deadline: Deadline,
-) -> anyhow::Result<(Vec<f64>, Vec<f64>)> {
+) -> Result<(Vec<f64>, Vec<f64>), HeuristicBuildError> {
     match component {
         AbstractionComponent::Cegar { abstraction, .. } => {
             abstraction.saturate_labels(operator_costs, perimeter_state, deadline)
@@ -186,14 +187,12 @@ impl ScpBuilder {
             let (distances, saturated) =
                 match saturate_component(component, remaining, method, perimeter_state, deadline) {
                     Ok(saturation) => saturation,
-                    Err(error)
-                        if planforge_search::resource_limits::is_deadline_exceeded(&error) =>
-                    {
+                    Err(HeuristicBuildError::Timeout(_)) => {
                         return Ok(ControlFlow::Break(()));
                     }
                     Err(error) => {
                         return Err(EvaluationError::ComputationFailed(format!(
-                            "failed to saturate component {component_id}: {error:#}"
+                            "failed to saturate component {component_id}: {error}"
                         )));
                     }
                 };
@@ -221,7 +220,7 @@ impl ScpBuilder {
             };
             match reduced {
                 Ok(()) => {}
-                Err(error) if planforge_search::resource_limits::is_deadline_exceeded(&error) => {
+                Err(error) if error.is::<planforge_search::resource_limits::DeadlineExceeded>() => {
                     return Ok(ControlFlow::Break(()));
                 }
                 Err(error) => {

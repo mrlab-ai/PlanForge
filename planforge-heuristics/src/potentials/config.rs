@@ -163,18 +163,18 @@ impl Default for NumericPotentialConfig {
 }
 
 impl NumericPotentialConfig {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if self.num_samples == 0 {
-            return Err("numeric_potential num_samples must be at least 1".to_string());
+            return Err("numeric_potential num_samples must be at least 1".into());
         }
         if self.num_heuristics == 0 {
-            return Err("numeric_potential num_heuristics must be at least 1".to_string());
+            return Err("numeric_potential num_heuristics must be at least 1".into());
         }
         if self.num_goal_cost_partitions == 0
             || self.num_goal_conditioned_heuristics == 0
             || self.num_goal_conditioned_samples == 0
         {
-            return Err("numeric_potential portfolio counts must be at least 1".to_string());
+            return Err("numeric_potential portfolio counts must be at least 1".into());
         }
         for (name, value) in [
             (
@@ -195,12 +195,12 @@ impl NumericPotentialConfig {
             ("epsilon", self.epsilon),
         ] {
             if value.is_nan() || value < 0.0 {
-                return Err(format!("numeric_potential {name} must be non-negative"));
+                return Err(format!("numeric_potential {name} must be non-negative").into());
             }
         }
         if self.online_reoptimization_interval == 0 {
             return Err(
-                "numeric_potential online_reoptimization_interval must be at least 1".to_string(),
+                "numeric_potential online_reoptimization_interval must be at least 1".into(),
             );
         }
         Ok(())
@@ -212,7 +212,7 @@ pub struct NumericPotentialFeature;
 impl HeuristicFeature for NumericPotentialFeature {
     const NAME: &'static str = "numeric_potential";
     type Config = NumericPotentialConfig;
-    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+    fn preflight(_: &Self::Config) -> Result<(), HeuristicBuildError> {
         crate::requirements::require_cplex()
     }
     fn requirements(_: &Self::Config) -> TaskRequirements {
@@ -222,7 +222,7 @@ impl HeuristicFeature for NumericPotentialFeature {
         }
     }
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
-        config.validate().map_err(Into::into)
+        config.validate()
     }
     #[cfg(feature = "cplex")]
     fn build(

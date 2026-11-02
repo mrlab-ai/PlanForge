@@ -142,11 +142,11 @@ impl ConfigCall {
     ///
     /// Named/positional/duplicate validation is deferred to the heuristic's own
     /// config, which owns the canonical option order.
-    pub fn from_value(value: &ConfigValue) -> Result<Self, String> {
+    pub fn from_value(value: &ConfigValue) -> Result<Self, ConfigError> {
         match value {
             ConfigValue::Call(call) => Ok(call.clone()),
-            ConfigValue::Atom(atom) => Err(format!("expected heuristic, got `{atom}`")),
-            ConfigValue::List(_) => Err("expected heuristic, got a list".to_string()),
+            ConfigValue::Atom(atom) => Err(format!("expected heuristic, got `{atom}`").into()),
+            ConfigValue::List(_) => Err("expected heuristic, got a list".into()),
         }
     }
 }

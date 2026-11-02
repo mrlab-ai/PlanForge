@@ -29,7 +29,7 @@ struct ExternalCplexTest;
 impl HeuristicFeature for ExternalCplexTest {
     const NAME: &'static str = "external_cplex_test";
     type Config = EmptyConfig;
-    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+    fn preflight(_: &Self::Config) -> Result<(), HeuristicBuildError> {
         planforge_heuristics::requirements::require_cplex()
     }
     fn build(
@@ -73,6 +73,6 @@ fn external_heuristic_is_visible_to_every_registry_path() {
     assert!(error.contains("blind"), "got `{error}`");
     assert!(error.contains("external_test"), "got `{error}`");
 
-    let error = HEURISTICS.register(Vec::new()).unwrap_err();
+    let error = HEURISTICS.register(Vec::new()).unwrap_err().to_string();
     assert!(error.contains("already been registered"), "got `{error}`");
 }

@@ -84,7 +84,7 @@ impl SaturatedCostPartitioningHeuristic {
         }
         config
             .validate()
-            .map_err(EvaluationError::ComputationFailed)?;
+            .map_err(|error| EvaluationError::ComputationFailed(error.to_string()))?;
         let mut components = components;
         if config.partitioning.uses_regions() {
             let regions = RegionSemantics::new(&task)
@@ -219,7 +219,7 @@ impl ScpBuilder {
             self.config
                 .table_construction_max_time
                 .duration()
-                .map_err(EvaluationError::ComputationFailed)?,
+                .expect("ScpConfig::validate checked the time limits"),
         )?);
         let abstraction_h = abstraction_heuristic_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
@@ -256,7 +256,7 @@ impl ScpBuilder {
             self.config
                 .initial_order_generation_max_time
                 .duration()
-                .map_err(EvaluationError::ComputationFailed)?,
+                .expect("ScpConfig::validate checked the time limits"),
         )?;
         let best = candidates.partitions.swap_remove(candidates.best_index);
         if best.is_empty() {
@@ -317,7 +317,7 @@ impl HeuristicFeature for ScpFeature {
     }
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
         config.validate()?;
-        config.options.validate().map_err(Into::into)
+        config.options.validate()
     }
     fn build(
         config: &Self::Config,

@@ -44,11 +44,9 @@ impl CanonicalAbstractionHeuristic {
         name: Option<String>,
         task: &Task,
         components: Vec<AbstractionComponent>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HeuristicBuildError> {
         if components.is_empty() {
-            return Err(
-                "canonical abstraction heuristic requires at least one component".to_string(),
-            );
+            return Err("canonical abstraction heuristic requires at least one component".into());
         }
         let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
             .iter()

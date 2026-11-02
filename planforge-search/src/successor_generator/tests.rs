@@ -378,7 +378,9 @@ fn a_search_names_its_successor_generator() {
     assert_eq!(search.to_string(), "astar(blind())");
     let error = parse_search_spec("gbfs(blind(), successor_generator=naive())").unwrap_err();
     assert!(
-        error.contains("unknown successor generator `naive`"),
+        error
+            .to_string()
+            .contains("unknown successor generator `naive`"),
         "{error}"
     );
 }

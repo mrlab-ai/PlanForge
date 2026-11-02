@@ -42,7 +42,12 @@ fn identity_operators(
     partitions: NumericPartitions,
     combine_labels: bool,
 ) -> Result<Vec<AbstractOperator>> {
-    identity_function(task, partitions).abstract_operators(task, combine_labels, Deadline::NONE)
+    super::build_abstract_operators(
+        &identity_function(task, partitions),
+        task,
+        combine_labels,
+        Deadline::NONE,
+    )
 }
 
 /// What identifies an abstract operator for a determinism comparison: its
@@ -900,7 +905,8 @@ fn conditional_propositional_effect_branches() {
 
     let err = semantics_error(&task);
     assert!(
-        planforge_search::unsupported::is_unsupported_task(&err),
+        err.chain()
+            .any(|cause| cause.is::<planforge_search::unsupported::UnsupportedTask>()),
         "{err:#}"
     );
     assert!(err.to_string().contains("has a conditional"), "{err:#}");
@@ -966,7 +972,8 @@ fn conditional_assignment_effect_branches() {
 
     let err = semantics_error(&task);
     assert!(
-        planforge_search::unsupported::is_unsupported_task(&err),
+        err.chain()
+            .any(|cause| cause.is::<planforge_search::unsupported::UnsupportedTask>()),
         "{err:#}"
     );
     assert!(err.to_string().contains("has a conditional"), "{err:#}");
@@ -1011,7 +1018,8 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
 
     let err = semantics_error(&task);
     assert!(
-        planforge_search::unsupported::is_unsupported_task(&err),
+        err.chain()
+            .any(|cause| cause.is::<planforge_search::unsupported::UnsupportedTask>()),
         "{err:#}"
     );
     assert!(err.to_string().contains("not a constant"), "{err:#}");

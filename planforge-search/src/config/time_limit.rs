@@ -18,8 +18,9 @@ impl TimeLimit {
     pub const fn seconds(self) -> f64 {
         self.0
     }
-    pub fn duration(self) -> Result<Option<Duration>, String> {
-        crate::resource_limits::time_limit_from_secs(self.0).map_err(|error| error.to_string())
+    pub fn duration(self) -> Result<Option<Duration>, super::ConfigError> {
+        crate::resource_limits::time_limit_from_secs(self.0)
+            .map_err(|error| error.to_string().into())
     }
     fn from_seconds(seconds: f64) -> Result<Self, String> {
         if seconds.is_nan() || seconds < 0.0 {

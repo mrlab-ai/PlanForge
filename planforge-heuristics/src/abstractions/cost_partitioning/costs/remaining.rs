@@ -128,7 +128,7 @@ impl RemainingCosts {
         cost_left(residual.base_cost, residual.used_on(&source_set.source))
     }
 
-    pub fn reduce_by_source_set_allocation_with_deadline(
+    pub(crate) fn reduce_by_source_set_allocation_with_deadline(
         &mut self,
         allocation: &SourceSetCostAllocation,
         deadline: Deadline,
@@ -220,7 +220,7 @@ impl RemainingCosts {
         Ok(())
     }
 
-    pub fn reduce_operator_costs_uniform(&mut self, saturated_costs: &[f64]) -> Result<()> {
+    pub(crate) fn reduce_operator_costs_uniform(&mut self, saturated_costs: &[f64]) -> Result<()> {
         ensure!(
             self.operator_residuals.len() == saturated_costs.len(),
             "operator cost vector length mismatch: buckets={}, saturated={}",

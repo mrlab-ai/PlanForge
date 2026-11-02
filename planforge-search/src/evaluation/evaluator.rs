@@ -2,24 +2,58 @@ use planforge_sas::explicit_state::{ExplicitState, StateValues};
 use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::ConcreteState;
-use planforge_sas::state_registry::StateRegistry;
+use planforge_sas::state_registry::{StateID, StateRegistry};
+use planforge_sas::utils::errors::AssignmentAxiomError;
 use std::fmt;
 
 /// Why a heuristic could not evaluate a state. A dead end is not an error:
-/// the heuristic estimates it as infinite.
+/// the heuristic estimates it as [`super::Estimate::DEAD_END`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvaluationError {
-    /// Heuristic computation failed.
+    /// The state's derived numeric values are undefined: an arithmetic axiom
+    /// divides by zero.
+    DerivedValues(AssignmentAxiomError),
+    /// The LP solver failed; its message.
+    Solver(String),
+    /// A checked heuristic estimated more than the state's true goal
+    /// distance (`check_admissible`).
+    Inadmissible {
+        heuristic: String,
+        state: StateID,
+        h: f64,
+        goal_distance: f64,
+    },
+    /// Any other failure, such as a Python heuristic raising an exception.
     ComputationFailed(String),
 }
 
 impl fmt::Display for EvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EvaluationError::ComputationFailed(msg) => {
-                write!(f, "Evaluation failed: {}", msg)
-            }
+            Self::DerivedValues(error) => write!(
+                f,
+                "Evaluation failed: failed to evaluate the state's derived numeric values: {error}"
+            ),
+            Self::Solver(message) => write!(f, "Evaluation failed: LP solver: {message}"),
+            Self::Inadmissible {
+                heuristic,
+                state,
+                h,
+                goal_distance,
+            } => write!(
+                f,
+                "Evaluation failed: `{heuristic}` is inadmissible on state {state}: it returned \
+                 h = {h} for a state whose true goal distance is h* = {goal_distance} (h - h* = {})",
+                h - goal_distance
+            ),
+            Self::ComputationFailed(message) => write!(f, "Evaluation failed: {message}"),
         }
+    }
+}
+
+impl From<AssignmentAxiomError> for EvaluationError {
+    fn from(error: AssignmentAxiomError) -> Self {
+        Self::DerivedValues(error)
     }
 }
 
@@ -88,14 +122,10 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
     /// Writes the evaluated state's values, derived numeric values included,
     /// into `values`.
     pub fn fill_values(&self, values: &mut ExplicitState) -> Result<(), EvaluationError> {
-        self.state_registry
+        Ok(self
+            .state_registry
             .view(self.backing_state)
-            .fill_explicit(values)
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to evaluate the state's derived numeric values: {error:?}"
-                ))
-            })
+            .fill_explicit(values)?)
     }
 
     /// The evaluated state's values, with its numeric values, derived ones
@@ -106,11 +136,7 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
         numeric: &'v mut Vec<NumericValue>,
     ) -> Result<StateValues<'v>, EvaluationError> {
         let view = self.state_registry.view(self.backing_state);
-        view.fill_numeric(numeric).map_err(|error| {
-            EvaluationError::ComputationFailed(format!(
-                "failed to evaluate the state's derived numeric values: {error:?}"
-            ))
-        })?;
+        view.fill_numeric(numeric)?;
         Ok(StateValues::packed(
             view.packer(),
             view.propositional(),

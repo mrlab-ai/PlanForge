@@ -24,7 +24,7 @@ use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, H
 use planforge_search::heuristic_factory::TaskRequirements;
 use planforge_search::search::best_first::{AStarSearch, GreedyBestFirstSearch, SearchParams};
 use planforge_search::search::{
-    SearchConfig, SearchLimits, SearchOutcome, SearchResult, parse_search_spec,
+    SearchConfig, SearchError, SearchLimits, SearchOutcome, SearchResult, parse_search_spec,
 };
 use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,
@@ -1032,7 +1032,7 @@ impl GilReleasedTask {
         spec: &SearchConfig,
         time_limit: Option<Duration>,
         max_memory: Option<u64>,
-    ) -> std::io::Result<SearchResult> {
+    ) -> Result<SearchResult, SearchError> {
         spec.solve(
             self.0,
             planforge_search::search::SearchLimits {
@@ -1071,7 +1071,16 @@ fn transform_numeric_task(
         .iter()
         .map(|raw| parse_transformation_spec(raw))
         .collect::<Result<Vec<_>, _>>()?;
-    transform_task(task, &transformations, requirements).map_err(|err| format!("{err:#}"))
+    transform_task(task, &transformations, requirements).map_err(|err| err.to_string())
+}
+
+/// The message of a failed search: a heuristic that cannot be built speaks
+/// for itself, anything else is prefixed.
+fn search_failure(error: SearchError) -> String {
+    match error {
+        SearchError::Build(error) => error.to_string(),
+        error => format!("search failed: {error}"),
+    }
 }
 
 fn fact_to_py(fact: &planforge_sas::numeric_task::ExplicitFact) -> PyFact {
@@ -1195,7 +1204,8 @@ impl Task {
     #[pyo3(signature = (text, transforms=Vec::new()))]
     fn from_sas_text(text: &str, transforms: Vec<String>) -> PyResult<Self> {
         let task = transform_numeric_task(
-            planforge_sas::numeric_task::Task::try_from_str(text).map_err(ParseError::new_err)?,
+            planforge_sas::numeric_task::Task::try_from_str(text)
+                .map_err(|error| ParseError::new_err(error.to_string()))?,
             &transforms,
             &TaskRequirements::default(),
         )
@@ -1500,12 +1510,13 @@ impl Task {
         max_memory: Option<u64>,
     ) -> PyResult<PySearchResult> {
         let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-        let spec = parse_search_spec(&search).map_err(SpecError::new_err)?;
+        let spec =
+            parse_search_spec(&search).map_err(|error| SpecError::new_err(error.to_string()))?;
         let time_limit = max_time.map(Duration::from_secs_f64);
         let task = GilReleasedTask(self.task.clone());
         let result = py
             .allow_threads(move || task.solve(&spec, time_limit, max_memory))
-            .map_err(|e| PlanforgeError::new_err(e.to_string()))?;
+            .map_err(|error| PlanforgeError::new_err(search_failure(error)))?;
         Ok(search_result_to_py(py, result))
     }
 
@@ -1684,7 +1695,7 @@ fn solve(
     }
 
     let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-    let spec = parse_search_spec(&search).map_err(SpecError::new_err)?;
+    let spec = parse_search_spec(&search).map_err(|error| SpecError::new_err(error.to_string()))?;
 
     let time_limit = max_time.map(Duration::from_secs_f64);
     let memory_limit = max_memory;
@@ -1705,7 +1716,8 @@ fn solve(
                     .clone()
                     .expect("validated: exactly one source was provided")
             };
-            planforge_sas::numeric_task::Task::try_from_str(&sas_text).map_err(SolveError::Parse)?
+            planforge_sas::numeric_task::Task::try_from_str(&sas_text)
+                .map_err(|error| SolveError::Parse(error.to_string()))?
         };
 
         let task = transform_numeric_task(task, &transforms, &spec.requirements())
@@ -1718,7 +1730,7 @@ fn solve(
                 memory_bytes: memory_limit,
             },
         )
-        .map_err(|err| SolveError::Search(err.to_string()))
+        .map_err(|error| SolveError::Search(search_failure(error)))
     });
 
     let result = outcome.map_err(|err| -> PyErr {

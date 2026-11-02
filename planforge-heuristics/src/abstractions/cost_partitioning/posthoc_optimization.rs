@@ -21,7 +21,7 @@ pub struct PostHocFeature;
 impl HeuristicFeature for PostHocFeature {
     const NAME: &'static str = "posthoc_optimization";
     type Config = CombinationConfig;
-    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+    fn preflight(_: &Self::Config) -> Result<(), HeuristicBuildError> {
         crate::requirements::require_cplex()
     }
     fn requirements(config: &Self::Config) -> TaskRequirements {

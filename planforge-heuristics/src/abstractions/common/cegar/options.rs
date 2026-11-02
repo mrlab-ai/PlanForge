@@ -60,10 +60,14 @@ impl Default for CegarOptions {
 
 impl CegarOptions {
     /// Rejects limits no CEGAR run can follow.
-    pub(crate) fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(self.max_states > 0, "`max_states` must be > 0");
-        anyhow::ensure!(self.max_iterations > 0, "`max_iterations` must be > 0");
-        self.max_time.duration().map_err(anyhow::Error::msg)?;
+    pub(crate) fn validate(&self) -> Result<(), planforge_search::config::ConfigError> {
+        if self.max_states == 0 {
+            return Err("`max_states` must be > 0".into());
+        }
+        if self.max_iterations == 0 {
+            return Err("`max_iterations` must be > 0".into());
+        }
+        self.max_time.duration()?;
         Ok(())
     }
 }

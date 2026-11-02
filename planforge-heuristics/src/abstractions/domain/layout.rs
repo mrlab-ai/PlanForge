@@ -23,7 +23,7 @@ impl StateLayout {
     /// propositional variable and `numeric_domain_sizes` partitions per
     /// numeric variable. Fails if the state ids do not fit `isize`, which the
     /// signed offsets between them need.
-    pub fn new(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> Result<Self> {
+    pub(crate) fn new(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> Result<Self> {
         let radices: Vec<usize> = domain_sizes
             .iter()
             .chain(numeric_domain_sizes)

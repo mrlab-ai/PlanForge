@@ -9,14 +9,13 @@ use anyhow::{Result, ensure};
 use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorIndex, VariableIndex};
 
-use super::abstract_operators::{AbstractOperator, DomainMapping, build_abstract_operators};
+use super::abstract_operators::DomainMapping;
 use super::abstraction_numeric_var;
 use super::layout::StateLayout;
 use super::partitions::NumericPartitions;
 use crate::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::abstractions::common::cegar::split::Split;
 use crate::abstractions::common::coordinates::AdditiveNumericView;
-use planforge_search::resource_limits::Deadline;
 
 mod distances;
 mod source_sets;
@@ -279,16 +278,5 @@ impl DomainAbstractionFunction {
 
     pub fn numeric_conditions(&self) -> &NumericConditions {
         &self.numeric_conditions
-    }
-
-    /// The abstract operators of the abstraction, with labels combined if
-    /// `combine_labels`.
-    pub fn abstract_operators(
-        &self,
-        task: &Task,
-        combine_labels: bool,
-        deadline: Deadline,
-    ) -> Result<Vec<AbstractOperator>> {
-        build_abstract_operators(self, task, combine_labels, deadline)
     }
 }

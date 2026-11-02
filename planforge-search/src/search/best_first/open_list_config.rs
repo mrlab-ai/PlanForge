@@ -82,7 +82,7 @@ impl PartialEq for OpenListConfig {
 
 impl FromOptionValue for OpenListConfig {
     fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
-        OPEN_LISTS.parse(&ConfigCall::from_value(value).map_err(ConfigError::from)?)
+        OPEN_LISTS.parse(&ConfigCall::from_value(value)?)
     }
 
     fn option_text(&self) -> String {
@@ -148,6 +148,6 @@ mod tests {
             assert_eq!(parse_search_spec(spec).unwrap().to_string(), canonical);
         }
         let error = parse_search_spec("astar(blind(), open_list=tiebreaking(x=1))").unwrap_err();
-        assert!(error.contains("tiebreaking"), "{error}");
+        assert!(error.to_string().contains("tiebreaking"), "{error}");
     }
 }

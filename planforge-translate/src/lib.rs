@@ -11,7 +11,7 @@
 //! `planforge-search`:
 //!
 //! ```no_run
-//! # fn main() -> anyhow::Result<()> {
+//! # fn main() -> Result<(), planforge_translate::TranslateError> {
 //! let task = planforge_translate::translate_to_task("domain.pddl", "problem.pddl")?;
 //! let _ = task;
 //! # Ok(())
@@ -43,8 +43,9 @@ mod tools;
 mod translate;
 
 pub use api::{
-    translate_to_sas_string, translate_to_sas_to_path, translate_to_sas_to_path_fast,
-    translate_to_sas_to_path_with_limits, translate_to_task, translate_to_task_with_limits,
+    TranslateError, translate_to_sas_string, translate_to_sas_to_path,
+    translate_to_sas_to_path_fast, translate_to_sas_to_path_with_limits, translate_to_task,
+    translate_to_task_with_limits,
 };
 pub use grounding::{
     DEFAULT_MAX_GROUND_ACTIONS, DEFAULT_MAX_GROUND_ATOMS, DEFAULT_MAX_GROUNDING_MEMORY,

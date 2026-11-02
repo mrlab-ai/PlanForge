@@ -6,12 +6,11 @@ mod tests;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
 use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use tracing::info;
 
-use super::{Plan, SearchOutcome};
+use super::{Plan, SearchError, SearchOutcome};
 use crate::evaluation::EvaluationState;
 use crate::successor_generator::{RegistryExpander, SuccessorGenerator};
 
@@ -131,7 +130,7 @@ impl SearchSpace {
         &mut self,
         state: &ConcreteState,
         successors: &mut Vec<Successor>,
-    ) -> Result<()> {
+    ) -> Result<(), SearchError> {
         successors.clear();
         self.for_each_successor(state, |_, _, successor| successors.push(successor))
     }
@@ -147,7 +146,7 @@ impl SearchSpace {
         state: &ConcreteState,
         successors: &mut Vec<Successor>,
         mut reached: impl FnMut(Reached),
-    ) -> Result<()> {
+    ) -> Result<(), SearchError> {
         successors.clear();
         let parent = state.get_id();
         let parent_g = self.g(parent);
@@ -171,22 +170,25 @@ impl SearchSpace {
         &mut self,
         state: &ConcreteState,
         mut visit: impl FnMut(&mut SearchNodes, &StateRegistry, Successor),
-    ) -> Result<()> {
+    ) -> Result<(), SearchError> {
         let state_id = state.get_id();
         let mut expansion = self
             .expander
             .expand(&self.registry, state)
-            .map_err(|error| anyhow!("failed to expand state {state_id}: {error:?}"))?;
+            .map_err(|source| SearchError::Expansion {
+                context: format!("failed to expand state {state_id}"),
+                source,
+            })?;
         for &operator_id in expansion.applicable_operators() {
             let operator = &self.task.operators()[operator_id.index()];
             let (successor, metric_cost) = expansion
                 .successor(&mut self.registry, operator)
-                .map_err(|error| anyhow!("{error:?}"))
-                .with_context(|| {
-                    format!(
+                .map_err(|source| SearchError::Expansion {
+                    context: format!(
                         "failed to apply operator {operator_id} ({}) to state {state_id}",
                         operator.name()
-                    )
+                    ),
+                    source,
                 })?;
             let cost = if self.use_metric {
                 metric_cost

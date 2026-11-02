@@ -21,7 +21,10 @@ fn external_registration_after_heuristic_construction_is_rejected() {
         .build(&BuildContext::new(task.clone()))
         .unwrap();
 
-    let error = HEURISTICS.register(vec![entry::<TooLate>()]).unwrap_err();
+    let error = HEURISTICS
+        .register(vec![entry::<TooLate>()])
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("already been registered or used"),
         "got `{error}`"

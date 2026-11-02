@@ -6,6 +6,7 @@
 
 mod portfolio;
 
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use portfolio::{
     average_operator_cost, build_conditioned_groups, build_goal_cost_partitions,
     build_static_portfolio, function_value,
@@ -79,7 +80,7 @@ impl NumericPotentialHeuristic {
     pub fn from_config(
         task_ref: Arc<Task>,
         config: NumericPotentialConfig,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HeuristicBuildError> {
         config.validate()?;
         let task = &*task_ref;
         let mut optimizer = NumericPotentialOptimizer::new(task, &config)?;

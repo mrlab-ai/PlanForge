@@ -24,9 +24,9 @@ impl MaxAbstractionHeuristic {
     pub fn new(
         name: Option<String>,
         components: Vec<AbstractionComponent>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HeuristicBuildError> {
         if components.is_empty() {
-            return Err("max abstraction heuristic requires at least one component".to_string());
+            return Err("max abstraction heuristic requires at least one component".into());
         }
         Ok(Self {
             name: name.unwrap_or_else(|| "max_abstractions".to_string()),

@@ -3,6 +3,7 @@ mod tests;
 
 use planforge_sas::explicit_state::StateValues;
 use planforge_search::graph::{BackwardGraph, backward_goal_distances, no_limit};
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -113,7 +114,7 @@ pub struct PatternDatabase {
 impl PatternDatabase {
     /// The pattern database over `task` with blind inner heuristics, keeping
     /// its transitions.
-    pub fn new(task: ProjectedTask, max_states: usize) -> Result<Self, String> {
+    pub fn new(task: ProjectedTask, max_states: usize) -> Result<Self, HeuristicBuildError> {
         Self::build(
             task,
             PdbBuildConfig {
@@ -124,7 +125,7 @@ impl PatternDatabase {
         )
     }
 
-    pub fn build(task: ProjectedTask, config: PdbBuildConfig) -> Result<Self, String> {
+    pub fn build(task: ProjectedTask, config: PdbBuildConfig) -> Result<Self, HeuristicBuildError> {
         let task = Arc::new(task);
         let task_ref: Arc<Task> = task.task().clone();
         let mut registry = StateRegistry::for_task(task_ref.clone());

@@ -16,7 +16,10 @@ pub struct PddlTask {
 
 impl PddlTask {
     /// Reads and tokenizes the domain and problem files.
-    pub fn from_files(domain_path: &Path, problem_path: &Path) -> anyhow::Result<PddlTask> {
+    pub fn from_files(
+        domain_path: &Path,
+        problem_path: &Path,
+    ) -> Result<PddlTask, crate::TranslateError> {
         Ok(PddlTask {
             domain_forms: lisp_parser::parse_nested_list(domain_path)?,
             problem_forms: lisp_parser::parse_nested_list(problem_path)?,

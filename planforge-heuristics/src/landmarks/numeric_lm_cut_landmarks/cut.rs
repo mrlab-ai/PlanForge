@@ -421,11 +421,14 @@ impl LandmarkCutLandmarks {
         result
     }
 
+    /// Whether the state with these values is a dead end, and otherwise its
+    /// LM-cut estimate.
     pub fn compute_landmark_cost(
         &mut self,
         propositional_values: &[ExplicitValueIndex],
         numeric_values: &[NumericValue],
-    ) -> Result<(bool, f64), String> {
+    ) -> Result<(bool, f64), planforge_search::evaluation::EvaluationError> {
         self.compute_landmarks_impl(propositional_values, numeric_values)
+            .map_err(planforge_search::evaluation::EvaluationError::ComputationFailed)
     }
 }

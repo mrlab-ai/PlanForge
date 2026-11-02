@@ -496,10 +496,7 @@ fn a_grid_unit_coefficient_is_not_a_zero_coefficient() {
         constant: ZERO_VALUE,
     };
     assert_eq!(expression.non_zero_vars(), vec![VariableIndex::new(0)]);
-    assert_eq!(
-        expression.evaluate(&[ONE_VALUE]).unwrap(),
-        NumericValue::new(1e-12)
-    );
+    assert_eq!(expression.evaluate(&[ONE_VALUE]), NumericValue::new(1e-12));
 }
 
 #[test]

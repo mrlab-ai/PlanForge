@@ -2,6 +2,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::Task;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
@@ -22,7 +23,7 @@ use super::pattern_generator_systematic::goal_variables;
 use crate::abstractions::cost_partitioning::canonical::{
     are_operator_sets_additive, compute_max_additive_subsets_from_relevant_operators,
 };
-use planforge_search::config::TimeLimit;
+use planforge_search::config::{ConfigError, TimeLimit};
 use planforge_search::evaluation::EvaluationError;
 use planforge_search::evaluation::sampling::RandomWalkSampler;
 use planforge_search::evaluation::seed::DEFAULT_RANDOM_SEED;
@@ -62,7 +63,7 @@ impl Default for HillClimbingConfig {
 }
 
 impl HillClimbingConfig {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if self.max_pdb_states == 0 || self.max_pdb_size == 0 || self.collection_max_size == 0 {
             return Err(
                 "max_pdb_states, max_pdb_size and collection_max_size must be positive".into(),
@@ -72,7 +73,8 @@ impl HillClimbingConfig {
             return Err(format!(
                 "min_improvement must lie between 1 and num_samples={}, got {}",
                 self.num_samples, self.min_improvement
-            ));
+            )
+            .into());
         }
         self.max_time.duration().map(|_| ())
     }
@@ -113,7 +115,7 @@ pub fn generate_hill_climbing_pdbs(
     heuristics: PdbHeuristicConfig,
     retain_transitions: bool,
     remaining: Option<Duration>,
-) -> Result<Vec<PatternDatabase>, String> {
+) -> Result<Vec<PatternDatabase>, HeuristicBuildError> {
     let pdb_config = PdbBuildConfig {
         max_states: config.max_pdb_states,
         heuristics,
@@ -174,7 +176,7 @@ impl<'task> HillClimbing<'task> {
         task: &'task Task,
         config: HillClimbingConfig,
         pdb_config: PdbBuildConfig,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HeuristicBuildError> {
         let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
         let mut initial_state = ExplicitState::default();
         let initial = registry.get_initial_state();
@@ -194,14 +196,18 @@ impl<'task> HillClimbing<'task> {
         })
     }
 
-    fn build(&self, pattern: &Pattern) -> Result<PatternDatabase, String> {
+    fn build(&self, pattern: &Pattern) -> Result<PatternDatabase, HeuristicBuildError> {
         let projected_task = ProjectedTask::new(self.task, pattern).map_err(|error| {
             format!("failed to project the task to pattern {pattern:?}: {error}")
         })?;
         PatternDatabase::build(projected_task, self.pdb_config)
     }
 
-    fn climb(&mut self, collection: &mut Collection, deadline: Deadline) -> Result<(), String> {
+    fn climb(
+        &mut self,
+        collection: &mut Collection,
+        deadline: Deadline,
+    ) -> Result<(), HeuristicBuildError> {
         let start = Instant::now();
         let mut new_patterns = Vec::new();
         for (pattern, pdb) in collection.patterns.iter().zip(&collection.pdbs) {
@@ -312,7 +318,7 @@ impl<'task> HillClimbing<'task> {
         collection: &Collection,
         initial_h: f64,
         deadline: Deadline,
-    ) -> Result<Option<Vec<ExplicitState>>, String> {
+    ) -> Result<Option<Vec<ExplicitState>>, HeuristicBuildError> {
         let mut sampler = RandomWalkSampler::new(Arc::new(self.task.clone()));
         let mut values = ExplicitState::default();
         let mut samples = Vec::with_capacity(self.config.num_samples);

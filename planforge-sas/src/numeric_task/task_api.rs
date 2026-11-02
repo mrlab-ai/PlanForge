@@ -10,6 +10,36 @@ pub use metric::{
 pub use namespaces::{assert_fact_namespaces, debug_assert_fact_namespaces};
 use std::sync::Arc;
 
+/// Why a task could not be loaded from the preprocessor's text format.
+#[derive(Debug)]
+pub enum TaskLoadError {
+    /// The file could not be read.
+    Read {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+    /// The text is not a numeric SAS task; the parser's message.
+    Parse(String),
+}
+
+impl std::fmt::Display for TaskLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read { path, source } => write!(f, "failed to read {}: {source}", path.display()),
+            Self::Parse(message) => write!(f, "failed to parse numeric SAS output: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for TaskLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Read { source, .. } => Some(source),
+            Self::Parse(_) => None,
+        }
+    }
+}
+
 /// A planning task: its goal, and the goal-independent rest it shares with
 /// the tasks [`Task::with_goals`] derives from it.
 ///
@@ -214,10 +244,12 @@ impl Task {
         Self::try_from_file(file_name).expect("failed to read numeric SAS task")
     }
 
-    pub fn try_from_file(file_name: impl AsRef<std::path::Path>) -> Result<Self, String> {
+    pub fn try_from_file(file_name: impl AsRef<std::path::Path>) -> Result<Self, TaskLoadError> {
         let path = file_name.as_ref();
-        let file_content = std::fs::read_to_string(path)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let file_content = std::fs::read_to_string(path).map_err(|source| TaskLoadError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
         Self::try_from_str(&file_content)
     }
 
@@ -225,10 +257,10 @@ impl Task {
     /// Equivalent to `try_from_file` minus the disk read; used by the
     /// in-memory translate→preprocess→search pipeline so the binary
     /// `output` file never has to materialize on disk.
-    pub fn try_from_str(content: &str) -> Result<Self, String> {
+    pub fn try_from_str(content: &str) -> Result<Self, TaskLoadError> {
         match parse_numeric_sas_output(content) {
             Ok((_, task)) => Ok(task),
-            Err(err) => Err(format!("failed to parse numeric SAS output: {err}")),
+            Err(err) => Err(TaskLoadError::Parse(err.to_string())),
         }
     }
 
@@ -435,16 +467,14 @@ impl Task {
 
     pub fn evaluate_initial_state_values(
         &self,
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), AssignmentAxiomError> {
         // Initial values are canonical by construction, as are
         // `ExplicitStateSpace::initial_state`.
         let mut state = ExplicitState {
             propositional: self.initial_propositional_values().to_vec(),
             numeric: self.initial_numeric_values().to_vec(),
         };
-        ExplicitStateSpace::new(self)
-            .close_under_axioms(&mut state)
-            .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
+        ExplicitStateSpace::new(self).close_under_axioms(&mut state)?;
         Ok((state.propositional, state.numeric))
     }
 }

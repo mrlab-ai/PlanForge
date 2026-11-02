@@ -1,4 +1,6 @@
+use crate::abstractions::build_error;
 use planforge_sas::numeric_task::Task;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -33,7 +35,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
 
     const KIND: AbstractionKind = AbstractionKind::Cartesian;
 
-    fn new(config: CartesianAbstractionConfig) -> Result<Self> {
+    fn new(config: CartesianAbstractionConfig) -> Result<Self, HeuristicBuildError> {
         config.cegar.validate()?;
         Ok(Self { config })
     }
@@ -43,6 +45,18 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
     }
 
     fn generate_from_root(
+        &self,
+        task: &Task,
+        refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
+    ) -> Result<CartesianAbstraction, HeuristicBuildError> {
+        self.refine(task, refinement_root, scope)
+            .map_err(build_error)
+    }
+}
+
+impl CartesianAbstractionGenerator {
+    fn refine(
         &self,
         task: &Task,
         refinement_root: Option<&ExplicitState>,

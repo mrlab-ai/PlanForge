@@ -280,7 +280,7 @@ impl DomainAbstractionFunction {
     /// Whether abstract state `state` satisfies the abstract `goals`: its
     /// propositional values match, and its numeric partitions admit every
     /// goal condition. `intervals` is scratch space.
-    pub fn is_goal_state(
+    pub(crate) fn is_goal_state(
         &self,
         task: &Task,
         state: usize,

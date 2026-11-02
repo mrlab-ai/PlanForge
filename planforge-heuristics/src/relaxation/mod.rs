@@ -59,6 +59,7 @@
 use planforge_sas::axioms::{AssignmentAxiom, NumericExpression};
 use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use std::collections::{HashSet, VecDeque};
 
 use planforge_sas::axioms::{CalOperator, ComparisonOperator, PropositionalAxiom};
@@ -221,7 +222,7 @@ impl FfHeuristic {
     /// Compile the task into the relaxed planning graph this heuristic
     /// evaluates: a fact universe, the operators over it, and the achiever and
     /// consumer indices the BFS and relaxed-plan extraction walk.
-    pub fn new(task: &Task) -> Result<Self, String> {
+    pub fn new(task: &Task) -> Result<Self, HeuristicBuildError> {
         let universe = FactUniverse::build(task)?;
         let num_facts = universe.len();
         let num_numeric = task.numeric_variables().len();
