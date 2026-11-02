@@ -107,10 +107,10 @@ fn cli_rejects_nested_config_errors_without_loading_pddl() {
             "missing-problem.pddl",
         ])
         .expect("the command line itself is well-formed");
-        let Err((option, error)) = crate::RunConfiguration::parse(&cli, &features) else {
+        let Err(error) = crate::RunConfiguration::parse(&cli, &features) else {
             panic!("`{spec}` must fail to configure");
         };
-        assert_eq!(option, "--search <SPEC>");
-        assert!(error.to_string().contains(detail), "{error}");
+        assert!(error.contains("for '--search <SPEC>'"), "{error}");
+        assert!(error.contains(detail), "{error}");
     }
 }

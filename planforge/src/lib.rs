@@ -125,15 +125,14 @@ pub fn run_with(features: Features) -> std::io::Result<()> {
         });
     let cli = PlannersCli::from_arg_matches(&command.clone().get_matches())
         .unwrap_or_else(|error| error.exit());
-    let configuration =
-        RunConfiguration::parse(&cli, &features).unwrap_or_else(|(option, error)| {
-            command
-                .error(
-                    clap::error::ErrorKind::ValueValidation,
-                    format!("invalid value for '{option}': {error}"),
-                )
-                .exit()
-        });
+    let configuration = RunConfiguration::parse(&cli, &features).unwrap_or_else(|message| {
+        clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!("{message}\n"),
+        )
+        .format(&mut command)
+        .exit()
+    });
     init_logger(
         cli.log_level
             .unwrap_or(tracing_subscriber::filter::LevelFilter::INFO),
@@ -180,17 +179,25 @@ pub struct RunConfiguration {
 }
 
 impl RunConfiguration {
-    /// The configurations `cli` names; an error names the option it is in.
-    pub fn parse(
-        cli: &PlannersCli,
-        features: &Features,
-    ) -> Result<Self, (&'static str, ConfigError)> {
+    /// The configurations `cli` names; an error names the option and value
+    /// it is in.
+    pub fn parse(cli: &PlannersCli, features: &Features) -> Result<Self, String> {
+        let invalid = |option: &str, text: &str, error: ConfigError| {
+            format!("invalid value '{text}' for '{option} <SPEC>': {error}")
+        };
         Ok(Self {
             search: features
                 .parse_search(&cli.search)
-                .map_err(|error| ("--search <SPEC>", error))?,
-            transformations: parse_transformations(&cli.transform, features)
-                .map_err(|error| ("--transform <SPEC>", error))?,
+                .map_err(|error| invalid("--search", &cli.search, error))?,
+            transformations: cli
+                .transform
+                .iter()
+                .map(|text| {
+                    features
+                        .parse_transformation(text)
+                        .map_err(|error| invalid("--transform", text, error))
+                })
+                .collect::<Result<_, _>>()?,
         })
     }
 }
