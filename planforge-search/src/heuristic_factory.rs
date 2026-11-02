@@ -59,12 +59,12 @@ impl TaskRequirements {
 
 /// What a feature builds its heuristic for: the task, and the name the
 /// heuristic reports itself under.
-pub struct BuildContext<'a> {
-    pub task: &'a Arc<Task>,
+pub struct BuildContext {
+    pub task: Arc<Task>,
     pub name: String,
 }
-impl<'a> BuildContext<'a> {
-    pub fn new(task: &'a Arc<Task>) -> Self {
+impl BuildContext {
+    pub fn new(task: Arc<Task>) -> Self {
         Self {
             task,
             name: String::new(),
@@ -98,10 +98,10 @@ pub trait HeuristicFeature: 'static {
     fn nested(_: &Self::Config) -> Vec<&HeuristicConfig> {
         Vec::new()
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError>;
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError>;
 }
 
 trait ErasedHeuristicConfig: Debug + Send + Sync {
@@ -109,10 +109,7 @@ trait ErasedHeuristicConfig: Debug + Send + Sync {
     fn preflight(&self) -> std::io::Result<()>;
     fn requirements(&self) -> TaskRequirements;
     fn config(&self) -> &dyn Any;
-    fn build<'a>(
-        &self,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError>;
+    fn build(&self, context: &BuildContext) -> Result<Box<dyn Heuristic>, HeuristicBuildError>;
 }
 struct Configured<F: HeuristicFeature> {
     config: F::Config,
@@ -145,12 +142,9 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
     fn config(&self) -> &dyn Any {
         &self.config
     }
-    fn build<'a>(
-        &self,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+    fn build(&self, context: &BuildContext) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         let context = BuildContext {
-            task: context.task,
+            task: context.task.clone(),
             name: self.spec.name.clone(),
         };
         F::build(&self.config, &context)
@@ -176,13 +170,10 @@ impl HeuristicConfig {
     pub fn config<T: 'static>(&self) -> Option<&T> {
         self.0.config().downcast_ref()
     }
-    pub fn build<'a>(
-        &self,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+    pub fn build(&self, context: &BuildContext) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         self.preflight()
             .map_err(|error| HeuristicBuildError::Failure(error.to_string()))?;
-        self.requirements().validate(context.task)?;
+        self.requirements().validate(&context.task)?;
         self.0.build(context)
     }
 }

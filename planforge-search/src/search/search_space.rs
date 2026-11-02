@@ -112,9 +112,12 @@ impl SearchSpace {
     /// The reached state `state` as a heuristic evaluates it.
     #[inline]
     pub fn evaluation_state<'s>(&'s self, state: &'s ConcreteState) -> EvaluationState<'s, 's> {
-        let mut eval_state = EvaluationState::new(state, &self.task, &self.registry);
-        eval_state.set_is_goal(self.is_goal(state.get_id()));
-        eval_state
+        EvaluationState::with_goal_flag(
+            state,
+            &self.task,
+            &self.registry,
+            self.is_goal(state.get_id()),
+        )
     }
 
     pub fn num_registered_states(&self) -> usize {

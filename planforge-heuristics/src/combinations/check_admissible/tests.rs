@@ -55,7 +55,7 @@ struct ConstantHeuristic {
 }
 
 impl ConstantHeuristic {
-    fn boxed(value: f64, name: &str) -> Box<dyn Heuristic + 'static> {
+    fn boxed(value: f64, name: &str) -> Box<dyn Heuristic> {
         Box::new(Self {
             value,
             name: name.to_string(),
@@ -64,12 +64,15 @@ impl ConstantHeuristic {
 }
 
 impl Heuristic for ConstantHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        Ok(if eval_state.is_goal() {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
+        Ok(Estimate::new(if eval_state.is_goal() {
             0.0
         } else {
             self.value
-        })
+        }))
     }
 
     fn name(&self) -> &str {
@@ -79,15 +82,14 @@ impl Heuristic for ConstantHeuristic {
 
 fn evaluate_initial_state(
     task: Arc<Task>,
-    inner: Box<dyn Heuristic + 'static>,
+    inner: Box<dyn Heuristic>,
 ) -> Result<f64, EvaluationError> {
     let mut heuristic = CheckAdmissibleHeuristic::new(inner, task.clone())
         .expect("the chain task has finite non-negative costs");
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();
-    let mut eval_state = EvaluationState::new(&initial_state, &task, &registry);
-    eval_state.set_is_goal(false);
-    heuristic.evaluate(&eval_state)
+    let eval_state = EvaluationState::new(&initial_state, &task, &registry);
+    heuristic.evaluate(&eval_state).map(Estimate::value)
 }
 
 #[test]

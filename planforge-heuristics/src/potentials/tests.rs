@@ -659,7 +659,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
     let online_initial = online_registry.get_initial_state();
     let eval_state = EvaluationState::new(&online_initial, &task, &online_registry);
     assert!(
-        (heuristic.evaluate(&eval_state).unwrap() - 3.0).abs() < 1e-7,
+        (heuristic.evaluate(&eval_state).unwrap().value() - 3.0).abs() < 1e-7,
         "online reoptimization must not conflict with evaluation scratch borrows"
     );
 }
@@ -1243,5 +1243,5 @@ fn sampling_a_task_without_operators_yields_the_initial_state() {
     let h = heuristic
         .evaluate(&EvaluationState::new(&initial, &task, &registry))
         .unwrap();
-    assert_eq!(h, max_potential);
+    assert_eq!(h.value(), max_potential);
 }

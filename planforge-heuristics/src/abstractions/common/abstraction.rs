@@ -13,7 +13,7 @@ use super::transition_system::AbstractOperatorSourceSets;
 use crate::abstractions::component::AbstractionKind;
 use crate::abstractions::cost_partitioning::costs::{RemainingCosts, SourceSetCostAllocation};
 use planforge_search::evaluation::Heuristic;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 use planforge_search::resource_limits::Deadline;
 
 /// How CEGAR built an abstraction.
@@ -74,7 +74,7 @@ pub struct AbstractionCore {
 /// An abstraction CEGAR built: an abstraction function with the goal
 /// distances of its abstract states, and, until discarded, the transitions
 /// cost partitioning saturates.
-pub trait CegarAbstraction: std::fmt::Debug {
+pub trait CegarAbstraction: std::fmt::Debug + Send {
     fn kind(&self) -> AbstractionKind;
 
     fn core(&self) -> &AbstractionCore;
@@ -207,9 +207,12 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
 }
 
 impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state = eval_state.values(&mut self.numeric)?;
-        Ok(self.abstraction.goal_distance(state))
+        Ok(Estimate::new(self.abstraction.goal_distance(state)))
     }
 
     /// The abstraction is of the full task and refined from its initial

@@ -2,7 +2,7 @@ use crate::abstractions::features::{abstraction_source, max_over_sources};
 use crate::combinations::maximum::MaximumHeuristic;
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 use planforge_search::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
 };
@@ -37,13 +37,16 @@ impl MaxAbstractionHeuristic {
 }
 
 impl Heuristic for MaxAbstractionHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state = eval_state.values(&mut self.numeric_values)?;
         let mut best = 0.0_f64;
         for (component_id, component) in self.components.iter().enumerate() {
             best = best.max(standalone_estimate(component, component_id, state));
         }
-        Ok(best)
+        Ok(Estimate::new(best))
     }
 
     fn name(&self) -> &str {
@@ -73,10 +76,10 @@ impl HeuristicFeature for MaxFeature {
         }
         Ok(())
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         let mut sources = Vec::new();
         let mut others = Vec::new();
         for child in &config.heuristics {
@@ -86,11 +89,11 @@ impl HeuristicFeature for MaxFeature {
             }
         }
         if others.is_empty() {
-            return max_over_sources(context.task, &sources, &context.name);
+            return max_over_sources(&context.task, &sources, &context.name);
         }
         let mut children = Vec::new();
         if !sources.is_empty() {
-            children.push(max_over_sources(context.task, &sources, &context.name)?);
+            children.push(max_over_sources(&context.task, &sources, &context.name)?);
         }
         for child in others {
             children.push(child.build(context)?);

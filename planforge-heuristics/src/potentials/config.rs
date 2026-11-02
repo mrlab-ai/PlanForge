@@ -225,20 +225,20 @@ impl HeuristicFeature for NumericPotentialFeature {
         config.validate().map_err(Into::into)
     }
     #[cfg(feature = "cplex")]
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         Ok(Box::new(super::NumericPotentialHeuristic::from_config(
             context.task.clone(),
             config.clone(),
         )?))
     }
     #[cfg(not(feature = "cplex"))]
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        _: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        _: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         unreachable!("the registry rejects a CPLEX heuristic in a build without CPLEX")
     }
 }

@@ -27,11 +27,11 @@ struct Duplicate;
 impl HeuristicFeature for Duplicate {
     const NAME: &'static str = "duplicate";
     type Config = EmptyConfig;
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        Ok(Box::new(BlindHeuristic::for_task(context.task)))
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
+        Ok(Box::new(BlindHeuristic::for_task(&context.task)))
     }
 }
 

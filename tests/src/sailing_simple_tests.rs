@@ -216,7 +216,7 @@ fn assert_exact_single_abstraction_search<H>(
     expected_cost: f64,
     backend: &str,
 ) where
-    H: Heuristic,
+    H: Heuristic + 'static,
 {
     assert!(
         heuristic.proves_initial_state_optimal(),
@@ -360,11 +360,11 @@ fn scp_initial_h_for_collection(task: &Task, abstractions: Vec<Member<DomainAbst
 
     let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
     let initial = state_registry.get_initial_state();
-    let mut eval = EvaluationState::new(&initial, task as &Task, &state_registry);
-    eval.set_is_goal(false);
+    let eval = EvaluationState::new(&initial, task as &Task, &state_registry);
     heuristic
         .evaluate(&eval)
         .expect("scp initial evaluation should succeed")
+        .value()
 }
 
 /// Runs A* to completion with the online SCP heuristic and returns the cost.

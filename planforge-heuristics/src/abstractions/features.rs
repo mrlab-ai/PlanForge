@@ -107,14 +107,14 @@ where
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
         config.source().validate()
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         let mut config = config.clone();
         config.cegar_mut().keep_transitions = false;
         let abstraction = G::new(config)
-            .and_then(|generator| generator.generate(context.task))
+            .and_then(|generator| generator.generate(&context.task))
             .map_err(|error| {
                 HeuristicBuildError::from_source(error, format!("failed to build {}", G::KIND))
             })?;
@@ -141,20 +141,20 @@ impl<C: SourceConfig> HeuristicFeature for SourceFeature<C> {
     fn validate(config: &C) -> Result<(), ConfigError> {
         config.source().validate()
     }
-    fn build<'a>(
+    fn build(
         config: &C,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        max_over_sources(context.task, &[config.source()], &context.name)
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
+        max_over_sources(&context.task, &[config.source()], &context.name)
     }
 }
 
 /// The maximum over the abstractions of `sources`.
-pub(crate) fn max_over_sources<'task>(
-    task: &'task Task,
+pub(crate) fn max_over_sources(
+    task: &Task,
     sources: &[AbstractionSource],
     name: &str,
-) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
+) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
     let components = build_components(
         task,
         sources,

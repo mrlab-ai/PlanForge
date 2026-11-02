@@ -9,7 +9,7 @@ use planforge_sas::explicit_state::ExplicitState;
 
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::state_value_cache::StateValueCache;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use super::operator_conditions::ConditionTableLayout;
@@ -68,9 +68,9 @@ impl fmt::Display for LmCutNumericConfig {
     }
 }
 
-pub struct LandmarkCutNumericHeuristic<'task> {
+pub struct LandmarkCutNumericHeuristic {
     name: String,
-    task: &'task Task,
+    task: Arc<Task>,
     config: LmCutNumericConfig,
     landmark_generator: LandmarkCutLandmarks,
     state_scratch: ExplicitState,
@@ -92,14 +92,14 @@ impl LmCutNumericConfig {
     }
 }
 
-impl<'task> LandmarkCutNumericHeuristic<'task> {
-    pub fn from_config(task: &'task Task, config: LmCutNumericConfig) -> Result<Self, String> {
+impl LandmarkCutNumericHeuristic {
+    pub fn from_config(task: Arc<Task>, config: LmCutNumericConfig) -> Result<Self, String> {
         config.validate().map_err(|error| error.to_string())?;
         Ok(Self {
             name: "lmcutnumeric".to_string(),
+            landmark_generator: LandmarkCutLandmarks::new(task.clone(), config),
             task,
             config,
-            landmark_generator: LandmarkCutLandmarks::new(Arc::new(task.clone()), config),
             state_scratch: ExplicitState::default(),
             state_value_cache: StateValueCache::default(),
         })
@@ -110,11 +110,14 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
     }
 }
 
-impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+impl Heuristic for LandmarkCutNumericHeuristic {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state_id = eval_state.state().get_id();
         if let Some(value) = self.state_value_cache.get(state_id) {
-            return Ok(value);
+            return Ok(Estimate::new(value));
         }
 
         let state = &mut self.state_scratch;
@@ -122,7 +125,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
 
         if state.holds_all(self.task.goals()) {
             self.state_value_cache.insert(state_id, 0.0);
-            return Ok(0.0);
+            return Ok(Estimate::new(0.0));
         }
 
         let (dead_end, total_cost) = self
@@ -131,7 +134,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             .map_err(EvaluationError::ComputationFailed)?;
 
         if dead_end {
-            return Ok(f64::INFINITY);
+            return Ok(Estimate::DEAD_END);
         }
 
         assert!(
@@ -139,7 +142,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             "lmcutnumeric returned negative heuristic value"
         );
         self.state_value_cache.insert(state_id, total_cost);
-        Ok(total_cost)
+        Ok(Estimate::new(total_cost))
     }
 
     fn name(&self) -> &str {
@@ -155,12 +158,11 @@ impl planforge_search::heuristic_factory::HeuristicFeature for LmCutNumericFeatu
     fn validate(config: &Self::Config) -> Result<(), planforge_search::config::ConfigError> {
         config.validate()
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &planforge_search::heuristic_factory::BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, planforge_search::heuristic_factory::HeuristicBuildError>
-    {
-        let heuristic = LandmarkCutNumericHeuristic::from_config(context.task, *config)
+        context: &planforge_search::heuristic_factory::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_factory::HeuristicBuildError> {
+        let heuristic = LandmarkCutNumericHeuristic::from_config(context.task.clone(), *config)
             .map_err(|error| format!("failed to build lmcutnumeric heuristic: {error}"))?;
         Ok(Box::new(heuristic))
     }

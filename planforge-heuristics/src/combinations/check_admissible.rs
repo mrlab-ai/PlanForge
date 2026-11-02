@@ -23,7 +23,7 @@ use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::minimum_action_cost;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 use planforge_search::successor_generator::{RegistryExpander, StandardGroundedTree};
 
 /// Slack allowed on `h <= h*` before an estimate counts as inadmissible.
@@ -34,8 +34,8 @@ const G_IMPROVEMENT_TOLERANCE: f64 = 1e-12;
 
 /// Wraps a heuristic and rejects any estimate that exceeds the true goal
 /// distance of the evaluated state.
-pub struct CheckAdmissibleHeuristic<'task> {
-    inner: Box<dyn Heuristic + 'task>,
+pub struct CheckAdmissibleHeuristic {
+    inner: Box<dyn Heuristic>,
     name: String,
     oracle: GoalDistanceOracle,
     /// True goal distances keyed by the id the *search's* registry gave the
@@ -44,9 +44,9 @@ pub struct CheckAdmissibleHeuristic<'task> {
     goal_distances: HashMap<StateID, f64>,
 }
 
-impl<'task> CheckAdmissibleHeuristic<'task> {
+impl CheckAdmissibleHeuristic {
     /// Wrap `inner`, verifying it against the goal distances of `task`.
-    pub fn new(inner: Box<dyn Heuristic + 'task>, task: Arc<Task>) -> Result<Self, String> {
+    pub fn new(inner: Box<dyn Heuristic>, task: Arc<Task>) -> Result<Self, String> {
         let oracle = GoalDistanceOracle::new(task)?;
         Ok(Self {
             // Keep the wrapper distinct from the heuristic it checks in diagnostics.
@@ -75,17 +75,18 @@ impl<'task> CheckAdmissibleHeuristic<'task> {
         Ok(distance)
     }
 
-    /// Reject `h_value` when it exceeds the true goal distance of the state.
+    /// Reject `estimate` when it exceeds the true goal distance of the state.
     fn check(
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
-        h_value: f64,
-    ) -> Result<f64, EvaluationError> {
+        estimate: Estimate,
+    ) -> Result<Estimate, EvaluationError> {
         let goal_distance = self.goal_distance(eval_state)?;
+        let h_value = estimate.value();
         if h_value > goal_distance + ADMISSIBILITY_TOLERANCE {
             return Err(self.inadmissible(eval_state.state().get_id(), h_value, goal_distance));
         }
-        Ok(h_value)
+        Ok(estimate)
     }
 
     fn inadmissible(&self, state_id: StateID, h_value: f64, goal_distance: f64) -> EvaluationError {
@@ -98,19 +99,22 @@ impl<'task> CheckAdmissibleHeuristic<'task> {
     }
 }
 
-impl Heuristic for CheckAdmissibleHeuristic<'_> {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        let h_value = self.inner.evaluate(eval_state)?;
-        self.check(eval_state, h_value)
+impl Heuristic for CheckAdmissibleHeuristic {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
+        let estimate = self.inner.evaluate(eval_state)?;
+        self.check(eval_state, estimate)
     }
 
     fn evaluate_with_preferred(
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
         preferred: &mut Vec<OperatorIndex>,
-    ) -> Result<f64, EvaluationError> {
-        let h_value = self.inner.evaluate_with_preferred(eval_state, preferred)?;
-        self.check(eval_state, h_value)
+    ) -> Result<Estimate, EvaluationError> {
+        let estimate = self.inner.evaluate_with_preferred(eval_state, preferred)?;
+        self.check(eval_state, estimate)
     }
 
     fn name(&self) -> &str {
@@ -330,11 +334,10 @@ impl planforge_search::heuristic_factory::HeuristicFeature for CheckAdmissibleFe
     fn nested(config: &Self::Config) -> Vec<&planforge_search::heuristic_factory::HeuristicConfig> {
         vec![&config.inner]
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &planforge_search::heuristic_factory::BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, planforge_search::heuristic_factory::HeuristicBuildError>
-    {
+        context: &planforge_search::heuristic_factory::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_factory::HeuristicBuildError> {
         let inner = config.inner.build(context)?;
         Ok(Box::new(CheckAdmissibleHeuristic::new(
             inner,

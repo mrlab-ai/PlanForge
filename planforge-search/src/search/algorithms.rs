@@ -59,7 +59,7 @@ impl SearchFeature for AStarFeature {
         task: Arc<Task>,
         limits: SearchLimits,
     ) -> std::io::Result<SearchResult> {
-        let context = BuildContext::new(&task);
+        let context = BuildContext::new(task.clone());
         let params = SearchParams {
             heuristic: build(&config.heuristic, &context)?,
             lazy: config
@@ -115,7 +115,7 @@ impl SearchFeature for GreedyBestFirstFeature {
         task: Arc<Task>,
         limits: SearchLimits,
     ) -> std::io::Result<SearchResult> {
-        let context = BuildContext::new(&task);
+        let context = BuildContext::new(task.clone());
         let params = SearchParams {
             successor_generator: config.successor_generator.clone(),
             limits,
@@ -131,7 +131,7 @@ impl SearchFeature for GreedyBestFirstFeature {
 /// `Box<dyn OpenList>`.
 fn run_best_first<O: NodeOrdering>(
     task: Arc<Task>,
-    params: SearchParams<'_>,
+    params: SearchParams,
     open_list: &OpenListConfig,
 ) -> std::io::Result<SearchResult> {
     let result = match open_list {
@@ -149,10 +149,10 @@ fn run_best_first<O: NodeOrdering>(
     result.map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }
 
-fn build<'a>(
+fn build(
     heuristic: &HeuristicConfig,
-    context: &BuildContext<'a>,
-) -> std::io::Result<Box<dyn crate::evaluation::Heuristic + 'a>> {
+    context: &BuildContext,
+) -> std::io::Result<Box<dyn crate::evaluation::Heuristic>> {
     heuristic
         .build(context)
         .map_err(HeuristicBuildError::into_io_error)

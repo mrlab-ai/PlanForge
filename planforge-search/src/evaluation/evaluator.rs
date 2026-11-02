@@ -43,17 +43,30 @@ pub struct EvaluationState<'state, 'task> {
 }
 
 impl<'state, 'task> EvaluationState<'state, 'task> {
-    /// Create an evaluation state with its mandatory decoding context.
+    /// The registered `state` of `task`, decoded through `state_registry`;
+    /// whether it is a goal is checked here.
     pub fn new(
         state: &'state ConcreteState,
         task: &'task Task,
         state_registry: &'state StateRegistry,
     ) -> Self {
+        let is_goal = state_registry.view(state).holds_all(task.goals());
+        Self::with_goal_flag(state, task, state_registry, is_goal)
+    }
+
+    /// [`Self::new`] for a search that already knows whether `state` is a
+    /// goal.
+    pub(crate) fn with_goal_flag(
+        state: &'state ConcreteState,
+        task: &'task Task,
+        state_registry: &'state StateRegistry,
+        is_goal: bool,
+    ) -> Self {
         Self {
             backing_state: state,
             task,
             state_registry,
-            is_goal: false,
+            is_goal,
         }
     }
 
@@ -105,12 +118,7 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
         ))
     }
 
-    /// Mark whether this state is a goal.
-    pub fn set_is_goal(&mut self, is_goal: bool) {
-        self.is_goal = is_goal;
-    }
-
-    /// Query whether this state is a goal.
+    /// Whether the state satisfies the task's goal.
     pub fn is_goal(&self) -> bool {
         self.is_goal
     }

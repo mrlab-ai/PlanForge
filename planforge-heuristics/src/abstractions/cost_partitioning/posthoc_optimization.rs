@@ -31,15 +31,15 @@ impl HeuristicFeature for PostHocFeature {
         config.validate()
     }
     #[cfg(feature = "cplex")]
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         use crate::abstractions::sources::{
             AbstractionPurpose, build_components, remaining_construction_time,
         };
         let deadline = config.deadline()?;
-        let task = &**context.task;
+        let task = &*context.task;
         let components = build_components(
             task,
             &config.sources,
@@ -56,10 +56,10 @@ impl HeuristicFeature for PostHocFeature {
         Ok(Box::new(heuristic))
     }
     #[cfg(not(feature = "cplex"))]
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        _: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        _: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         unreachable!("the registry rejects a CPLEX heuristic in a build without CPLEX")
     }
 }

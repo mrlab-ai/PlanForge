@@ -70,7 +70,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::interval::Interval;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 
 mod graph;
 mod numeric;
@@ -789,9 +789,9 @@ impl FfHeuristic {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
         helpful: Option<&mut Vec<OperatorIndex>>,
-    ) -> Result<f64, EvaluationError> {
+    ) -> Result<Estimate, EvaluationError> {
         if eval_state.is_goal() {
-            return Ok(0.0);
+            return Ok(Estimate::new(0.0));
         }
         let mut scratch = std::mem::take(&mut self.scratch);
         scratch.reset();
@@ -799,9 +799,11 @@ impl FfHeuristic {
         let cost = match goal_layer {
             Err(error) => Err(error),
             // The delete relaxation reaches no goal: a dead end.
-            Ok(i32::MAX) => Ok(f64::INFINITY),
-            Ok(0) => Ok(0.0),
-            Ok(_) => Ok(self.extract_relaxed_plan(&mut scratch, helpful)),
+            Ok(i32::MAX) => Ok(Estimate::DEAD_END),
+            Ok(0) => Ok(Estimate::new(0.0)),
+            Ok(_) => Ok(Estimate::new(
+                self.extract_relaxed_plan(&mut scratch, helpful),
+            )),
         };
         self.scratch = scratch;
         cost
@@ -809,7 +811,10 @@ impl FfHeuristic {
 }
 
 impl Heuristic for FfHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         self.relaxed_plan_cost(eval_state, None)
     }
 
@@ -817,7 +822,7 @@ impl Heuristic for FfHeuristic {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
         preferred: &mut Vec<OperatorIndex>,
-    ) -> Result<f64, EvaluationError> {
+    ) -> Result<Estimate, EvaluationError> {
         self.relaxed_plan_cost(eval_state, Some(preferred))
     }
 
@@ -831,12 +836,11 @@ pub struct FfFeature;
 impl planforge_search::heuristic_factory::HeuristicFeature for FfFeature {
     const NAME: &'static str = "ff";
     type Config = planforge_search::heuristic_factory::EmptyConfig;
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        context: &planforge_search::heuristic_factory::BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, planforge_search::heuristic_factory::HeuristicBuildError>
-    {
-        let heuristic = FfHeuristic::new(context.task)
+        context: &planforge_search::heuristic_factory::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_factory::HeuristicBuildError> {
+        let heuristic = FfHeuristic::new(&context.task)
             .map_err(|error| format!("failed to construct ff heuristic: {error}"))?;
         Ok(Box::new(heuristic))
     }

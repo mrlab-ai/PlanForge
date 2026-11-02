@@ -31,7 +31,7 @@
 //! use std::sync::Arc;
 //!
 //! use planforge_sas::numeric_task::Task;
-//! use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+//! use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
 //! use planforge_search::search::SearchOutcome;
 //! use planforge_search::search::best_first::{AStarSearch, SearchParams};
 //!
@@ -39,10 +39,10 @@
 //! struct GoalCount;
 //!
 //! impl Heuristic for GoalCount {
-//!     fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+//!     fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<Estimate, EvaluationError> {
 //!         let view = state.state_registry().view(state.state());
 //!         let unsatisfied = state.task().goals().iter().filter(|goal| !goal.is_held(view));
-//!         Ok(unsatisfied.count() as f64)
+//!         Ok(Estimate::new(unsatisfied.count() as f64))
 //!     }
 //!
 //!     fn name(&self) -> &str {

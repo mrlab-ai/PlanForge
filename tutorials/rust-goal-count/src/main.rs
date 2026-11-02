@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::StateRegistry;
-use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
 use planforge_search::search::best_first::{AStarSearch, SearchParams};
 use planforge_search::search::{SearchLimits, SearchOutcome};
 
@@ -11,7 +11,10 @@ use planforge_search::search::{SearchLimits, SearchOutcome};
 struct GoalCountHeuristic;
 
 impl Heuristic for GoalCountHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state = eval_state.state_registry().view(eval_state.state());
         let unsatisfied = eval_state
             .task()
@@ -19,7 +22,7 @@ impl Heuristic for GoalCountHeuristic {
             .iter()
             .filter(|goal| !goal.is_held(state))
             .count();
-        Ok(unsatisfied as f64)
+        Ok(Estimate::new(unsatisfied as f64))
     }
 
     fn name(&self) -> &str {

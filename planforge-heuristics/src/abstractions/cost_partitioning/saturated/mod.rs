@@ -12,7 +12,7 @@ use crate::abstractions::sources::{
 };
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 use planforge_search::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
@@ -281,7 +281,10 @@ impl ScpBuilder {
 }
 
 impl Heuristic for SaturatedCostPartitioningHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         abstract_state_ids_into(
             &self.components,
             eval_state,
@@ -289,10 +292,10 @@ impl Heuristic for SaturatedCostPartitioningHeuristic {
             &mut self.numeric_values,
             &mut self.abstract_state_ids,
         )?;
-        Ok(compute_max_h(
+        Ok(Estimate::new(compute_max_h(
             &self.cost_partitionings,
             &self.abstract_state_ids,
-        ))
+        )))
     }
 
     fn name(&self) -> &str {
@@ -316,17 +319,17 @@ impl HeuristicFeature for ScpFeature {
         config.validate()?;
         config.options.validate().map_err(Into::into)
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         let deadline = config.deadline()?;
         let purpose = if config.options.partitioning.uses_regions() {
             AbstractionPurpose::RegionalCostPartitioning
         } else {
             AbstractionPurpose::LabelCostPartitioning
         };
-        let components = build_components(context.task, &config.sources, purpose, deadline)?;
+        let components = build_components(&context.task, &config.sources, purpose, deadline)?;
         remaining_construction_time(deadline)?;
         let heuristic = SaturatedCostPartitioningHeuristic::new(
             Some(context.name.clone()),

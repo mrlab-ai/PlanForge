@@ -15,13 +15,13 @@ struct ExternalTest;
 impl HeuristicFeature for ExternalTest {
     const NAME: &'static str = "external_test";
     type Config = EmptyConfig;
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         BUILD_CALLED.store(true, Ordering::SeqCst);
         Ok(Box::new(
-            planforge_search::evaluation::BlindHeuristic::for_task(context.task),
+            planforge_search::evaluation::BlindHeuristic::for_task(&context.task),
         ))
     }
 }
@@ -32,10 +32,10 @@ impl HeuristicFeature for ExternalCplexTest {
     fn preflight(_: &Self::Config) -> std::io::Result<()> {
         planforge_heuristics::requirements::require_cplex()
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         ExternalTest::build(config, context)
     }
 }
@@ -65,7 +65,7 @@ fn external_heuristic_is_visible_to_every_registry_path() {
         env!("CARGO_MANIFEST_DIR"),
         "/../tests/assets/numeric_sas/example2.sas"
     )));
-    let heuristic = external.build(&BuildContext::new(&task)).unwrap();
+    let heuristic = external.build(&BuildContext::new(task.clone())).unwrap();
     assert_eq!(heuristic.name(), "blind_heuristic");
     assert!(BUILD_CALLED.load(Ordering::SeqCst));
 

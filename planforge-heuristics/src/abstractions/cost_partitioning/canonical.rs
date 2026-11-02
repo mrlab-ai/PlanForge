@@ -14,7 +14,7 @@ use crate::maximal_cliques::maximal_cliques;
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::state_value_cache::StateValueCache;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 use planforge_search::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
@@ -132,14 +132,17 @@ impl CanonicalAbstractionHeuristic {
 }
 
 impl Heuristic for CanonicalAbstractionHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state_id = eval_state.state().get_id();
         if let Some(value) = self.state_value_cache.get(state_id) {
-            return Ok(value);
+            return Ok(Estimate::new(value));
         }
         let value = self.evaluate_subsets(eval_state)?;
         self.state_value_cache.insert(state_id, value);
-        Ok(value)
+        Ok(Estimate::new(value))
     }
 
     fn name(&self) -> &str {
@@ -178,12 +181,12 @@ impl HeuristicFeature for CanonicalFeature {
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
         config.validate()
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         let deadline = config.deadline()?;
-        let task = &**context.task;
+        let task = &*context.task;
         let components = build_components(
             task,
             &config.sources,
