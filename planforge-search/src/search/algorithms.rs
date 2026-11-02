@@ -15,7 +15,7 @@ use crate::heuristic_factory::{BuildContext, HeuristicBuildError, HeuristicConfi
 use crate::successor_generator::SuccessorGeneratorConfig;
 
 /// `astar(heuristic, lazy=none, mpd=false, open_list=tiebreaking(),
-/// successor_generator=decision_tree())`; the heuristic defaults to blind.
+/// successor_generator=standard_grounded_tree())`; the heuristic defaults to blind.
 #[derive(Debug, crate::config::ApplyOptions)]
 pub struct AStarConfig {
     #[option(positional)]
@@ -81,7 +81,7 @@ impl SearchFeature for AStarFeature {
 }
 
 /// `gbfs(heuristic, open_list=preferred_first(),
-/// successor_generator=decision_tree())`; the heuristic defaults to blind.
+/// successor_generator=standard_grounded_tree())`; the heuristic defaults to blind.
 #[derive(Debug, crate::config::ApplyOptions)]
 pub struct GreedyBestFirstConfig {
     #[option(positional)]

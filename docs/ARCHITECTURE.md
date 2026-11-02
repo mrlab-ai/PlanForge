@@ -74,7 +74,7 @@ propositional values without decoding a whole state.
   before it parses a configuration.
 - `successor_generator`: the `SuccessorGenerator` trait (which operators
   are applicable in a state; applying them stays with the `StateRegistry`),
-  the decision tree that is the default, and their registry
+  the standard grounded tree that is the default, and their registry
   `SUCCESSOR_GENERATORS`.
 - `state_space` (the exact state space), `graph` (the
   backward goal-distance search shared with the abstractions),
@@ -145,7 +145,7 @@ One module per technique, each depending on the core only:
 | a search algorithm | a `SearchFeature` whose search composes `SearchSpace` and `SearchProgress` (for best-first search, a `NodeOrdering`) | `planforge::Extensions::search_algorithms` | `tutorials/rust-custom-search` |
 | an open list | `OpenList` over `OpenEntry` (g, h, state, insertion order), and an `OpenListFeature` | `planforge::Extensions::open_lists`; a best-first search names it with `open_list=...` | `tutorials/rust-plugin-binary` (`f_heap`) |
 | a node ordering | `NodeOrdering` (a key from g and h) | a `SearchFeature` that runs `BestFirstSearch<YourOrdering, _>` | `search::best_first::AStar` |
-| a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `planforge::Extensions::successor_generators`; a search names it with `successor_generator=...` | the `successor_generator` module documentation, `successor_generator::DecisionTree` |
+| a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `planforge::Extensions::successor_generators`; a search names it with `successor_generator=...` | the `successor_generator` module documentation, `successor_generator::StandardGroundedTree` |
 | a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::transformations()`, or `planforge::Extensions::transformations` | `task_transformations::restriction::RestrictFeature` |
 | what a heuristic needs | a `TaskCheck` (of the task) or `HeuristicFeature::preflight` (of the build) | returned from the heuristic's `HeuristicFeature` | `planforge_heuristics::requirements` |
 

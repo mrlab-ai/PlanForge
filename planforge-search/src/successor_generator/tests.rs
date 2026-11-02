@@ -134,7 +134,7 @@ fn immediate_list_straddling_task() -> Task {
 #[test]
 fn applicable_operators_are_emitted_in_tree_walk_order() {
     let task = immediate_list_straddling_task();
-    let tree = DecisionTree::new(&task);
+    let tree = StandardGroundedTree::new(&task);
 
     let mut applicable: Vec<OperatorIndex> = Vec::new();
     tree.applicable_operators(&[ExplicitValueIndex::new(0)], &mut applicable);
@@ -156,7 +156,7 @@ fn applicable_operators_are_emitted_in_tree_walk_order() {
 #[test]
 fn applicable_operators_leave_the_caller_s_prefix_alone() {
     let task = immediate_list_straddling_task();
-    let tree = DecisionTree::new(&task);
+    let tree = StandardGroundedTree::new(&task);
 
     let mut applicable: Vec<OperatorIndex> = vec![OperatorIndex::new(7), OperatorIndex::new(3)];
     tree.applicable_operators(&[ExplicitValueIndex::new(0)], &mut applicable);
@@ -184,7 +184,7 @@ fn the_successor_tree_lists_the_applicable_operators() {
         [ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)]
     );
 
-    let tree = DecisionTree::new(&task);
+    let tree = StandardGroundedTree::new(&task);
 
     let mut applicable_operators: Vec<OperatorIndex> = Vec::new();
     tree.applicable_operators(&state_values[..], &mut applicable_operators);
@@ -200,7 +200,7 @@ fn test_generate_immediate_successor_of_init_state() {
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
-    let suc_gen = DecisionTree::new(&task);
+    let suc_gen = StandardGroundedTree::new(&task);
 
     let mut applicable_operators = Vec::new();
     suc_gen.applicable_operators(&state, &mut applicable_operators);
@@ -223,7 +223,7 @@ fn test_duplicate_successor_should_not_generate_new_id() {
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
-    let suc_gen = DecisionTree::new(&task);
+    let suc_gen = StandardGroundedTree::new(&task);
 
     let mut applicable_operators = Vec::new();
     suc_gen.applicable_operators(&state, &mut applicable_operators);
@@ -265,7 +265,7 @@ fn registry_expander_matches_registry_successors() {
     let mut reference = StateRegistry::for_task(Arc::new(task.clone()));
     let initial = registry.get_initial_state();
     let reference_initial = reference.get_initial_state();
-    let mut expander = RegistryExpander::new(DecisionTree::new(&task));
+    let mut expander = RegistryExpander::new(StandardGroundedTree::new(&task));
 
     let mut expansion = expander.expand(&registry, &initial).unwrap();
     assert_eq!(expansion.propositional(), initial.get_state(&registry));
@@ -354,7 +354,7 @@ fn one_condition_per_variable_task(n: usize) -> Task {
 fn default_chains_through_all_variables_neither_overflow_nor_reorder() {
     let n = 5_000;
     let task = one_condition_per_variable_task(n);
-    let tree = DecisionTree::new(&task);
+    let tree = StandardGroundedTree::new(&task);
 
     let mut applicable: Vec<OperatorIndex> = Vec::new();
     tree.applicable_operators(&vec![ExplicitValueIndex::new(1); n], &mut applicable);
@@ -373,7 +373,8 @@ fn default_chains_through_all_variables_neither_overflow_nor_reorder() {
 #[test]
 fn a_search_names_its_successor_generator() {
     use crate::search::parse_search_spec;
-    let search = parse_search_spec("astar(blind(), successor_generator=decision_tree())").unwrap();
+    let search =
+        parse_search_spec("astar(blind(), successor_generator=standard_grounded_tree())").unwrap();
     assert_eq!(search.to_string(), "astar(blind())");
     let error = parse_search_spec("gbfs(blind(), successor_generator=naive())").unwrap_err();
     assert!(

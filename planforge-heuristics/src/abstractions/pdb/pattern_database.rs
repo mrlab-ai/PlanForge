@@ -19,7 +19,7 @@ use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use crate::landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use planforge_search::config::option_enum;
-use planforge_search::successor_generator::{DecisionTree, RegistryExpander};
+use planforge_search::successor_generator::{RegistryExpander, StandardGroundedTree};
 
 use planforge_search::task_transformations::projection::ProjectedTask;
 
@@ -596,7 +596,7 @@ fn explore(
     heuristic: PdbInternalHeuristic,
     inner: &mut InnerHeuristics,
 ) -> Result<Exploration, String> {
-    let mut expander = RegistryExpander::new(DecisionTree::new(task));
+    let mut expander = RegistryExpander::new(StandardGroundedTree::new(task));
     let operators = task.operators();
     let initial_state = registry.get_initial_state();
     assert_eq!(

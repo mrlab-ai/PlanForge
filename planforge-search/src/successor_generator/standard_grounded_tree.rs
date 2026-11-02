@@ -1,5 +1,6 @@
-//! The decision tree of Helmert (2006) that Fast Downward generates
-//! successors with: branches test one variable each, and the operators whose
+//! The standard grounded tree: the successor generator of Helmert (2006)
+//! that Fast Downward uses, a tree over the preconditions of the grounded
+//! operators. Branches test one variable each, and the operators whose
 //! preconditions a path fixes sit at its end.
 
 use planforge_sas::numeric_task::{
@@ -13,7 +14,7 @@ use super::SuccessorGenerator;
 
 type Condition<'a> = Vec<&'a ExplicitFact>;
 
-/// Index into the `DecisionTree`'s internal node storage. The high bit
+/// Index into the `StandardGroundedTree`'s internal node storage. The high bit
 /// flags the node kind (`1` = leaf, `0` = branch); the remaining 31 bits
 /// are the slot within the corresponding `Vec`. Sentinel `INVALID` marks
 /// "no child" without paying for `Option<NodeId>` (which would be 8 B per
@@ -50,7 +51,7 @@ impl NodeId {
     }
 }
 
-/// Single branch node in the precondition decision tree.
+/// Single branch node of the tree.
 ///
 /// `value_children` is indexed by the concrete value of `var_id`. Entries
 /// outside the variable's actual range are filled with `NodeId::INVALID`
@@ -75,7 +76,7 @@ struct LeafEntry {
     applicable_operators: Box<[OperatorIndex]>,
 }
 
-/// Decision tree returning the ids of the operators applicable in a given
+/// The standard grounded tree: returns the ids of the operators applicable in a given
 /// state. Callers resolve ids to `&Operator` via `task.operators()`.
 ///
 /// All nodes live in two `Vec`s on the same heap allocation each, so
@@ -83,7 +84,7 @@ struct LeafEntry {
 /// performs O(n) allocations total instead of O(n) `Box::new` calls. The
 /// tree holds no reference to the task: it borrows the task only during
 /// construction and stores plain operator ids.
-pub struct DecisionTree {
+pub struct StandardGroundedTree {
     branches: Vec<BranchEntry>,
     leaves: Vec<LeafEntry>,
     /// Index 0 in `leaves` is a shared empty leaf reused for every
@@ -95,9 +96,9 @@ pub struct DecisionTree {
     root: NodeId,
 }
 
-impl Debug for DecisionTree {
+impl Debug for StandardGroundedTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DecisionTree")
+        f.debug_struct("StandardGroundedTree")
             .field("branches", &self.branches.len())
             .field("leaves", &self.leaves.len())
             .field("root", &self.root)
@@ -105,7 +106,7 @@ impl Debug for DecisionTree {
     }
 }
 
-impl DecisionTree {
+impl StandardGroundedTree {
     pub fn new(task: &Task) -> Self {
         let mut builder = TreeBuilder::new(task);
         let mut queue: VecDeque<OperatorIndex> = (0..task.operators().len() as u32)
@@ -114,7 +115,7 @@ impl DecisionTree {
         let root = builder
             .construct(0, &mut queue)
             .expect("successor-tree construction failed");
-        DecisionTree {
+        StandardGroundedTree {
             branches: builder.branches,
             leaves: builder.leaves,
             empty_leaf: builder.empty_leaf,
@@ -153,7 +154,7 @@ impl DecisionTree {
     }
 }
 
-impl SuccessorGenerator for DecisionTree {
+impl SuccessorGenerator for StandardGroundedTree {
     /// Appends the operators applicable in `state` to `applicable` in the
     /// order the walk reaches them: a branch's shared immediate operators, then
     /// the child its tested variable's value selects, then the default child.
