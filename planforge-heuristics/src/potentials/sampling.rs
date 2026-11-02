@@ -2,7 +2,7 @@ use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use std::sync::Arc;
 
-use planforge_search::successor_generator::RegistryExpander;
+use planforge_search::successor_generator::{DecisionTree, RegistryExpander};
 
 /// The C++ planner's seed for its potential-function sampler.
 const SEED: u32 = 2011;
@@ -29,7 +29,7 @@ impl SampleSpace {
 /// C++ planner's random stream.
 pub(crate) struct RandomWalkSampler {
     task: Arc<Task>,
-    expander: RegistryExpander,
+    expander: RegistryExpander<DecisionTree>,
     rng: CppMt19937,
     initial_h: f64,
     average_operator_cost: Option<f64>,
@@ -41,7 +41,7 @@ impl RandomWalkSampler {
     /// has no operators).
     pub(crate) fn new(task: Arc<Task>, initial_h: f64, average_operator_cost: Option<f64>) -> Self {
         Self {
-            expander: RegistryExpander::new(&task),
+            expander: RegistryExpander::new(DecisionTree::new(&task)),
             task,
             rng: CppMt19937::new(SEED),
             initial_h,

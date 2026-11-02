@@ -20,12 +20,15 @@ use planforge_search::search::{
     Reached, SEARCH_ALGORITHMS, SearchFeature, SearchLimits, SearchOutcome, SearchProgress,
     SearchResult, SearchSpace, entry, parse_search_spec,
 };
+use planforge_search::successor_generator::SuccessorGeneratorConfig;
 
-/// `ehc(heuristic)`; the heuristic defaults to blind.
+/// `ehc(heuristic, successor_generator=decision_tree())`; the heuristic
+/// defaults to blind.
 #[derive(Debug, Default, ApplyOptions)]
 struct EhcConfig {
     #[option(positional)]
     heuristic: HeuristicConfig,
+    successor_generator: SuccessorGeneratorConfig,
 }
 
 struct EnforcedHillClimbing;
@@ -47,17 +50,17 @@ impl SearchFeature for EnforcedHillClimbing {
             .heuristic
             .build(&BuildContext::new(&task))
             .map_err(|error| error.into_io_error())?;
-        enforced_hill_climbing(task.clone(), heuristic, limits)
+        let space = SearchSpace::new(task.clone(), config.successor_generator.build(&task));
+        enforced_hill_climbing(space, heuristic, limits)
             .map_err(|error| std::io::Error::other(format!("{error:#}")))
     }
 }
 
 fn enforced_hill_climbing(
-    task: Arc<Task>,
+    mut space: SearchSpace,
     mut heuristic: Box<dyn Heuristic + '_>,
     limits: SearchLimits,
 ) -> Result<SearchResult> {
-    let mut space = SearchSpace::new(task);
     let mut progress = SearchProgress::start(limits, heuristic.name());
     let mut successors = Vec::new();
     let mut queue = VecDeque::new();

@@ -8,8 +8,10 @@ use tracing::info;
 use super::config::{SearchFeature, SearchLimits};
 use super::{AStarSearch, GreedyBestFirstSearch, SearchParams, SearchResult};
 use crate::heuristic_factory::{BuildContext, HeuristicBuildError, HeuristicConfig};
+use crate::successor_generator::SuccessorGeneratorConfig;
 
-/// `astar(heuristic, lazy=none, mpd=false)`; the heuristic defaults to blind.
+/// `astar(heuristic, lazy=none, mpd=false, successor_generator=decision_tree())`;
+/// the heuristic defaults to blind.
 #[derive(Debug, Default, crate::config::ApplyOptions)]
 pub struct AStarConfig {
     #[option(positional)]
@@ -20,6 +22,7 @@ pub struct AStarConfig {
     /// Multi-path dependence: re-evaluate a popped node whose estimate
     /// predates the heuristic's current revision.
     pub mpd: bool,
+    pub successor_generator: SuccessorGeneratorConfig,
 }
 
 pub struct AStarFeature;
@@ -48,6 +51,7 @@ impl SearchFeature for AStarFeature {
                 .map(|lazy| build(lazy, &context))
                 .transpose()?,
             mpd: config.mpd,
+            successor_generator: config.successor_generator.clone(),
             limits,
         };
         info!(
@@ -59,11 +63,13 @@ impl SearchFeature for AStarFeature {
     }
 }
 
-/// `gbfs(heuristic)`; the heuristic defaults to blind.
+/// `gbfs(heuristic, successor_generator=decision_tree())`; the heuristic
+/// defaults to blind.
 #[derive(Debug, Default, crate::config::ApplyOptions)]
 pub struct GreedyBestFirstConfig {
     #[option(positional)]
     pub heuristic: HeuristicConfig,
+    pub successor_generator: SuccessorGeneratorConfig,
 }
 
 pub struct GreedyBestFirstFeature;
@@ -83,6 +89,7 @@ impl SearchFeature for GreedyBestFirstFeature {
     ) -> std::io::Result<SearchResult> {
         let context = BuildContext::new(&task);
         let params = SearchParams {
+            successor_generator: config.successor_generator.clone(),
             limits,
             ..SearchParams::new(build(&config.heuristic, &context)?)
         };

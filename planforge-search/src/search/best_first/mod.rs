@@ -26,6 +26,7 @@ use super::search_space::{Reached, SearchSpace, Successor};
 use super::{SearchLimits, SearchOutcome, SearchResult};
 use crate::evaluation::heuristic::minimum_action_cost;
 use crate::evaluation::{EvaluationState, Heuristic};
+use crate::successor_generator::SuccessorGeneratorConfig;
 
 pub type AStarSearch<'a> = BestFirstSearch<'a, AStar, TieBreakingOpenList>;
 pub type GreedyBestFirstSearch<'a> = BestFirstSearch<'a, Greedy, PreferredFirstOpenList>;
@@ -39,6 +40,7 @@ pub struct SearchParams<'a> {
     /// Multi-path dependence: re-evaluate a popped node whose estimate
     /// predates the heuristic's current revision.
     pub mpd: bool,
+    pub successor_generator: SuccessorGeneratorConfig,
     pub limits: SearchLimits,
 }
 
@@ -49,6 +51,7 @@ impl<'a> SearchParams<'a> {
             heuristic,
             lazy: None,
             mpd: false,
+            successor_generator: SuccessorGeneratorConfig::default(),
             limits: SearchLimits::default(),
         }
     }
@@ -115,9 +118,10 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
             heuristic,
             lazy,
             mpd,
+            successor_generator,
             limits,
         } = params;
-        let space = SearchSpace::new(task);
+        let space = SearchSpace::new(task.clone(), successor_generator.build(&task));
         Self {
             min_action_cost: minimum_action_cost(space.task().effective_operator_costs()),
             space,
