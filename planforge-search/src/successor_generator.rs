@@ -3,6 +3,53 @@
 //! registers the successors. Generators are features the configuration
 //! grammar names ([`SUCCESSOR_GENERATORS`]); the [`DecisionTree`] is built in
 //! and the default.
+//!
+//! A generator only reads the state, so it takes `&self` and writes into a
+//! buffer its caller owns:
+//!
+//! ```
+//! use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorIndex, Task};
+//! use planforge_search::successor_generator::{DecisionTree, SuccessorGenerator};
+//!
+//! /// Tests the preconditions of every operator: slow, but plainly correct.
+//! struct EveryOperator {
+//!     preconditions: Vec<Vec<(usize, ExplicitValueIndex)>>,
+//! }
+//!
+//! impl EveryOperator {
+//!     fn new(task: &Task) -> Self {
+//!         let preconditions = task.operators().iter().map(|operator| {
+//!             let facts = operator.preconditions().iter();
+//!             facts.map(|fact| (fact.var(), fact.value_index())).collect()
+//!         });
+//!         Self { preconditions: preconditions.collect() }
+//!     }
+//! }
+//!
+//! impl SuccessorGenerator for EveryOperator {
+//!     fn applicable_operators(
+//!         &self,
+//!         state: &[ExplicitValueIndex],
+//!         applicable: &mut Vec<OperatorIndex>,
+//!     ) {
+//!         for (operator, preconditions) in self.preconditions.iter().enumerate() {
+//!             if preconditions.iter().all(|&(var, value)| state[var] == value) {
+//!                 applicable.push(OperatorIndex::from_usize(operator));
+//!             }
+//!         }
+//!     }
+//! }
+//!
+//! let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/assets/numeric_sas/example5.sas");
+//! let task = Task::from_file(path);
+//! let initial = task.initial_propositional_values();
+//! let (mut every, mut tree) = (Vec::new(), Vec::new());
+//! EveryOperator::new(&task).applicable_operators(initial, &mut every);
+//! DecisionTree::new(&task).applicable_operators(initial, &mut tree);
+//! every.sort();
+//! tree.sort();
+//! assert_eq!(every, tree);
+//! ```
 
 #[cfg(test)]
 mod tests;
