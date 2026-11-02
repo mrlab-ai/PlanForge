@@ -109,11 +109,6 @@ impl SearchSpace {
             .unwrap_or_else(|error| panic!("state {state_id} is not registered: {error:?}"))
     }
 
-    /// Whether `state` satisfies the goal.
-    pub fn is_goal_state(&self, state: &ConcreteState) -> bool {
-        self.registry.view(state).holds_all(self.task.goals())
-    }
-
     /// The reached state `state` as a heuristic evaluates it.
     #[inline]
     pub fn evaluation_state<'s>(&'s self, state: &'s ConcreteState) -> EvaluationState<'s, 's> {

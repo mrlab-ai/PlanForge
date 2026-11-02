@@ -97,11 +97,6 @@ impl Deadline {
             .ok_or(InvalidTimeLimit::TooLarge)
     }
 
-    /// `seconds` from now; none for infinity.
-    pub fn from_now_secs(seconds: f64) -> Result<Self, InvalidTimeLimit> {
-        Self::after(Instant::now(), time_limit_from_secs(seconds)?)
-    }
-
     pub fn passed(self) -> bool {
         self.0.is_some_and(|deadline| Instant::now() >= deadline)
     }
@@ -210,14 +205,14 @@ pub fn reserve_memory_padding(
     Ok(())
 }
 
-pub fn padding_is_reserved() -> bool {
+fn padding_is_reserved() -> bool {
     padding_cell()
         .lock()
         .map(|padding| padding.is_some())
         .unwrap_or(false)
 }
 
-pub fn release_padding() {
+fn release_padding() {
     if let Ok(mut padding) = padding_cell().lock() {
         *padding = None;
     }
@@ -356,8 +351,6 @@ mod tests {
         assert!(!Deadline::NONE.passed());
         assert_eq!(Deadline::NONE.remaining(), None);
         assert_eq!(Deadline::after(now, None), Ok(Deadline::NONE));
-        assert_eq!(Deadline::from_now_secs(f64::INFINITY), Ok(Deadline::NONE));
-        assert!(Deadline::from_now_secs(-1.0).is_err());
 
         assert_eq!(passed.earliest(later), passed);
         assert_eq!(later.earliest(passed), passed);

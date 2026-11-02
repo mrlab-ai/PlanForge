@@ -55,7 +55,7 @@ impl<C> Entry<C> {
 }
 
 /// The options a configuration type accepts, with its defaults.
-pub fn options_of<C: ApplyOptions + Default>() -> Vec<OptionDoc> {
+pub(crate) fn options_of<C: ApplyOptions + Default>() -> Vec<OptionDoc> {
     let mut options = Vec::new();
     C::default().describe_options(&mut options);
     options

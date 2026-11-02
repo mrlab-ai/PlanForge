@@ -314,7 +314,7 @@ pub fn options_text(config: &impl ApplyOptions) -> String {
 /// options in order, then every named option whose value differs from the
 /// default. Two configurations of one feature are equal exactly when their
 /// canonical calls are.
-pub fn canonical_call<C: ApplyOptions + Default>(name: &str, config: &C) -> String {
+pub(crate) fn canonical_call<C: ApplyOptions + Default>(name: &str, config: &C) -> String {
     let (mut options, mut defaults) = (Vec::new(), Vec::new());
     config.describe_options(&mut options);
     C::default().describe_options(&mut defaults);

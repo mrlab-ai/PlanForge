@@ -20,7 +20,6 @@
 pub mod projection;
 pub mod restriction;
 
-use std::any::Any;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 
@@ -43,7 +42,6 @@ pub trait TransformationFeature: 'static {
 
 trait ErasedTransformation: Debug + Send + Sync {
     fn name(&self) -> &'static str;
-    fn config(&self) -> &dyn Any;
     fn call(&self) -> String;
     fn apply(&self, task: Task) -> anyhow::Result<Task>;
 }
@@ -60,9 +58,6 @@ impl<F: TransformationFeature> ErasedTransformation for Configured<F> {
     fn name(&self) -> &'static str {
         F::NAME
     }
-    fn config(&self) -> &dyn Any {
-        &self.0
-    }
     fn call(&self) -> String {
         canonical_call(F::NAME, &self.0)
     }
@@ -78,12 +73,6 @@ pub struct TransformationConfig(Arc<dyn ErasedTransformation>);
 impl TransformationConfig {
     pub fn name(&self) -> &'static str {
         self.0.name()
-    }
-
-    /// The typed configuration, if the transformation's configuration is a
-    /// `T`.
-    pub fn config<T: 'static>(&self) -> Option<&T> {
-        self.0.config().downcast_ref()
     }
 
     pub fn apply(&self, task: Task) -> anyhow::Result<Task> {

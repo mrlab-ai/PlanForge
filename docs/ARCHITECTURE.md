@@ -145,8 +145,9 @@ One module per technique, each depending on the core only:
 | a search algorithm | a `SearchFeature` whose search composes `SearchSpace` and `SearchProgress` (for best-first search, a `NodeOrdering`) | `planforge::Extensions::search_algorithms` | `tutorials/rust-custom-search` |
 | an open list | `OpenList` over `OpenEntry` (g, h, state, insertion order), and an `OpenListFeature` | `planforge::Extensions::open_lists`; a best-first search names it with `open_list=...` | `tutorials/rust-plugin-binary` (`f_heap`) |
 | a node ordering | `NodeOrdering` (a key from g and h) | a `SearchFeature` that runs `BestFirstSearch<YourOrdering, _>` | `search::best_first::AStar` |
-| a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `planforge::Extensions::successor_generators`; a search names it with `successor_generator=...` | `successor_generator::DecisionTree` |
+| a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `planforge::Extensions::successor_generators`; a search names it with `successor_generator=...` | the `successor_generator` module documentation, `successor_generator::DecisionTree` |
 | a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::transformations()`, or `planforge::Extensions::transformations` | `task_transformations::restriction::RestrictFeature` |
+| what a heuristic needs | a `TaskCheck` (of the task) or `HeuristicFeature::preflight` (of the build) | returned from the heuristic's `HeuristicFeature` | `planforge_heuristics::requirements` |
 
 A heuristic owns its state (`&mut self`), reads the task through `&Task` or a
 shared `Arc<Task>`, and reports invalid internal states by panicking, never by

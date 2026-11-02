@@ -615,10 +615,6 @@ impl AxiomEvaluator {
         self.evaluate_propositional_axioms(buffer);
     }
 
-    pub fn has_axioms(&self) -> bool {
-        self.has_numeric_axioms() || self.has_propositional_axioms()
-    }
-
     pub fn has_numeric_axioms(&self) -> bool {
         self.has_numeric_axioms
     }

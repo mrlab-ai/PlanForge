@@ -109,7 +109,31 @@ pub struct Extensions {
 
 /// Run the standard PlanForge CLI, with `extensions` registered next to
 /// PlanForge's own features. This is the supported way to ship your own
-/// heuristic, search algorithm or task transformation inside the real binary.
+/// heuristic, search algorithm, open list, successor generator or task
+/// transformation inside the real binary:
+///
+/// ```no_run
+/// use planforge_search::search::{SearchFeature, SearchLimits, SearchResult, entry};
+/// # use planforge_search::heuristic_factory::{EmptyConfig, HeuristicConfig};
+/// # use planforge_sas::numeric_task::Task;
+/// # use std::sync::Arc;
+/// # struct MySearch;
+/// # impl SearchFeature for MySearch {
+/// #     const NAME: &'static str = "my_search";
+/// #     type Config = EmptyConfig;
+/// #     fn heuristics(_: &EmptyConfig) -> Vec<&HeuristicConfig> { Vec::new() }
+/// #     fn run(_: &EmptyConfig, _: Arc<Task>, _: SearchLimits) -> std::io::Result<SearchResult> {
+/// #         unimplemented!()
+/// #     }
+/// # }
+///
+/// fn main() -> std::io::Result<()> {
+///     planforge::run_with(planforge::Extensions {
+///         search_algorithms: vec![entry::<MySearch>()],
+///         ..Default::default()
+///     })
+/// }
+/// ```
 pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
     let mut heuristics = planforge_heuristics::heuristics();
     heuristics.extend(extensions.heuristics);

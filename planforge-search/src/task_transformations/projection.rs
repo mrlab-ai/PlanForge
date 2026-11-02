@@ -83,29 +83,6 @@ impl Pattern {
             }
         }
     }
-
-    pub fn is_subset_of(&self, other: &Self) -> bool {
-        is_sorted_subset(&self.regular, &other.regular)
-            && is_sorted_subset(&self.numeric, &other.numeric)
-    }
-}
-
-fn is_sorted_subset(lhs: &[VariableIndex], rhs: &[VariableIndex]) -> bool {
-    let mut lhs_index = 0;
-    let mut rhs_index = 0;
-
-    while lhs_index < lhs.len() && rhs_index < rhs.len() {
-        match lhs[lhs_index].cmp(&rhs[rhs_index]) {
-            std::cmp::Ordering::Less => return false,
-            std::cmp::Ordering::Equal => {
-                lhs_index += 1;
-                rhs_index += 1;
-            }
-            std::cmp::Ordering::Greater => rhs_index += 1,
-        }
-    }
-
-    lhs_index == lhs.len()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -430,22 +407,6 @@ impl ProjectedTask {
     /// The projected task.
     pub fn task(&self) -> &Arc<Task> {
         &self.task
-    }
-
-    pub fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        let mut projected_prop_values = Vec::with_capacity(self.projected_var_to_original.len());
-        let mut projected_numeric_values =
-            Vec::with_capacity(self.projected_num_var_to_original.len());
-        self.project_state_values_into(
-            StateValues::new(propositional_values, numeric_values),
-            &mut projected_prop_values,
-            &mut projected_numeric_values,
-        );
-        Ok((projected_prop_values, projected_numeric_values))
     }
 
     /// Fill `projected_prop_values` and `projected_numeric_values` with the

@@ -586,9 +586,6 @@ fn source_state_projection_is_a_direct_index_mapping() {
     ];
     let numeric = vec![NumericValue::new(10.0), NumericValue::new(7.0)];
 
-    let expected = projected
-        .project_state_values(&propositional, &numeric)
-        .unwrap();
     let mut projected_prop = Vec::new();
     let mut projected_numeric = Vec::new();
     projected.project_state_values_into(
@@ -597,7 +594,16 @@ fn source_state_projection_is_a_direct_index_mapping() {
         &mut projected_numeric,
     );
 
-    assert_eq!((projected_prop, projected_numeric), expected);
+    // `p` and the comparison `cmp`, whose operand `x` the pattern holds;
+    // `x` and the constant `limit` the comparison reads.
+    assert_eq!(
+        projected_prop,
+        [ExplicitValueIndex::new(1), ExplicitValueIndex::new(2)]
+    );
+    assert_eq!(
+        projected_numeric,
+        [NumericValue::new(7.0), NumericValue::new(10.0)]
+    );
 }
 
 /// `inc-x` raises `x`, and `use` needs `x >= limit` to reach the goal `p`.
