@@ -14,7 +14,7 @@ use planforge_sas::utils::linear_effects::LinearExpression;
 
 use planforge_search::config::option_enum;
 
-/// How [`OperatorConditionTable`] stores its entries.
+/// How LM-cut stores its table of operator conditions (`condition_table=`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ConditionTableLayout {
     /// One entry per operator and condition.
