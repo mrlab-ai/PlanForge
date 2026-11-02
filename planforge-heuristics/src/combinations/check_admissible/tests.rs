@@ -87,7 +87,7 @@ fn evaluate_initial_state(
     let mut heuristic = CheckAdmissibleHeuristic::new(inner, task.clone())
         .expect("the chain task has finite non-negative costs");
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
     heuristic.evaluate(&eval_state).map(Estimate::value)
 }
@@ -164,21 +164,22 @@ fn goal_distance_is_computed_per_state() {
     )
     .expect("the chain task has finite non-negative costs");
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     let successor = registry
-        .get_successor_state(&initial_state, &task.operators()[0])
-        .expect("`step_0_1` is applicable in the initial state");
+        .successor(&initial_state, &task.operators()[0])
+        .expect("`step_0_1` is applicable in the initial state")
+        .0;
 
     let oracle = &mut heuristic.oracle;
     assert_eq!(
         oracle
-            .goal_distance(registry.view(&initial_state), initial_state.get_id())
+            .goal_distance(registry.view(&initial_state), initial_state.id())
             .expect("the goal is reachable from the initial state"),
         2.0
     );
     assert_eq!(
         oracle
-            .goal_distance(registry.view(&successor), successor.get_id())
+            .goal_distance(registry.view(&successor), successor.id())
             .expect("the goal is reachable after one step"),
         1.0
     );

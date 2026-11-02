@@ -359,7 +359,7 @@ fn scp_initial_h_for_collection(task: &Task, abstractions: Vec<Member<DomainAbst
     .expect("scp heuristic should construct");
 
     let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
-    let initial = state_registry.get_initial_state();
+    let initial = state_registry.register_initial_state();
     let eval = EvaluationState::new(&initial, task as &Task, &state_registry);
     heuristic
         .evaluate(&eval)

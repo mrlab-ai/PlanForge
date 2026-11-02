@@ -29,7 +29,7 @@ use abstractions::domain::config::DomainAbstractionCollectionConfig;
 use abstractions::features::{CartesianFeature, DomainFeature, SourceFeature};
 use abstractions::icaps26::Icaps26CartesianConfig;
 use abstractions::sources::PdbSourceConfig;
-use planforge_search::heuristic_factory::{HeuristicEntry, entry};
+use planforge_search::heuristic_features::{HeuristicEntry, entry};
 use planforge_search::task_transformations::TransformationEntry;
 
 /// Every heuristic of this crate, as a binary registers them.
@@ -62,5 +62,5 @@ pub fn transformations() -> Vec<TransformationEntry> {
 /// Registers [`heuristics`] for a test process.
 #[cfg(test)]
 pub(crate) fn register_heuristics_for_tests() {
-    planforge_search::heuristic_factory::HEURISTICS.ensure_registered(heuristics);
+    planforge_search::heuristic_features::HEURISTICS.ensure_registered(heuristics);
 }

@@ -16,10 +16,10 @@ fn reach_records_the_cheapest_path_and_reopens_closed_nodes() {
         panic!("the one-step task has one successor, got {successors:?}");
     };
     assert_eq!(successor.cost, 1.0);
-    let parent = Some((initial.get_id(), successor.operator));
+    let parent = Some((initial.id(), successor.operator));
 
     assert_eq!(space.reach(&successor.state, parent, 3.0), Reached::New);
-    let goal = successor.state.get_id();
+    let goal = successor.state.id();
     assert!(space.is_goal(goal));
     assert_eq!(
         space.reach(&successor.state, parent, 3.0),

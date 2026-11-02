@@ -1,5 +1,5 @@
 //! Registries of the features the configuration grammar names: heuristics
-//! ([`crate::heuristic_factory::HEURISTICS`]), search algorithms
+//! ([`crate::heuristic_features::HEURISTICS`]), search algorithms
 //! ([`crate::search::SEARCH_ALGORITHMS`]), open lists
 //! ([`crate::search::best_first::OPEN_LISTS`]), successor generators
 //! ([`crate::successor_generator::SUCCESSOR_GENERATORS`]) and task

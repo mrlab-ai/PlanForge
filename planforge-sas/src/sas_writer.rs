@@ -185,10 +185,10 @@ pub fn write_sas<W: Write>(parts: &SasTaskParts, out: &mut W) -> io::Result<()> 
             writeln!(
                 out,
                 "{} {} {} {}",
-                axiom.get_affected_var_id(),
-                axiom.get_operator().as_sas(),
-                axiom.get_left_var_id(),
-                axiom.get_right_var_id()
+                axiom.affected_var_id(),
+                axiom.operator().as_sas(),
+                axiom.left_var_id(),
+                axiom.right_var_id()
             )
         })
     })?;
@@ -206,18 +206,13 @@ pub fn write_sas<W: Write>(parts: &SasTaskParts, out: &mut W) -> io::Result<()> 
                 } => writeln!(
                     out,
                     "{} {} {} {}",
-                    axiom.get_affected_var_id(),
+                    axiom.affected_var_id(),
                     operator.as_sas(),
                     left,
                     right
                 ),
                 crate::axioms::NumericExpression::Linear(terms) => {
-                    write!(
-                        out,
-                        "{} linear {}",
-                        axiom.get_affected_var_id(),
-                        terms.len()
-                    )?;
+                    write!(out, "{} linear {}", axiom.affected_var_id(), terms.len())?;
                     for (variable, coefficient) in terms {
                         write!(out, " {variable} {coefficient}")?;
                     }

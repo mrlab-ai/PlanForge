@@ -4,7 +4,7 @@
 use anyhow::Result;
 use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::{NumericValue, OperatorIndex};
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 
 use super::cegar::progression::ConcretePlan;
 use super::cegar::refine::CegarOutcome;

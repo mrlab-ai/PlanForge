@@ -12,7 +12,7 @@ fn a_cycle_and_its_predecessor_are_ordered_by_dependency() {
         vec![VariableIndex::new(0)],
         vec![VariableIndex::new(0)],
     ])
-    .get_result();
+    .components();
 
     assert_eq!(sccs, vec![vec![3], vec![0, 1, 2]]);
 }
@@ -22,7 +22,7 @@ fn a_cycle_and_its_predecessor_are_ordered_by_dependency() {
 /// what reversing the finished components leaves.
 #[test]
 fn isolated_nodes_are_singleton_components() {
-    let sccs = Scc::new(vec![Vec::new(), Vec::new(), Vec::new()]).get_result();
+    let sccs = Scc::new(vec![Vec::new(), Vec::new(), Vec::new()]).components();
 
     assert_eq!(sccs, vec![vec![2], vec![1], vec![0]]);
 }
@@ -37,7 +37,7 @@ fn two_cycles_in_a_chain_stay_separate() {
         vec![VariableIndex::new(3)],
         vec![VariableIndex::new(2)],
     ])
-    .get_result();
+    .components();
 
     assert_eq!(sccs, vec![vec![0, 1], vec![2, 3]]);
 }
@@ -52,7 +52,7 @@ fn an_edge_into_a_closed_component_does_not_merge_it() {
         Vec::new(),
         vec![VariableIndex::new(1)],
     ])
-    .get_result();
+    .components();
 
     assert_eq!(sccs, vec![vec![2], vec![0], vec![1]]);
 }
@@ -67,7 +67,7 @@ fn a_long_path_does_not_exhaust_the_stack() {
         .collect();
     graph.push(Vec::new());
 
-    let sccs = Scc::new(graph).get_result();
+    let sccs = Scc::new(graph).components();
 
     assert_eq!(sccs.len(), node_count);
     assert_eq!(sccs[0], vec![0]);

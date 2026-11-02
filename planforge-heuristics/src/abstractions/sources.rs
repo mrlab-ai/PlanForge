@@ -5,8 +5,9 @@
 use planforge_sas::numeric_task::Task;
 use std::time::{Duration, Instant};
 
+use planforge_search::config::EmptyConfig;
 use planforge_search::config::{ApplyOptions, ConfigError, TimeLimit};
-use planforge_search::heuristic_factory::{EmptyConfig, HeuristicBuildError, TaskRequirements};
+use planforge_search::heuristic_features::{HeuristicBuildError, TaskRequirements};
 use planforge_search::resource_limits::{Deadline, min_time_limit};
 use planforge_search::task_transformations::TransformationFeature;
 

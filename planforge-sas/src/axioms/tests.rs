@@ -102,7 +102,7 @@ fn task_rejects_a_comparison_axiom_operand_out_of_range() {
 fn complete_evaluation_runs_arithmetic_before_comparisons() {
     let problem = std::sync::Arc::new(Task::new(sum_condition_task_parts()));
     let state_packer = std::sync::Arc::new(StatePacker::new(&[ConditionValue::DOMAIN_SIZE as u64]));
-    let result_var = problem.comparison_axioms()[0].get_left_var_id();
+    let result_var = problem.comparison_axioms()[0].left_var_id();
     let mut numeric_state = problem.initial_numeric_values().to_vec();
     numeric_state[result_var.index()] = ZERO_VALUE;
     let axiom_evaluator = AxiomEvaluator::new(&problem, state_packer.clone());

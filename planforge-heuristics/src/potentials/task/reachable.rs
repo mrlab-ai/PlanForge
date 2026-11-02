@@ -205,15 +205,15 @@ pub(super) fn compute_aibr_closure(task: &Task) -> Result<AibrClosure, String> {
                     }
                 }
             };
-            hull_into(&mut intervals[axiom.get_affected_var_id().index()], value);
+            hull_into(&mut intervals[axiom.affected_var_id().index()], value);
         }
         for axiom in task.comparison_axioms() {
             if comparison_may_hold(
-                intervals[axiom.get_left_var_id().index()],
-                intervals[axiom.get_right_var_id().index()],
-                axiom.get_operator(),
+                intervals[axiom.left_var_id().index()],
+                intervals[axiom.right_var_id().index()],
+                axiom.operator(),
             ) {
-                reachable_facts[axiom.get_affected_var_id().index()][0] = true;
+                reachable_facts[axiom.affected_var_id().index()][0] = true;
             }
         }
         for axiom in task.axioms().iter().chain(&default_value_axioms) {

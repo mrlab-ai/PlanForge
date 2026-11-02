@@ -539,14 +539,14 @@ impl TaskData {
             );
         };
         for axiom in &self.assignment_axioms {
-            let head = axiom.get_affected_var_id();
+            let head = axiom.affected_var_id();
             assert_numeric_operand(head, "an assignment axiom head");
             for operand in axiom.expression.dependencies() {
                 assert_numeric_operand(operand, &format!("assignment axiom {head}"));
             }
         }
         for (axiom_id, axiom) in self.comparison_axioms.iter().enumerate() {
-            for operand in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
+            for operand in [axiom.left_var_id(), axiom.right_var_id()] {
                 assert_numeric_operand(operand, &format!("comparison axiom {axiom_id}"));
             }
         }
@@ -561,7 +561,7 @@ impl TaskData {
                                 |definition| definition.numeric_type() == NumericType::Regular
                             ),
                         "linear sum {} reads non-regular numeric variable {variable}",
-                        axiom.get_affected_var_id()
+                        axiom.affected_var_id()
                     );
                 }
             }
@@ -608,7 +608,7 @@ impl TaskData {
             let expected_comparison_layer = last_arithmetic_layer.map_or(0, |layer| layer + 1);
             let mut comparison_layer = None;
             for (axiom_id, axiom) in self.comparison_axioms.iter().enumerate() {
-                let head = axiom.get_affected_var_id().index();
+                let head = axiom.affected_var_id().index();
                 let layer = self.variables[head].axiom_layer().unwrap_or_else(|| {
                     panic!("comparison axiom {axiom_id} writes non-derived variable {head}")
                 });

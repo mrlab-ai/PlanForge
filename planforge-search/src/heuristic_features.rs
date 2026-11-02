@@ -72,10 +72,6 @@ impl BuildContext {
     }
 }
 
-/// The configuration of no options.
-#[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
-pub struct EmptyConfig {}
-
 /// A heuristic the configuration grammar names: its typed configuration,
 /// what it needs of the build and of the task, and its construction.
 pub trait HeuristicFeature: 'static {

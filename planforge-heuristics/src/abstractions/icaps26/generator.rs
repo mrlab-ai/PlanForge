@@ -1,7 +1,7 @@
 use super::*;
 use planforge_sas::numeric_task::Task;
 use planforge_search::config::ConfigError;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 
 pub struct Icaps26CartesianGenerator {
     config: Icaps26CartesianConfig,

@@ -4,10 +4,10 @@ use std::fmt::{self, Debug};
 use std::sync::Arc;
 
 use super::OpenList;
+use crate::config::EmptyConfig;
 use crate::config::{
     ApplyOptions, ConfigCall, ConfigError, ConfigValue, FromOptionValue, canonical_call, configure,
 };
-use crate::heuristic_factory::EmptyConfig;
 use crate::registry::{Entry, Registry, options_of};
 
 /// An open list the configuration grammar names: its typed configuration

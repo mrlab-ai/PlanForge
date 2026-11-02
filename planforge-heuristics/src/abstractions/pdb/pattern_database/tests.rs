@@ -37,7 +37,7 @@ fn build_with(
 
 fn initial_state(task: &Task) -> ExplicitState {
     let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let mut values = ExplicitState::default();
     registry.view(&initial).fill_explicit(&mut values).unwrap();
     values

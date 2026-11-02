@@ -31,7 +31,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::collections::BTreeSet;
 
 use planforge_cplex::{
@@ -220,7 +220,7 @@ impl Heuristic for PostHocOptimizationHeuristic {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<Estimate, EvaluationError> {
-        let state_id = eval_state.state().get_id();
+        let state_id = eval_state.state().id();
         if let Some(value) = self.state_value_cache.get(state_id) {
             return Ok(Estimate::new(value));
         }

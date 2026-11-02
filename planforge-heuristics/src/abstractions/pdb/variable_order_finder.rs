@@ -77,7 +77,7 @@ impl VariableOrderFinder {
         // `validate_abstractable_goal` refuses that goal, so the comparison
         // variable is named directly and `is_goal_variable` already holds it.
         for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-            if !is_goal_variable[comparison_axiom.get_affected_var_id().index()] {
+            if !is_goal_variable[comparison_axiom.affected_var_id().index()] {
                 continue;
             }
             if let Some(numeric_var_id) = causal_graph.comparison_numeric_var(comparison_axiom_id)

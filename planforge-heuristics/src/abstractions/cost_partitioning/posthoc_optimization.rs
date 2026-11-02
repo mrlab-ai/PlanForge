@@ -12,7 +12,7 @@ mod heuristic;
 use crate::abstractions::sources::CombinationConfig;
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 

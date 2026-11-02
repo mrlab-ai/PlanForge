@@ -5,7 +5,7 @@ use super::pattern_collection::PatternCollection;
 use super::pattern_database::{PatternDatabase, PdbBuildConfig};
 use super::utils;
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use planforge_search::task_transformations::projection::ProjectedTask;
 use planforge_search::task_transformations::restriction::validate_restricted_task;
 

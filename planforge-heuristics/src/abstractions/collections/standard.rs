@@ -31,7 +31,7 @@ use super::member::{CollectionMember, CollectionMembership, Member, MemberConstr
 use crate::abstractions::common::abstraction::CegarAbstraction;
 use crate::abstractions::common::cegar::CegarStopReason;
 use crate::abstractions::common::cegar::initial_splits::{InitialSplitVar, RefinementScope};
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use planforge_search::resource_limits;
 
 /// The budgets and diversification of a standard collection.

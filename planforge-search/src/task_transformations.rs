@@ -27,7 +27,7 @@ use planforge_sas::numeric_task::Task;
 use tracing::info;
 
 use crate::config::{ApplyOptions, ConfigCall, ConfigError, canonical_call, configure, parse_call};
-use crate::heuristic_factory::TaskRequirements;
+use crate::heuristic_features::TaskRequirements;
 use crate::registry::{Entry, Registry, options_of};
 use crate::unsupported::UnsupportedTask;
 

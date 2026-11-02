@@ -27,7 +27,7 @@ use self::preferred_operators::PreferredOperators;
 use super::progress::SearchProgress;
 use super::search_space::{Reached, SearchSpace, Successor};
 use super::{SearchError, SearchLimits, SearchOutcome, SearchResult};
-use crate::evaluation::minimum_action_cost;
+use crate::evaluation::min_operator_cost;
 use crate::evaluation::{Estimate, EvaluationError, Heuristic};
 use crate::successor_generator::SuccessorGeneratorConfig;
 
@@ -69,7 +69,7 @@ pub struct BestFirstSearch<O: NodeOrdering, Q: OpenList> {
     lazy: Option<Box<dyn Heuristic>>,
     /// The cheapest operator cost, a lower bound on the estimate of every
     /// non-goal state.
-    min_action_cost: f64,
+    min_operator_cost: f64,
     /// The latest evaluation of each state; tracked only with `mpd`.
     evaluation_records: Option<Vec<Option<EvaluationRecord>>>,
     preferred: PreferredOperators,
@@ -136,7 +136,7 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
         } = params;
         let space = SearchSpace::new(task.clone(), successor_generator.build(&task));
         Self {
-            min_action_cost: minimum_action_cost(space.task().effective_operator_costs()),
+            min_operator_cost: min_operator_cost(space.task().effective_operator_costs()),
             space,
             progress: SearchProgress::start(limits, heuristic.name()),
             heuristic,
@@ -165,7 +165,7 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
 
     fn initialize(&mut self) -> Result<(), SearchError> {
         let state = self.space.initial_state();
-        let state_id = state.get_id();
+        let state_id = state.id();
         assert_eq!(self.space.reach(&state, None, 0.0), Reached::New);
         let evaluation = in_context(self.evaluate(&state), || {
             "initial state evaluation failed".to_string()
@@ -199,7 +199,7 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
             Popped::Skipped => return Ok(None),
             Popped::Exhausted => return Ok(Some(SearchOutcome::Unsolvable)),
         };
-        let state_id = state.get_id();
+        let state_id = state.id();
         self.space.close(state_id);
         self.progress.statistics.nodes.expanded += 1;
         if self.space.is_goal(state_id) {
@@ -271,7 +271,7 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
             let estimate = in_context(lazy.evaluate(&self.space.evaluation_state(&state)), || {
                 format!("slow heuristic evaluation failed for state {state_id}")
             })?;
-            let h = bounded_estimate(estimate, is_goal, self.min_action_cost);
+            let h = bounded_estimate(estimate, is_goal, self.min_operator_cost);
             self.progress.statistics.evaluations += 1;
             if h == f64::INFINITY {
                 return Ok(self.prune(state_id));
@@ -298,7 +298,7 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
     /// second path is cheaper, and dropped otherwise: the same as processing
     /// each successor completely before generating the next.
     fn expand(&mut self, state: &ConcreteState) -> Result<(), SearchError> {
-        let parent = state.get_id();
+        let parent = state.id();
         let parent_g = self.space.g(parent);
         let preferred = self.preferred.take(parent);
         let mut successors = std::mem::take(&mut self.successors);
@@ -327,7 +327,7 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
         }
 
         for (successor, evaluation) in successors.iter().zip(&evaluations) {
-            let state_id = successor.state.get_id();
+            let state_id = successor.state.id();
             let g = parent_g + successor.cost;
             if evaluation.is_dead_end() {
                 // A state reached twice is counted once.
@@ -361,8 +361,7 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
             let estimate = self
                 .heuristic
                 .evaluate_with_preferred(&eval_state, &mut self.preferred_scratch)?;
-            self.preferred
-                .store(state.get_id(), &self.preferred_scratch);
+            self.preferred.store(state.id(), &self.preferred_scratch);
             estimate
         } else {
             self.heuristic.evaluate(&eval_state)?
@@ -376,9 +375,9 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
     /// a batch to it.
     #[inline]
     fn record_evaluation(&mut self, state: &ConcreteState, estimate: Estimate) -> Evaluation {
-        let state_id = state.get_id();
+        let state_id = state.id();
         let is_goal = self.space.is_goal(state_id);
-        let h = bounded_estimate(estimate, is_goal, self.min_action_cost);
+        let h = bounded_estimate(estimate, is_goal, self.min_operator_cost);
         let evaluation = Evaluation {
             h,
             revision: self.heuristic.revision(),
@@ -429,9 +428,9 @@ impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
 /// admissible and consistent, and lifts a heuristic that is 0 on non-goal
 /// states, as an abstraction is on the states of an abstract goal.
 #[inline]
-fn bounded_estimate(estimate: Estimate, is_goal: bool, min_action_cost: f64) -> f64 {
+fn bounded_estimate(estimate: Estimate, is_goal: bool, min_operator_cost: f64) -> f64 {
     let h = estimate.value();
-    if is_goal { h } else { h.max(min_action_cost) }
+    if is_goal { h } else { h.max(min_operator_cost) }
 }
 
 /// `result`, its error a [`SearchError::Evaluation`] in the context

@@ -13,13 +13,13 @@
 //!
 //! | To add | Implement | Registry |
 //! |---|---|---|
-//! | a heuristic | [`evaluation::Heuristic`], [`heuristic_factory::HeuristicFeature`] | [`heuristic_factory::HEURISTICS`] |
+//! | a heuristic | [`evaluation::Heuristic`], [`heuristic_features::HeuristicFeature`] | [`heuristic_features::HEURISTICS`] |
 //! | a search algorithm | [`search::SearchFeature`], composing [`search::SearchSpace`] and [`search::SearchProgress`] | [`search::SEARCH_ALGORITHMS`] |
 //! | a best-first node ordering | [`search::best_first::NodeOrdering`] | -- (a search algorithm instantiates it) |
 //! | an open list | [`search::best_first::OpenList`], [`search::best_first::OpenListFeature`] | [`search::best_first::OPEN_LISTS`] |
 //! | a successor generator | [`successor_generator::SuccessorGenerator`], [`successor_generator::SuccessorGeneratorFeature`] | [`successor_generator::SUCCESSOR_GENERATORS`] |
 //! | a task transformation | [`task_transformations::TransformationFeature`] | [`task_transformations::TRANSFORMATIONS`] |
-//! | a requirement on the task | [`heuristic_factory::TaskCheck`] in [`heuristic_factory::TaskRequirements`] | -- (a heuristic feature returns it) |
+//! | a requirement on the task | [`heuristic_features::TaskCheck`] in [`heuristic_features::TaskRequirements`] | -- (a heuristic feature returns it) |
 //!
 //! The tutorials in the repository show each path end to end.
 //!
@@ -66,7 +66,7 @@ extern crate self as planforge_search;
 pub mod config;
 pub mod evaluation;
 pub mod graph;
-pub mod heuristic_factory;
+pub mod heuristic_features;
 pub mod registry;
 pub mod resource_limits;
 pub mod search;

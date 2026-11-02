@@ -103,21 +103,21 @@ pub trait Heuristic: Send {
     }
 }
 
-/// A heuristic that returns `0` for goal states and `min_action_cost` for
+/// A heuristic that returns `0` for goal states and `min_operator_cost` for
 /// non-goal states.
 /// This implements the classical blind search heuristic behavior.
 pub struct BlindHeuristic {
     name: String,
-    // Cost to return for non-goal states (minimum action cost).
-    min_action_cost: f64,
+    // Cost to return for non-goal states (the cheapest operator cost).
+    min_operator_cost: f64,
 }
 
 impl BlindHeuristic {
-    /// Build the blind estimate from the task's cheapest effective action cost.
+    /// Build the blind estimate from the task's cheapest effective operator cost.
     pub fn for_task(task: &Task) -> Self {
         Self {
             name: "blind_heuristic".to_string(),
-            min_action_cost: minimum_action_cost(task.effective_operator_costs()),
+            min_operator_cost: min_operator_cost(task.effective_operator_costs()),
         }
     }
 }
@@ -130,7 +130,7 @@ impl Heuristic for BlindHeuristic {
         Ok(Estimate::new(if eval_state.is_goal() {
             0.0
         } else {
-            self.min_action_cost
+            self.min_operator_cost
         }))
     }
 
@@ -142,7 +142,7 @@ impl Heuristic for BlindHeuristic {
 /// The cheapest operator cost: a lower bound on the remaining cost of every
 /// non-goal state, and zero for a task without operators. Tasks reject
 /// negative costs when they are constructed.
-pub fn minimum_action_cost(operator_costs: &[f64]) -> f64 {
+pub fn min_operator_cost(operator_costs: &[f64]) -> f64 {
     operator_costs
         .iter()
         .copied()
@@ -158,13 +158,13 @@ pub fn minimum_action_cost(operator_costs: &[f64]) -> f64 {
 
 /// Registry feature for the blind heuristic.
 pub struct BlindFeature;
-impl crate::heuristic_factory::HeuristicFeature for BlindFeature {
+impl crate::heuristic_features::HeuristicFeature for BlindFeature {
     const NAME: &'static str = "blind";
-    type Config = crate::heuristic_factory::EmptyConfig;
+    type Config = crate::config::EmptyConfig;
     fn build(
         _: &Self::Config,
-        context: &crate::heuristic_factory::BuildContext,
-    ) -> Result<Box<dyn Heuristic>, crate::heuristic_factory::HeuristicBuildError> {
+        context: &crate::heuristic_features::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, crate::heuristic_features::HeuristicBuildError> {
         Ok(Box::new(BlindHeuristic::for_task(&context.task)))
     }
 }

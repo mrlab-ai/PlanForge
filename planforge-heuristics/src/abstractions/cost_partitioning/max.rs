@@ -3,7 +3,7 @@ use crate::combinations::maximum::MaximumHeuristic;
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
 };
 

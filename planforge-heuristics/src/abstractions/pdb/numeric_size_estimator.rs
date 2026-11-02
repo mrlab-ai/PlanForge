@@ -57,7 +57,7 @@ fn collect_numeric_conditions(
     let mut numeric_condition_vars = HashSet::new();
 
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-        let affected_var_id = comparison_axiom.get_affected_var_id();
+        let affected_var_id = comparison_axiom.affected_var_id();
         comparison_axioms_by_var.insert(affected_var_id, comparison_axiom_id);
         numeric_condition_vars.insert(affected_var_id);
     }
@@ -100,8 +100,8 @@ fn build_numeric_condition(
     initial_numeric_values: &[NumericValue],
 ) -> Option<NumericCondition> {
     let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
-    let left = comparison_axiom.get_left_var_id();
-    let right = comparison_axiom.get_right_var_id();
+    let left = comparison_axiom.left_var_id();
+    let right = comparison_axiom.right_var_id();
     let left_type = task.numeric_type(left);
     let right_type = task.numeric_type(right);
 

@@ -260,6 +260,10 @@ pub fn for_each_option(
 /// Normally derived via `#[derive(ApplyOptions)]`; written by hand only for
 /// configs whose CLI surface differs structurally from the struct layout
 /// (e.g. coupled writes, curated subsets).
+/// The configuration of a feature without options.
+#[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
+pub struct EmptyConfig {}
+
 pub trait ApplyOptions {
     fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), ConfigError>;
 

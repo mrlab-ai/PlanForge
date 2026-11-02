@@ -244,7 +244,7 @@ pub(super) fn goal_variables(task: &Task, causal_graph: &CausalGraph) -> Vec<Cau
     // comparison meant walking the axiom bodies; it now names the comparison
     // variable itself, which `validate_abstractable_goal` guarantees.
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-        if !goal_var_ids.contains(&comparison_axiom.get_affected_var_id()) {
+        if !goal_var_ids.contains(&comparison_axiom.affected_var_id()) {
             continue;
         }
 

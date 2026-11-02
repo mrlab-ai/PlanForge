@@ -14,7 +14,7 @@ use std::time::Duration;
 use planforge_sas::numeric_task::Task;
 use planforge_search::config::ApplyOptions;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{BuildContext, HeuristicConfig};
+use planforge_search::heuristic_features::{BuildContext, HeuristicConfig};
 use planforge_search::search::{
     Reached, SEARCH_ALGORITHMS, SearchError, SearchFeature, SearchLimits, SearchOutcome,
     SearchProgress, SearchResult, SearchSpace, entry, parse_search_spec,
@@ -85,7 +85,7 @@ fn enforced_hill_climbing(
                 "enforced hill-climbing found no state with an estimate below {best_h}"
             )));
         };
-        let state_id = state.get_id();
+        let state_id = state.id();
         if space.is_goal(state_id) {
             break space.solution(state_id);
         }
@@ -100,7 +100,7 @@ fn enforced_hill_climbing(
                 // Each state is evaluated, and expanded, at most once.
                 continue;
             }
-            let successor_id = successor.state.get_id();
+            let successor_id = successor.state.id();
             let is_goal = space.is_goal(successor_id);
             let h = heuristic
                 .evaluate(&space.evaluation_state(&successor.state))

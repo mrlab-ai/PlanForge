@@ -13,7 +13,7 @@ use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorInde
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::resource_limits::Deadline;
-use crate::successor_generator::{RegistryExpander, StandardGroundedTree};
+use crate::successor_generator::{StandardGroundedTree, StateExpander};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnumerationLimits {
@@ -223,12 +223,12 @@ pub fn enumerate_state_space(
         .map_err(|error| StateSpaceEnumerationError::InvalidLimit(format!("max_time: {error}")))?;
     check_time_limit(deadline, limits.max_time, 0, 0)?;
 
-    let mut expander = RegistryExpander::new(StandardGroundedTree::new(&task));
+    let mut expander = StateExpander::new(StandardGroundedTree::new(&task));
     let operators = task.operators();
     let num_propositional_variables = task.variables().len();
     let num_numeric_variables = task.numeric_variables().len();
     let mut registry = StateRegistry::for_task(task.clone());
-    let _initial = registry.get_initial_state();
+    let _initial = registry.register_initial_state();
     if registry.num_registered_states() > limits.max_states {
         return Err(StateSpaceEnumerationError::StateLimit {
             limit: limits.max_states,
@@ -314,10 +314,10 @@ pub fn enumerate_state_space(
                 ))
             })?);
             transition_operator_ids.push(operator_id);
-            transition_successor_ids.push(u32::try_from(successor.get_id()).map_err(|_| {
+            transition_successor_ids.push(u32::try_from(successor.id()).map_err(|_| {
                 StateSpaceEnumerationError::Enumeration(format!(
                     "successor state id {} exceeds u32::MAX",
-                    successor.get_id()
+                    successor.id()
                 ))
             })?);
             transition_costs.push(cost);

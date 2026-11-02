@@ -76,7 +76,7 @@ fn a_multivariate_condition_becomes_a_threshold_on_an_auxiliary_variable() {
         NumericValue::new(-5.0)
     );
     assert_eq!(
-        icaps.comparison_axioms()[0].get_left_var_id(),
+        icaps.comparison_axioms()[0].left_var_id(),
         VariableIndex::from_usize(auxiliary_id)
     );
     let auxiliary_effect = icaps.operators()[0]

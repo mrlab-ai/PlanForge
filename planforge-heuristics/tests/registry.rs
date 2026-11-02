@@ -1,6 +1,6 @@
 //! The registry as a binary sees it once it registered this crate.
 
-use planforge_search::heuristic_factory::HEURISTICS;
+use planforge_search::heuristic_features::HEURISTICS;
 
 #[test]
 fn heuristic_registry_names_are_unique_and_complete() {
@@ -37,7 +37,7 @@ fn heuristic_registry_names_are_unique_and_complete() {
 #[test]
 fn every_heuristics_default_options_parse_back() {
     use planforge_search::config::parse_call;
-    use planforge_search::heuristic_factory::HeuristicConfig;
+    use planforge_search::heuristic_features::HeuristicConfig;
 
     HEURISTICS.ensure_registered(planforge_heuristics::heuristics);
     for entry in HEURISTICS.entries() {

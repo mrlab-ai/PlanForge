@@ -13,7 +13,7 @@
 #[cfg(test)]
 mod tests;
 
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
@@ -23,9 +23,9 @@ use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use planforge_search::evaluation::Heuristic;
-use planforge_search::evaluation::minimum_action_cost;
+use planforge_search::evaluation::min_operator_cost;
 use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
-use planforge_search::successor_generator::{RegistryExpander, StandardGroundedTree};
+use planforge_search::successor_generator::{StandardGroundedTree, StateExpander};
 
 /// Slack allowed on `h <= h*` before an estimate counts as inadmissible.
 const ADMISSIBILITY_TOLERANCE: f64 = 1e-9;
@@ -64,15 +64,15 @@ impl CheckAdmissibleHeuristic {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let state = eval_state.state();
-        if let Some(&distance) = self.goal_distances.get(&state.get_id()) {
+        if let Some(&distance) = self.goal_distances.get(&state.id()) {
             return Ok(distance);
         }
 
         let distance = self
             .oracle
-            .goal_distance(eval_state.state_registry().view(state), state.get_id())
+            .goal_distance(eval_state.state_registry().view(state), state.id())
             .map_err(EvaluationError::ComputationFailed)?;
-        self.goal_distances.insert(state.get_id(), distance);
+        self.goal_distances.insert(state.id(), distance);
         Ok(distance)
     }
 
@@ -85,7 +85,7 @@ impl CheckAdmissibleHeuristic {
         let goal_distance = self.goal_distance(eval_state)?;
         let h_value = estimate.value();
         if h_value > goal_distance + ADMISSIBILITY_TOLERANCE {
-            return Err(self.inadmissible(eval_state.state().get_id(), h_value, goal_distance));
+            return Err(self.inadmissible(eval_state.state().id(), h_value, goal_distance));
         }
         Ok(estimate)
     }
@@ -143,9 +143,9 @@ impl Heuristic for CheckAdmissibleHeuristic {
 struct GoalDistanceOracle {
     task: Arc<Task>,
     registry: StateRegistry,
-    expander: RegistryExpander<StandardGroundedTree>,
+    expander: StateExpander<StandardGroundedTree>,
     operator_costs: Vec<f64>,
-    min_action_cost: f64,
+    min_operator_cost: f64,
 }
 
 impl GoalDistanceOracle {
@@ -153,16 +153,16 @@ impl GoalDistanceOracle {
         let mut registry = StateRegistry::for_task(task.clone());
         // Creating the initial state is what fixes the registry's numeric
         // layout (constant values and packed slots); `copy_state_in` needs it.
-        registry.get_initial_state();
+        registry.register_initial_state();
         let operator_costs = task.effective_operator_costs().to_vec();
-        let min_action_cost = minimum_action_cost(&operator_costs);
-        let expander = RegistryExpander::new(StandardGroundedTree::new(&task));
+        let min_operator_cost = min_operator_cost(&operator_costs);
+        let expander = StateExpander::new(StandardGroundedTree::new(&task));
         Ok(Self {
             task,
             registry,
             expander,
             operator_costs,
-            min_action_cost,
+            min_operator_cost,
         })
     }
 
@@ -216,7 +216,7 @@ impl GoalDistanceOracle {
             registry,
             expander,
             operator_costs,
-            min_action_cost,
+            min_operator_cost,
         } = self;
         let is_goal = |registry: &StateRegistry, state: &ConcreteState| {
             registry.view(state).holds_all(task.goals())
@@ -227,8 +227,8 @@ impl GoalDistanceOracle {
 
         let mut best_g: HashMap<StateID, f64> = HashMap::new();
         let mut open: BinaryHeap<OpenEntry> = BinaryHeap::new();
-        best_g.insert(start.get_id(), 0.0);
-        open.push(open_entry(*min_action_cost, 0.0, start.get_id())?);
+        best_g.insert(start.id(), 0.0);
+        open.push(open_entry(*min_operator_cost, 0.0, start.id())?);
 
         while let Some((Reverse(_f_value), Reverse(g_value), state_id)) = open.pop() {
             let g_value = g_value.into_inner();
@@ -264,7 +264,7 @@ impl GoalDistanceOracle {
                     )
                 })?;
                 let successor_g = g_value + operator_costs[operator_id];
-                let successor_id = successor.get_id();
+                let successor_id = successor.id();
                 let successor_best = best_g.get(&successor_id).copied().unwrap_or(f64::INFINITY);
                 if successor_g + G_IMPROVEMENT_TOLERANCE >= successor_best {
                     continue;
@@ -276,7 +276,7 @@ impl GoalDistanceOracle {
                 let estimate = if is_goal(registry, &successor) {
                     0.0
                 } else {
-                    *min_action_cost
+                    *min_operator_cost
                 };
                 open.push(open_entry(
                     successor_g + estimate,
@@ -306,7 +306,7 @@ fn open_entry(f_value: f64, g_value: f64, state_id: StateID) -> Result<OpenEntry
 
 #[derive(Debug, Clone, Default)]
 pub struct CheckAdmissibleConfig {
-    inner: planforge_search::heuristic_factory::HeuristicConfig,
+    inner: planforge_search::heuristic_features::HeuristicConfig,
 }
 impl planforge_search::config::ApplyOptions for CheckAdmissibleConfig {
     fn apply_options(
@@ -314,7 +314,7 @@ impl planforge_search::config::ApplyOptions for CheckAdmissibleConfig {
         args: &[planforge_search::config::ConfigArg],
     ) -> Result<(), planforge_search::config::ConfigError> {
         let spec = single_wrapped_heuristic_spec("check_admissible", args)?;
-        self.inner = planforge_search::heuristic_factory::HeuristicConfig::from_spec(&spec)?;
+        self.inner = planforge_search::heuristic_features::HeuristicConfig::from_spec(&spec)?;
         Ok(())
     }
 
@@ -329,16 +329,18 @@ impl planforge_search::config::ApplyOptions for CheckAdmissibleConfig {
     }
 }
 pub struct CheckAdmissibleFeature;
-impl planforge_search::heuristic_factory::HeuristicFeature for CheckAdmissibleFeature {
+impl planforge_search::heuristic_features::HeuristicFeature for CheckAdmissibleFeature {
     const NAME: &'static str = "check_admissible";
     type Config = CheckAdmissibleConfig;
-    fn nested(config: &Self::Config) -> Vec<&planforge_search::heuristic_factory::HeuristicConfig> {
+    fn nested(
+        config: &Self::Config,
+    ) -> Vec<&planforge_search::heuristic_features::HeuristicConfig> {
         vec![&config.inner]
     }
     fn build(
         config: &Self::Config,
-        context: &planforge_search::heuristic_factory::BuildContext,
-    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_factory::HeuristicBuildError> {
+        context: &planforge_search::heuristic_features::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_features::HeuristicBuildError> {
         let inner = config.inner.build(context)?;
         Ok(Box::new(CheckAdmissibleHeuristic::new(
             inner,

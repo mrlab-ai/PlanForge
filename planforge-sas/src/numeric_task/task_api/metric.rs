@@ -23,7 +23,7 @@ pub fn propagate_assignment_axiom_values(
     // Assignment axioms are stored in dependency-layer order, so each RHS is
     // complete when it is visited and one forward pass closes the values.
     for axiom in task.assignment_axioms() {
-        let affected_var_id = axiom.get_affected_var_id().index();
+        let affected_var_id = axiom.affected_var_id().index();
         assert!(
             affected_var_id < numeric_values.len(),
             "assignment axiom target {affected_var_id} is out of bounds for {} numeric values",

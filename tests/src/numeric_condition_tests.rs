@@ -130,7 +130,7 @@ fn a_strict_numeric_precondition_stays_strict() {
     let operators: Vec<ComparisonOperator> = task
         .comparison_axioms()
         .iter()
-        .map(|axiom| axiom.get_operator().clone())
+        .map(|axiom| axiom.operator().clone())
         .collect();
     assert_eq!(
         operators.len(),

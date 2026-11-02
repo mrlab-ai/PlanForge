@@ -220,7 +220,7 @@ fn refuted_unconditionally(
         DefaultValueAxiomMode::ApproximateNegative => derived.is_derived.clone(),
         DefaultValueAxiomMode::ApproximateNegativeCycles => {
             let mut cyclic = vec![false; dependencies.nondefault.len()];
-            for component in Scc::new(dependencies.nondefault.clone()).get_result() {
+            for component in Scc::new(dependencies.nondefault.clone()).components() {
                 if component.len() > 1 {
                     for var in component {
                         cyclic[var] = true;

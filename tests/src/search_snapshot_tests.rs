@@ -149,7 +149,7 @@ fn snapshot(instances: &[(String, String)]) -> String {
 #[test]
 #[ignore = "semantic gate; run with --release -- --ignored search_snapshot"]
 fn search_snapshot() {
-    planforge_search::heuristic_factory::HEURISTICS
+    planforge_search::heuristic_features::HEURISTICS
         .ensure_registered(planforge_heuristics::heuristics);
     planforge_search::task_transformations::TRANSFORMATIONS
         .ensure_registered(planforge_heuristics::transformations);

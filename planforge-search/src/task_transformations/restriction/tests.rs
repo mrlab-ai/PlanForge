@@ -74,8 +74,8 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
 
     assert_eq!(transformed.numeric_variables().len(), 3);
     let comparison = &transformed.comparison_axioms()[0];
-    let root = comparison.get_left_var_id();
-    let limit = comparison.get_right_var_id();
+    let root = comparison.left_var_id();
+    let limit = comparison.right_var_id();
     assert!(
         transformed.numeric_variables()[root.index()]
             .name()
@@ -181,12 +181,12 @@ fn a_unary_comparison_becomes_a_threshold_on_its_variable() {
         NumericValue::new(6000.0)
     );
     let comparison = &transformed.comparison_axioms()[0];
-    assert_eq!(comparison.get_left_var_id(), fuel);
+    assert_eq!(comparison.left_var_id(), fuel);
     assert_eq!(
-        transformed.initial_numeric_values()[comparison.get_right_var_id().index()],
+        transformed.initial_numeric_values()[comparison.right_var_id().index()],
         NumericValue::new(0.0)
     );
-    assert_eq!(comparison.get_operator(), &ComparisonOperator::LessThan);
+    assert_eq!(comparison.operator(), &ComparisonOperator::LessThan);
 }
 
 #[test]

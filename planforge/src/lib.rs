@@ -30,7 +30,7 @@ use limits::{
     parse_time_limit,
 };
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     HEURISTICS, HeuristicBuildError, HeuristicEntry, TaskRequirements,
 };
 use planforge_search::search::best_first::{OPEN_LISTS, OpenListEntry};
@@ -116,7 +116,8 @@ pub struct Extensions {
 ///
 /// ```no_run
 /// use planforge_search::search::{SearchError, SearchFeature, SearchLimits, SearchResult, entry};
-/// # use planforge_search::heuristic_factory::{EmptyConfig, HeuristicConfig};
+/// # use planforge_search::config::EmptyConfig;
+/// # use planforge_search::heuristic_features::HeuristicConfig;
 /// # use planforge_sas::numeric_task::Task;
 /// # use std::sync::Arc;
 /// # struct MySearch;
@@ -321,7 +322,7 @@ pub fn run_command(
         PlanforgeCommand::Heuristics => {
             print!(
                 "{}",
-                planforge_search::heuristic_factory::HEURISTICS.reference()
+                planforge_search::heuristic_features::HEURISTICS.reference()
             );
             Ok(())
         }

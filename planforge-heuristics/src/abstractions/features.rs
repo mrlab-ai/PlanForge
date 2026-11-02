@@ -19,7 +19,7 @@ use super::icaps26::Icaps26CartesianConfig;
 use super::sources::{AbstractionPurpose, AbstractionSource, PdbSourceConfig, build_components};
 use planforge_search::config::{ApplyOptions, ConfigError};
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicConfig, HeuristicFeature, TaskRequirements,
 };
 use planforge_search::resource_limits::Deadline;

@@ -17,7 +17,7 @@ use planforge_sas::numeric_task::{
     NumericType, NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorIndex, Task,
     TaskParts, VariableIndex, ZERO_VALUE,
 };
-use planforge_search::heuristic_factory::EmptyConfig;
+use planforge_search::config::EmptyConfig;
 use planforge_search::task_transformations::restriction::validate_restricted_task;
 use planforge_search::task_transformations::{TransformError, TransformationFeature};
 use tracing::info;
@@ -149,12 +149,11 @@ pub(crate) fn build_icaps26_restricted_task(task: &Task) -> Result<Option<Task>>
 
     let mut comparisons = Vec::new();
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-        if !used_comparison_vars.contains(&comparison_axiom.get_affected_var_id()) {
+        if !used_comparison_vars.contains(&comparison_axiom.affected_var_id()) {
             continue;
         }
-        let difference = affine_expression(task, comparison_axiom.get_left_var_id())?.sub(
-            affine_expression(task, comparison_axiom.get_right_var_id())?,
-        );
+        let difference = affine_expression(task, comparison_axiom.left_var_id())?
+            .sub(affine_expression(task, comparison_axiom.right_var_id())?);
         comparisons.push((comparison_axiom_id, difference));
     }
 
@@ -225,9 +224,9 @@ pub(crate) fn build_icaps26_restricted_task(task: &Task) -> Result<Option<Task>>
                     .expect("retained ICAPS regular variable has no transformed id"),
                 -difference.constant / coefficient,
                 if coefficient > ZERO_VALUE {
-                    comparison_axiom.get_operator().clone()
+                    comparison_axiom.operator().clone()
                 } else {
-                    reverse_comparison(comparison_axiom.get_operator())
+                    reverse_comparison(comparison_axiom.operator())
                 },
             )
         } else {
@@ -248,7 +247,7 @@ pub(crate) fn build_icaps26_restricted_task(task: &Task) -> Result<Option<Task>>
             (
                 VariableIndex::from_usize(auxiliary_id),
                 ZERO_VALUE,
-                comparison_axiom.get_operator().clone(),
+                comparison_axiom.operator().clone(),
             )
         };
         ensure!(
@@ -288,7 +287,7 @@ pub(crate) fn build_icaps26_restricted_task(task: &Task) -> Result<Option<Task>>
             num_original_numeric,
         );
         comparison_axioms.push(ComparisonAxiom::new(
-            task.comparison_axioms()[comparison_axiom_id.index()].get_affected_var_id(),
+            task.comparison_axioms()[comparison_axiom_id.index()].affected_var_id(),
             left,
             right,
             operator,
@@ -382,7 +381,7 @@ fn renumber_propositional_axiom_layers(
 
     let comparison_vars = comparison_axioms
         .iter()
-        .map(|axiom| axiom.get_affected_var_id())
+        .map(|axiom| axiom.affected_var_id())
         .collect::<BTreeSet<_>>();
     let remaining_layers = task
         .variables()

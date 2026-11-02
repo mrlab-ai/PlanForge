@@ -7,7 +7,7 @@ use planforge_sas::state_registry::StateRegistry;
 
 use super::MaximumHeuristic;
 use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
-use planforge_search::heuristic_factory::BuildContext;
+use planforge_search::heuristic_features::BuildContext;
 use planforge_search::search::{AStarConfig, parse_search_spec};
 use planforge_search::test_tasks::one_step_task;
 
@@ -78,7 +78,7 @@ fn maximum_combines_estimates_preferences_and_independent_revisions() {
     );
     let task = one_step_task();
     let mut registry = StateRegistry::for_task(task.clone());
-    let state = registry.get_initial_state();
+    let state = registry.register_initial_state();
     let eval = EvaluationState::new(&state, &task, &registry);
     assert_eq!(maximum.evaluate(&eval).unwrap(), Estimate::new(5.0));
     let mut preferred = Vec::new();
@@ -109,7 +109,7 @@ fn maximum_propagates_child_errors() {
     crate::register_heuristics_for_tests();
     let task = one_step_task();
     let mut registry = StateRegistry::for_task(task.clone());
-    let state = registry.get_initial_state();
+    let state = registry.register_initial_state();
     let eval = EvaluationState::new(&state, &task, &registry);
     let error = EvaluationError::ComputationFailed("failure".into());
     let mut maximum = MaximumHeuristic::new("max".into(), vec![child(Err(error.clone()))]);
@@ -121,7 +121,7 @@ fn maximum_of_a_dead_end_is_a_dead_end() {
     crate::register_heuristics_for_tests();
     let task = one_step_task();
     let mut registry = StateRegistry::for_task(task.clone());
-    let state = registry.get_initial_state();
+    let state = registry.register_initial_state();
     let eval = EvaluationState::new(&state, &task, &registry);
     let mut maximum = MaximumHeuristic::new(
         "max".into(),
@@ -136,7 +136,7 @@ fn configured_maximum_builds_arbitrary_and_mixed_children() {
     let task = one_step_task();
     let context = BuildContext::new(task.clone());
     let mut registry = StateRegistry::for_task(task.clone());
-    let state = registry.get_initial_state();
+    let state = registry.register_initial_state();
     let eval = EvaluationState::new(&state, &task, &registry);
     for text in [
         "astar(max(ff()))",
