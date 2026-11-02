@@ -31,6 +31,7 @@ use limits::{
 };
 use planforge_sas::numeric_task::Task;
 use planforge_search::heuristic_factory::{HEURISTICS, HeuristicEntry, TaskRequirements};
+use planforge_search::search::best_first::{OPEN_LISTS, OpenListEntry};
 use planforge_search::search::{
     SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchLimits, SearchResult,
 };
@@ -103,6 +104,7 @@ pub struct Extensions {
     pub search_algorithms: Vec<SearchEntry>,
     pub transformations: Vec<TransformationEntry>,
     pub successor_generators: Vec<SuccessorGeneratorEntry>,
+    pub open_lists: Vec<OpenListEntry>,
 }
 
 /// Run the standard PlanForge CLI, with `extensions` registered next to
@@ -119,6 +121,9 @@ pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
         .map_err(std::io::Error::other)?;
     SUCCESSOR_GENERATORS
         .register(extensions.successor_generators)
+        .map_err(std::io::Error::other)?;
+    OPEN_LISTS
+        .register(extensions.open_lists)
         .map_err(std::io::Error::other)?;
     let mut transformations = planforge_heuristics::transformations();
     transformations.extend(extensions.transformations);

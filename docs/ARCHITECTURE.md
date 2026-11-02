@@ -52,7 +52,10 @@ propositional values without decoding a whole state.
   `NodeOrdering`, and the `--search` configuration language. Best-first
   search expands a node in three phases: it generates the successors and
   drops the duplicates, evaluates the rest in one loop, and queues them in
-  generation order.
+  generation order. A `NodeOrdering` turns g and h into a key (A*:
+  `(f, h)`, greedy: `h`); the built-in open lists (`tiebreaking`,
+  `preferred_first`) are generic over it and statically dispatched, a
+  registered one is a `Box<dyn OpenList>`. Open-list entries are 24 bytes.
 - `evaluation`: the `Heuristic` trait, `EvaluationState`, blind search, and
   shared helpers (random walks, seeds, a per-state value cache).
 - `registry`: the registries of the features the configuration language
@@ -96,6 +99,8 @@ One module per technique, each depending on the core only:
 |---|---|---|---|
 | a heuristic | `Heuristic`, and a `HeuristicFeature` for its configuration | one entry in `planforge_heuristics::heuristics()`, or `planforge::Extensions::heuristics` with `planforge::run_with` from your own binary | `tutorials/rust-goal-count`, `tutorials/rust-plugin-binary` |
 | a search algorithm | a `SearchFeature` whose search composes `SearchSpace` and `SearchProgress` (for best-first search, a `NodeOrdering`) | `planforge::Extensions::search_algorithms` | `tutorials/rust-custom-search` |
+| an open list | `OpenList` over `OpenEntry` (g, h, state, insertion order), and an `OpenListFeature` | `planforge::Extensions::open_lists`; a best-first search names it with `open_list=...` | `tutorials/rust-plugin-binary` (`f_heap`) |
+| a node ordering | `NodeOrdering` (a key from g and h) | a `SearchFeature` that runs `BestFirstSearch<YourOrdering, _>` | `search::best_first::AStar` |
 | a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `planforge::Extensions::successor_generators`; a search names it with `successor_generator=...` | `successor_generator::DecisionTree` |
 | a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::transformations()`, or `planforge::Extensions::transformations` | `task_transformations::restriction::RestrictFeature` |
 

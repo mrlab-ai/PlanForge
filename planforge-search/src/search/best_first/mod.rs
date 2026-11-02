@@ -6,11 +6,15 @@
 mod tests;
 
 mod open_list;
+mod open_list_config;
 mod ordering;
 mod preferred_operators;
 
 pub use open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpenList};
-pub use ordering::{AStar, Greedy, NodeOrdering, UniformCost};
+pub use open_list_config::{
+    OPEN_LISTS, OpenListConfig, OpenListEntry, OpenListFeature, RegisteredOpenList, entry,
+};
+pub use ordering::{AStar, Greedy, NodeOrdering};
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -28,8 +32,8 @@ use crate::evaluation::heuristic::minimum_action_cost;
 use crate::evaluation::{EvaluationState, Heuristic};
 use crate::successor_generator::SuccessorGeneratorConfig;
 
-pub type AStarSearch<'a> = BestFirstSearch<'a, AStar, TieBreakingOpenList>;
-pub type GreedyBestFirstSearch<'a> = BestFirstSearch<'a, Greedy, PreferredFirstOpenList>;
+pub type AStarSearch<'a> = BestFirstSearch<'a, AStar, TieBreakingOpenList<AStar>>;
+pub type GreedyBestFirstSearch<'a> = BestFirstSearch<'a, Greedy, PreferredFirstOpenList<Greedy>>;
 
 /// What a best-first search runs and within which limits.
 pub struct SearchParams<'a> {
@@ -57,8 +61,8 @@ impl<'a> SearchParams<'a> {
     }
 }
 
-/// Best-first search, expanding open nodes in the order `O` gives their
-/// priorities and `Q` queues them.
+/// Best-first search, expanding open nodes in the order `Q` queues them,
+/// which the built-in open lists take from the ordering `O`.
 pub struct BestFirstSearch<'a, O: NodeOrdering, Q: OpenList> {
     space: SearchSpace,
     progress: SearchProgress,
@@ -84,7 +88,6 @@ pub struct BestFirstSearch<'a, O: NodeOrdering, Q: OpenList> {
 #[derive(Debug, Clone, Copy)]
 struct Evaluation {
     h: f64,
-    priority: f64,
     /// The heuristic's revision after the evaluation.
     revision: u64,
 }
@@ -111,9 +114,20 @@ enum Popped {
     Exhausted,
 }
 
-impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
-    /// A search of `task`; its clock starts here.
+impl<'a, O: NodeOrdering, Q: OpenList + Default> BestFirstSearch<'a, O, Q> {
+    /// A search of `task` with an empty `Q`; its clock starts here.
     pub fn new(task: Arc<Task>, params: SearchParams<'a>) -> Self {
+        Self::with_open_list(task, params, Q::default())
+    }
+}
+
+impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
+    /// A search of `task` with the empty `open_list`; its clock starts here.
+    pub fn with_open_list(task: Arc<Task>, params: SearchParams<'a>, open_list: Q) -> Self {
+        assert!(
+            open_list.is_empty(),
+            "a search starts with an empty open list"
+        );
         let SearchParams {
             heuristic,
             lazy,
@@ -131,7 +145,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
             evaluation_records: mpd.then(Vec::new),
             preferred: PreferredOperators::default(),
             preferred_scratch: Vec::new(),
-            open_list: Q::default(),
+            open_list,
             next_insertion_order: 0,
             successors: Vec::new(),
             evaluations: Vec::new(),
@@ -155,7 +169,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         let state_id = state.get_id();
         assert_eq!(self.space.reach(&state, None, 0.0), Reached::New);
         let evaluation = self
-            .evaluate(&state, 0.0)
+            .evaluate(&state)
             .context("initial state evaluation failed")?;
         self.progress.statistics.nodes.evaluated += 1;
         self.progress.report_initial_h(evaluation.h);
@@ -167,18 +181,12 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         if self.progress.report_best_h(evaluation.h, 0.0) && O::MONOTONE {
             self.progress.report_layer(
                 O::LABEL,
-                evaluation.priority,
+                O::priority(0.0, evaluation.h),
                 &self.space,
                 self.open_list.len(),
             );
         }
-        self.push(OpenEntry::new(
-            state_id,
-            0.0,
-            evaluation.h,
-            evaluation.priority,
-            false,
-        ));
+        self.push(state_id, 0.0, evaluation.h, false);
         Ok(())
     }
 
@@ -226,7 +234,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
                 .space
                 .node(entry.state_id())
                 .expect("an open-list entry has a search node");
-            if !node.is_closed && node.g >= entry.g_value {
+            if !node.is_closed && node.g >= entry.g() {
                 break entry;
             }
         };
@@ -238,7 +246,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
             if self.heuristic.reevaluate_on_every_pop()
                 || previous.revision < self.heuristic.revision()
             {
-                let evaluation = self.evaluate(&state, entry.g_value).with_context(|| {
+                let evaluation = self.evaluate(&state).with_context(|| {
                     format!("pop-time heuristic re-evaluation failed for state {state_id}")
                 })?;
                 assert!(
@@ -251,8 +259,8 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
                 if evaluation.is_dead_end() {
                     return Ok(self.prune(state_id));
                 }
-                if evaluation.h > entry.h_value.into_inner() {
-                    return Ok(self.requeue(entry.with_estimate(evaluation.h, evaluation.priority)));
+                if evaluation.h > entry.h() {
+                    return Ok(self.requeue(entry, evaluation.h, false));
                 }
             }
         }
@@ -260,10 +268,9 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         if let Some(lazy) = self.lazy.as_deref_mut()
             && !entry.is_lazy_evaluated()
         {
-            let evaluation = evaluate::<O>(
+            let evaluation = evaluate(
                 lazy,
                 &self.space.evaluation_state(&state),
-                entry.g_value,
                 self.min_action_cost,
                 None,
             )
@@ -272,16 +279,14 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
             if evaluation.is_dead_end() {
                 return Ok(self.prune(state_id));
             }
-            let h = entry.h_value.into_inner().max(evaluation.h);
-            let mut entry = entry.with_estimate(h, O::priority(entry.g_value, h));
-            entry.mark_lazy_evaluated();
-            return Ok(self.requeue(entry));
+            let h = entry.h().max(evaluation.h);
+            return Ok(self.requeue(entry, h, true));
         }
 
         if O::MONOTONE {
             self.progress.report_layer(
                 O::LABEL,
-                entry.priority.into_inner(),
+                O::priority(entry.g(), entry.h()),
                 &self.space,
                 self.open_list.len(),
             );
@@ -316,14 +321,12 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
 
         evaluations.clear();
         for successor in &successors {
-            let evaluation = self
-                .evaluate(&successor.state, parent_g + successor.cost)
-                .with_context(|| {
-                    format!(
-                        "evaluating the successor of state {parent} under operator {} failed",
-                        successor.operator
-                    )
-                })?;
+            let evaluation = self.evaluate(&successor.state).with_context(|| {
+                format!(
+                    "evaluating the successor of state {parent} under operator {} failed",
+                    successor.operator
+                )
+            })?;
             evaluations.push(evaluation);
         }
 
@@ -343,40 +346,34 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
                 continue;
             }
             self.progress.report_best_h(evaluation.h, g);
-            let is_preferred = Q::USES_PREFERRED_OPERATORS
+            let is_preferred = self.open_list.uses_preferred_operators()
                 && self.preferred.contains(preferred, successor.operator);
-            self.push(OpenEntry::new(
-                state_id,
-                g,
-                evaluation.h,
-                evaluation.priority,
-                is_preferred,
-            ));
+            self.push(state_id, g, evaluation.h, is_preferred);
         }
         self.successors = successors;
         self.evaluations = evaluations;
         Ok(())
     }
 
-    /// Evaluate `state`, reached on a path of cost `g`, with the primary
+    /// Evaluate `state` with the primary
     /// heuristic, recording its preferred operators when the open list uses
     /// them and the evaluation when `mpd` tracks it.
     #[inline]
-    fn evaluate(&mut self, state: &ConcreteState, g: f64) -> Result<Evaluation> {
+    fn evaluate(&mut self, state: &ConcreteState) -> Result<Evaluation> {
         let state_id = state.get_id();
-        let preferred = Q::USES_PREFERRED_OPERATORS.then(|| {
+        let uses_preferred_operators = self.open_list.uses_preferred_operators();
+        let preferred = uses_preferred_operators.then(|| {
             self.preferred_scratch.clear();
             &mut self.preferred_scratch
         });
-        let evaluation = evaluate::<O>(
+        let evaluation = evaluate(
             &mut *self.heuristic,
             &self.space.evaluation_state(state),
-            g,
             self.min_action_cost,
             preferred,
         )?;
         self.progress.statistics.evaluations += 1;
-        if Q::USES_PREFERRED_OPERATORS {
+        if uses_preferred_operators {
             self.preferred.store(state_id, &self.preferred_scratch);
         }
         if let Some(records) = &mut self.evaluation_records {
@@ -391,8 +388,10 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         Ok(evaluation)
     }
 
-    fn requeue(&mut self, entry: OpenEntry) -> Popped {
-        self.push(entry);
+    /// Queues `entry` again with the estimate `h`.
+    fn requeue(&mut self, entry: OpenEntry, h: f64, lazy_evaluated: bool) -> Popped {
+        let entry = entry.requeued(h, self.next_insertion_order(), lazy_evaluated);
+        self.open_list.push(entry);
         Popped::Skipped
     }
 
@@ -402,13 +401,17 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         Popped::Skipped
     }
 
-    fn push(&mut self, mut entry: OpenEntry) {
-        entry.insertion_order = self.next_insertion_order;
-        self.next_insertion_order = self
-            .next_insertion_order
+    fn push(&mut self, state_id: StateID, g: f64, h: f64, is_preferred: bool) {
+        let entry = OpenEntry::new(state_id, g, h, is_preferred, self.next_insertion_order());
+        self.open_list.push(entry);
+    }
+
+    fn next_insertion_order(&mut self) -> u32 {
+        let order = self.next_insertion_order;
+        self.next_insertion_order = order
             .checked_add(1)
             .expect("open-list insertion count exceeds u32");
-        self.open_list.push(entry);
+        order
     }
 }
 
@@ -418,10 +421,9 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
 /// heuristic that is 0 on non-goal states, as an abstraction is on the states
 /// of an abstract goal.
 #[inline]
-fn evaluate<O: NodeOrdering>(
+fn evaluate(
     heuristic: &mut dyn Heuristic,
     eval_state: &EvaluationState<'_, '_>,
-    g: f64,
     min_action_cost: f64,
     preferred: Option<&mut Vec<OperatorIndex>>,
 ) -> Result<Evaluation> {
@@ -442,7 +444,6 @@ fn evaluate<O: NodeOrdering>(
     };
     Ok(Evaluation {
         h,
-        priority: O::priority(g, h),
         revision: heuristic.revision(),
     })
 }
