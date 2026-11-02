@@ -83,29 +83,6 @@ impl Pattern {
             }
         }
     }
-
-    pub fn is_subset_of(&self, other: &Self) -> bool {
-        is_sorted_subset(&self.regular, &other.regular)
-            && is_sorted_subset(&self.numeric, &other.numeric)
-    }
-}
-
-fn is_sorted_subset(lhs: &[VariableIndex], rhs: &[VariableIndex]) -> bool {
-    let mut lhs_index = 0;
-    let mut rhs_index = 0;
-
-    while lhs_index < lhs.len() && rhs_index < rhs.len() {
-        match lhs[lhs_index].cmp(&rhs[rhs_index]) {
-            std::cmp::Ordering::Less => return false,
-            std::cmp::Ordering::Equal => {
-                lhs_index += 1;
-                rhs_index += 1;
-            }
-            std::cmp::Ordering::Greater => rhs_index += 1,
-        }
-    }
-
-    lhs_index == lhs.len()
 }
 
 #[derive(Debug, Clone, PartialEq)]

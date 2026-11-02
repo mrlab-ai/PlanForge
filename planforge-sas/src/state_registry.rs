@@ -22,7 +22,7 @@ mod tests;
 use crate::axioms::AxiomEvaluator;
 use crate::explicit_state::ExplicitState;
 use crate::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, NumericValue, Operator, Task, VariableIndex,
+    ExplicitFact, ExplicitValueIndex, NumericValue, Operator, Task, VariableIndex,
 };
 use crate::utils::errors::{AssignmentAxiomError, StateInsertError, StateNotFoundError};
 use crate::utils::segmented_vector::SegmentedArrayVector;
@@ -196,12 +196,6 @@ impl ExplicitFact {
     }
 }
 
-impl Effect {
-    pub fn conditions_met(&self, state: ConcreteStateView<'_>) -> bool {
-        state.holds_all(self.conditions())
-    }
-}
-
 impl<'a> ConcreteStateView<'a> {
     pub fn packer(self) -> &'a StatePacker {
         self.packer
@@ -231,13 +225,6 @@ impl<'a> ConcreteStateView<'a> {
                 ExplicitValueIndex::from_usize(self.packer.get(self.prop, slot) as usize)
             }),
         );
-    }
-
-    pub fn decoded_numeric(self) -> Option<&'a [NumericValue]> {
-        match self.backing {
-            ConcreteStateViewBacking::Decoded(values) => Some(values),
-            ConcreteStateViewBacking::Registered { .. } => None,
-        }
     }
 
     /// Writes the numeric values into `output`, the derived ones evaluated by

@@ -150,11 +150,6 @@ impl Interval {
     }
 
     #[inline]
-    pub fn any_bound_is_zero(&self) -> bool {
-        self.lower == ZERO_VALUE || self.upper == ZERO_VALUE
-    }
-
-    #[inline]
     pub fn contains(&self, value: NumericValue) -> bool {
         if self.is_empty() {
             return false;
