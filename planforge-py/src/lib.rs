@@ -21,7 +21,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
-use planforge_search::heuristic_factory::TaskRequirements;
+use planforge_search::heuristic_features::TaskRequirements;
 use planforge_search::search::best_first::{AStarSearch, GreedyBestFirstSearch, SearchParams};
 use planforge_search::search::{
     SearchConfig, SearchError, SearchLimits, SearchOutcome, SearchResult, parse_search_spec,
@@ -950,13 +950,13 @@ impl State {
     fn snapshot(cstate: &ConcreteState, reg: &StateRegistry) -> State {
         State {
             values: cstate
-                .get_state(reg)
+                .propositional_values(reg)
                 .iter()
                 .map(|v| v.index() as u32)
                 .collect(),
-            numeric_values: cstate.get_numeric_state(reg),
+            numeric_values: cstate.regular_numeric_values(reg),
             registry_id: reg.id(),
-            state_id: cstate.get_id(),
+            state_id: cstate.id(),
         }
     }
 }
@@ -1384,7 +1384,7 @@ impl Task {
 
     fn initial_state(&self) -> State {
         let mut reg = self.registry.borrow_mut();
-        let s = reg.get_initial_state();
+        let s = reg.register_initial_state();
         State::snapshot(&s, &reg)
     }
 
@@ -1471,20 +1471,17 @@ impl Task {
         let operators = self.task.operators();
         let task_id = reg.id();
         let mut out = Vec::with_capacity(ids.len());
-        let (mut b1, mut b2) = (Vec::new(), Vec::new());
         for op_id in ids {
             let operator_id = op_id;
             let op = operators.get(operator_id).unwrap_or_else(|| {
                 panic!("successor generator returned invalid operator id {operator_id}")
             });
-            let (succ, cost) = reg
-                .get_successor_state_with_buffers_and_cost(&cstate, op, &mut b1, &mut b2)
-                .map_err(|e| {
-                    PlanforgeError::new_err(format!(
-                        "successor generation failed for {}: {e:?}",
-                        op.name()
-                    ))
-                })?;
+            let (succ, cost) = reg.successor(&cstate, op).map_err(|e| {
+                PlanforgeError::new_err(format!(
+                    "successor generation failed for {}: {e:?}",
+                    op.name()
+                ))
+            })?;
             let py_op = operator_to_py(
                 py,
                 op,
@@ -1595,7 +1592,7 @@ impl Task {
         registry: &StateRegistry,
     ) -> Vec<usize> {
         let mut values = Vec::new();
-        state.fill_state(registry, &mut values);
+        state.fill_propositional_values(registry, &mut values);
         let mut ids = Vec::new();
         self.succ.applicable_operators(&values, &mut ids);
         ids.iter().map(OperatorIndex::index).collect()
@@ -1635,14 +1632,8 @@ impl Task {
             )));
         }
         let rust_operator = &self.task.operators()[operator_id];
-        let (mut numeric_buffer, mut cost_buffer) = (Vec::new(), Vec::new());
         let (successor, cost) = registry
-            .get_successor_state_with_buffers_and_cost(
-                &concrete,
-                rust_operator,
-                &mut numeric_buffer,
-                &mut cost_buffer,
-            )
+            .successor(&concrete, rust_operator)
             .map_err(|error| {
                 PlanforgeError::new_err(format!(
                     "successor generation failed for {}: {error:?}",
@@ -1780,7 +1771,7 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
 
 #[pymodule]
 fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    planforge_search::heuristic_factory::HEURISTICS
+    planforge_search::heuristic_features::HEURISTICS
         .ensure_registered(planforge_heuristics::heuristics);
     planforge_search::task_transformations::TRANSFORMATIONS
         .ensure_registered(planforge_heuristics::transformations);

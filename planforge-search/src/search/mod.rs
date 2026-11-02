@@ -37,7 +37,7 @@ use planforge_sas::numeric_task::Operator;
 use planforge_sas::utils::errors::StateInsertError;
 
 use crate::evaluation::EvaluationError;
-use crate::heuristic_factory::HeuristicBuildError;
+use crate::heuristic_features::HeuristicBuildError;
 
 /// A plan: the operators to apply in order.
 pub type Plan = Vec<Operator>;

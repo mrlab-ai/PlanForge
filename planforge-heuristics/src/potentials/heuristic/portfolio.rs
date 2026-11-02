@@ -257,7 +257,7 @@ fn build_diverse_portfolio(
         {
             break;
         }
-        if !seen.insert(state.get_id()) {
+        if !seen.insert(state.id()) {
             continue;
         }
         if let OptimizationOutcome::Optimal { function, .. } =

@@ -102,7 +102,7 @@ fn derived_parts(
 fn affine_sum_is_an_exact_additive_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Plus);
     let coordinates = Coordinates::new(&task);
-    let view = coordinates.views()[task.comparison_axioms()[0].get_left_var_id().index()]
+    let view = coordinates.views()[task.comparison_axioms()[0].left_var_id().index()]
         .as_ref()
         .expect("x+y should be additive");
 
@@ -121,7 +121,7 @@ fn non_additive_effect_rejects_affine_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Assign);
 
     assert!(
-        Coordinates::new(&task).views()[task.comparison_axioms()[0].get_left_var_id().index()]
+        Coordinates::new(&task).views()[task.comparison_axioms()[0].left_var_id().index()]
             .is_none()
     );
 }
@@ -172,7 +172,7 @@ fn a_coordinate_preimage_lies_on_the_canonical_lattice() {
         .preimage(
             target,
             OperatorIndex::new(0),
-            task.comparison_axioms()[0].get_left_var_id(),
+            task.comparison_axioms()[0].left_var_id(),
         )
         .expect("an additive coordinate has a preimage");
 
@@ -191,7 +191,7 @@ fn a_one_variable_expression_is_refined_along_its_variable() {
     let coordinates = Coordinates::new(&task);
 
     assert_eq!(
-        task.comparison_axioms()[0].get_left_var_id(),
+        task.comparison_axioms()[0].left_var_id(),
         VariableIndex::new(0)
     );
     assert!(coordinates.is_coordinate(VariableIndex::new(0)));
@@ -349,7 +349,7 @@ fn a_resource_invariant_certifies_a_decimal_affine_coordinate() {
         OperatorCost::new(1),
     )];
     let task = Task::new(parts);
-    let coordinate = task.comparison_axioms()[0].get_left_var_id().index();
+    let coordinate = task.comparison_axioms()[0].left_var_id().index();
     assert_eq!(
         Coordinates::new(&task).value_lattices()[coordinate]
             .split_bounds(NumericValue::new(100.0), true),
@@ -386,7 +386,7 @@ fn an_unbounded_decimal_linear_part_does_not_claim_constant_floating_deltas() {
         OperatorCost::new(1),
     )];
     let task = Task::new(parts);
-    let coordinate = task.comparison_axioms()[0].get_left_var_id();
+    let coordinate = task.comparison_axioms()[0].left_var_id();
     let coordinates = Coordinates::new(&task);
     assert_eq!(
         coordinates.value_lattices()[coordinate.index()],
@@ -444,7 +444,7 @@ fn unbounded_sailing_views_cannot_assume_integer_correlations() {
         ));
     }
     let task = Task::new(parts);
-    let coordinate = task.comparison_axioms()[0].get_left_var_id().index();
+    let coordinate = task.comparison_axioms()[0].left_var_id().index();
     assert_eq!(
         Coordinates::new(&task).value_lattices()[coordinate].step(),
         NumericValue::new(0.5)

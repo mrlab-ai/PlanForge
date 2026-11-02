@@ -263,7 +263,7 @@ fn strongly_connected_components(
         .collect();
 
     planforge_sas::utils::scc::Scc::new(graph)
-        .get_result()
+        .components()
         .into_iter()
         .map(|component| {
             component

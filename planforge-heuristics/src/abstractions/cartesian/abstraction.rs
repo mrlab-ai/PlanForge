@@ -1,6 +1,6 @@
 use crate::abstractions::build_error;
 use planforge_sas::explicit_state::StateValues;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};

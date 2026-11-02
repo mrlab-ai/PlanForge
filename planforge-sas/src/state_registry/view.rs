@@ -7,7 +7,20 @@ use crate::numeric_task::{ExplicitFact, ExplicitValueIndex, NumericValue};
 use crate::utils::errors::AssignmentAxiomError;
 use crate::utils::state_packer::StatePacker;
 
-/// Represent a concrete state in the planning problem.
+/// A state a [`StateRegistry`] registered: its handle, the [`StateID`]
+/// indexing the registry's pool, without the values. "Concrete" as opposed to
+/// the abstract states of an abstraction.
+///
+/// The three ways to hold a state:
+///
+/// - `ConcreteState`: the handle a search keeps per reached state; read its
+///   values through [`StateRegistry::view`], which yields a
+///   [`ConcreteStateView`].
+/// - [`ExplicitState`]: owned, decoded values outside any registry, for code
+///   that follows a few states of its own, such as CEGAR replaying a plan.
+/// - [`StateValues`](crate::explicit_state::StateValues): borrowed values for
+///   lookups, decoded numeric values with propositional values either decoded
+///   or read from the packed bins on demand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcreteState {
     pub(super) pool_offset: usize,
@@ -159,24 +172,28 @@ impl ConcreteState {
 
     /// Get the state ID (equivalent to C++ `GlobalState::get_id()`).
     /// This is the index into the state registry's data pool.
-    pub fn get_id(&self) -> usize {
+    pub fn id(&self) -> usize {
         self.pool_offset
     }
 
     /// Get the propositional state values as a vector.
-    pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<ExplicitValueIndex> {
+    pub fn propositional_values(&self, state_registry: &StateRegistry) -> Vec<ExplicitValueIndex> {
         let mut values = Vec::new();
         state_registry.view(self).fill_propositional(&mut values);
         values
     }
 
     /// Fill `output` with the propositional state values without allocating a new vector.
-    pub fn fill_state(&self, state_registry: &StateRegistry, output: &mut Vec<ExplicitValueIndex>) {
+    pub fn fill_propositional_values(
+        &self,
+        state_registry: &StateRegistry,
+        output: &mut Vec<ExplicitValueIndex>,
+    ) {
         state_registry.view(self).fill_propositional(output);
     }
 
     /// Get the numeric state values for regular variables.
-    pub fn get_numeric_state(&self, state_registry: &StateRegistry) -> Vec<NumericValue> {
+    pub fn regular_numeric_values(&self, state_registry: &StateRegistry) -> Vec<NumericValue> {
         let buffer = self.buffer(state_registry);
         let packer = &state_registry.layout.global_state_packer;
         let interned = &state_registry.compact_numeric_values;
@@ -190,6 +207,6 @@ impl ConcreteState {
 
     /// Get a reference to the underlying buffer for this state.
     pub fn buffer<'a>(&self, state_registry: &'a StateRegistry) -> &'a [u64] {
-        state_registry.get_buffer(self.pool_offset)
+        state_registry.buffer(self.pool_offset)
     }
 }

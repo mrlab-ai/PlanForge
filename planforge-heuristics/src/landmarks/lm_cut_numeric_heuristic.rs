@@ -2,7 +2,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::fmt;
 use std::sync::Arc;
 
@@ -119,7 +119,7 @@ impl Heuristic for LandmarkCutNumericHeuristic {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<Estimate, EvaluationError> {
-        let state_id = eval_state.state().get_id();
+        let state_id = eval_state.state().id();
         if let Some(value) = self.state_value_cache.get(state_id) {
             return Ok(Estimate::new(value));
         }
@@ -155,7 +155,7 @@ impl Heuristic for LandmarkCutNumericHeuristic {
 
 /// Registry feature for numeric LM-cut.
 pub struct LmCutNumericFeature;
-impl planforge_search::heuristic_factory::HeuristicFeature for LmCutNumericFeature {
+impl planforge_search::heuristic_features::HeuristicFeature for LmCutNumericFeature {
     const NAME: &'static str = "lmcutnumeric";
     type Config = LmCutNumericConfig;
     fn validate(config: &Self::Config) -> Result<(), planforge_search::config::ConfigError> {
@@ -163,8 +163,8 @@ impl planforge_search::heuristic_factory::HeuristicFeature for LmCutNumericFeatu
     }
     fn build(
         config: &Self::Config,
-        context: &planforge_search::heuristic_factory::BuildContext,
-    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_factory::HeuristicBuildError> {
+        context: &planforge_search::heuristic_features::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_features::HeuristicBuildError> {
         let heuristic = LandmarkCutNumericHeuristic::from_config(context.task.clone(), *config)
             .map_err(|error| format!("failed to build lmcutnumeric heuristic: {error}"))?;
         Ok(Box::new(heuristic))

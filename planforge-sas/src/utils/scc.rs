@@ -32,7 +32,7 @@ impl Scc {
     /// The strongly connected components, each in the order its nodes were
     /// first reached, and the components themselves in reverse topological
     /// order: a component comes before the components it can reach.
-    pub fn get_result(self) -> Vec<Vec<usize>> {
+    pub fn components(self) -> Vec<Vec<usize>> {
         let node_count = self.graph.len();
         // The order the nodes were first reached in. `None` is "not reached".
         let mut dfs_numbers: Vec<Option<u32>> = vec![None; node_count];

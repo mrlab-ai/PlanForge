@@ -3,7 +3,7 @@ mod tests;
 
 use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::collections::{BTreeMap, BTreeSet};
 
 use planforge_sas::numeric_task::{
@@ -47,7 +47,7 @@ impl CausalGraph {
             .iter()
             .map(|axiom| {
                 let regular = |id: VariableIndex| task.numeric_type(id) == NumericType::Regular;
-                let (left, right) = (axiom.get_left_var_id(), axiom.get_right_var_id());
+                let (left, right) = (axiom.left_var_id(), axiom.right_var_id());
                 if regular(right) {
                     Some(right)
                 } else if regular(left) {

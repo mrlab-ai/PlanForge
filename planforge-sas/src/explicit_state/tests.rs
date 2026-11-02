@@ -23,15 +23,13 @@ fn initial_state_and_successor_agree_with_the_registry() {
     let task: Arc<Task> = Arc::new(get_root_task());
     let space = ExplicitStateSpace::new(&task);
     let mut registry = StateRegistry::for_task(task.clone());
-    let registered_initial = registry.get_initial_state();
+    let registered_initial = registry.register_initial_state();
     let initial = space.initial_state().unwrap();
     assert_eq!(initial, registry_values(&registry, &registered_initial));
 
     let operator = &task.operators()[0];
     assert!(initial.is_applicable(operator));
-    let registered_successor = registry
-        .get_successor_state(&registered_initial, operator)
-        .unwrap();
+    let registered_successor = registry.successor(&registered_initial, operator).unwrap().0;
     assert_eq!(
         space.successor(&initial, operator).unwrap(),
         registry_values(&registry, &registered_successor)

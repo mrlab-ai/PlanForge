@@ -472,7 +472,7 @@ fn config_errors_keep_the_nested_option_path() {
     );
     assert!(error.message().contains("non-negative integer"));
     assert!(matches!(
-        planforge_search::heuristic_factory::HeuristicBuildError::from(error),
-        planforge_search::heuristic_factory::HeuristicBuildError::Config(_)
+        planforge_search::heuristic_features::HeuristicBuildError::from(error),
+        planforge_search::heuristic_features::HeuristicBuildError::Config(_)
     ));
 }

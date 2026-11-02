@@ -13,7 +13,7 @@ use planforge_sas::numeric_task::Task;
 use super::algorithms::{AStarFeature, GreedyBestFirstFeature};
 use super::{SearchError, SearchResult};
 use crate::config::{ApplyOptions, ConfigCall, ConfigError, canonical_call, configure, parse_call};
-use crate::heuristic_factory::{HeuristicBuildError, HeuristicConfig, TaskRequirements};
+use crate::heuristic_features::{HeuristicBuildError, HeuristicConfig, TaskRequirements};
 use crate::registry::{Entry, Registry, options_of};
 
 /// The limits a search runs within.
@@ -159,7 +159,7 @@ pub fn search_algorithm_help() -> String {
     format!(
         "Search specification. Available algorithms: {}\n\n{}",
         algorithms.join(", "),
-        crate::heuristic_factory::heuristic_help()
+        crate::heuristic_features::heuristic_help()
     )
 }
 

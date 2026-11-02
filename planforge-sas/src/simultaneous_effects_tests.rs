@@ -67,12 +67,13 @@ fn task_with_effects(effects: Vec<AssignmentEffect>, metric_var: Option<Variable
 fn successor_values(effects: Vec<AssignmentEffect>) -> Vec<NumericValue> {
     let task: Arc<Task> = Arc::new(task_with_effects(effects, None));
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let successor = registry
-        .get_successor_state(&initial, &task.operators()[0])
-        .expect("operator applies to the initial state");
+        .successor(&initial, &task.operators()[0])
+        .expect("operator applies to the initial state")
+        .0;
     let values = registry
-        .get_numeric_vars(&successor)
+        .numeric_values(&successor)
         .expect("successor has numeric values");
     let space = ExplicitStateSpace::new(&task);
     let explicit = space
@@ -217,17 +218,18 @@ fn effect_conditions_are_read_from_the_parent_state() {
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let successor = registry
-        .get_successor_state(&initial, &task.operators()[0])
-        .expect("operator applies to the initial state");
+        .successor(&initial, &task.operators()[0])
+        .expect("operator applies to the initial state")
+        .0;
 
     let values = registry
-        .get_numeric_vars(&successor)
+        .numeric_values(&successor)
         .expect("successor has numeric values");
 
     assert_eq!(
-        successor.get_state(&registry),
+        successor.propositional_values(&registry),
         [ExplicitValueIndex::new(1)],
         "p must become true"
     );

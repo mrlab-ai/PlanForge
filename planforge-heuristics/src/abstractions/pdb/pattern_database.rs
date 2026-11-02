@@ -3,7 +3,7 @@ mod tests;
 
 use planforge_sas::explicit_state::StateValues;
 use planforge_search::graph::{BackwardGraph, backward_goal_distances, no_limit};
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -20,7 +20,7 @@ use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use crate::landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use planforge_search::config::option_enum;
-use planforge_search::successor_generator::{RegistryExpander, StandardGroundedTree};
+use planforge_search::successor_generator::{StandardGroundedTree, StateExpander};
 
 use planforge_search::task_transformations::projection::ProjectedTask;
 
@@ -597,11 +597,11 @@ fn explore(
     heuristic: PdbInternalHeuristic,
     inner: &mut InnerHeuristics,
 ) -> Result<Exploration, String> {
-    let mut expander = RegistryExpander::new(StandardGroundedTree::new(task));
+    let mut expander = StateExpander::new(StandardGroundedTree::new(task));
     let operators = task.operators();
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     assert_eq!(
-        initial_state.get_id(),
+        initial_state.id(),
         0,
         "a fresh registry registers the initial state first"
     );
@@ -636,7 +636,7 @@ fn explore(
             let (successor, _) = expansion
                 .successor(registry, &operators[operator_id.index()])
                 .map_err(|error| error.message)?;
-            let successor_id = successor.get_id();
+            let successor_id = successor.id();
             if successor_id == state_id {
                 continue;
             }

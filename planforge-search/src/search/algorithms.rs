@@ -11,7 +11,7 @@ use super::best_first::{
 };
 use super::config::{SearchFeature, SearchLimits};
 use super::{SearchError, SearchResult};
-use crate::heuristic_factory::{BuildContext, HeuristicConfig};
+use crate::heuristic_features::{BuildContext, HeuristicConfig};
 use crate::successor_generator::SuccessorGeneratorConfig;
 
 /// `astar(heuristic, lazy=none, mpd=false, open_list=tiebreaking(),

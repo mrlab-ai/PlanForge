@@ -442,7 +442,7 @@ fn strongly_connected_components(
     }
 
     Scc::new(unweighted_graph)
-        .get_result()
+        .components()
         .into_iter()
         .map(|component| {
             component

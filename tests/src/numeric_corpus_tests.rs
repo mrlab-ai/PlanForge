@@ -253,7 +253,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &Task) {
 
     let mut written_by: BTreeMap<usize, usize> = BTreeMap::new();
     for (index, axiom) in task.assignment_axioms().iter().enumerate() {
-        let target = axiom.get_affected_var_id();
+        let target = axiom.affected_var_id();
         assert!(
             target.index() < numeric_count,
             "{name}: assignment axiom {index} targets numeric variable {target} of {numeric_count}"
@@ -295,7 +295,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &Task) {
         .comparison_axioms()
         .iter()
         .map(|axiom| {
-            let head = axiom.get_affected_var_id();
+            let head = axiom.affected_var_id();
             // A compiled numeric condition is two-valued and defaults to
             // `False`, so a condition the evaluator has not reached yet can
             // never look satisfied. Interval-based abstractions rely on exactly
@@ -310,7 +310,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &Task) {
                 ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
                 "{name}: comparison-axiom head {head} must default to `False`"
             );
-            for operand in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
+            for operand in [axiom.left_var_id(), axiom.right_var_id()] {
                 assert!(
                     operand.index() < numeric_count,
                     "{name}: comparison axiom reads numeric variable {operand} of {numeric_count}"
@@ -563,7 +563,7 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     // a finite, admissible LM-cut value. A zero-cost plateau used to make some
     // of them look like dead ends.
     let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
-    let mut state = registry.get_initial_state();
+    let mut state = registry.register_initial_state();
     let mut landmarks =
         LandmarkCutLandmarks::new(Arc::new(task.clone()), LmCutNumericConfig::default());
     let mut values = ExplicitState::default();
@@ -601,10 +601,11 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
 
         if let Some(operator) = operator {
             state = registry
-                .get_successor_state(&state, operator)
+                .successor(&state, operator)
                 .unwrap_or_else(|e| {
                     panic!("failed to apply blind-plan operator at step {step}: {e:?}")
-                });
+                })
+                .0;
         }
     }
 
@@ -660,7 +661,7 @@ fn lmcutnumeric_counts_numeric_goal_conditions() {
         let dir = benchmarks_root().join(domain);
         let task = translate_in_memory(&dir.join("domain.pddl"), &problem_file(&dir));
         let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
-        let state = registry.get_initial_state();
+        let state = registry.register_initial_state();
         let mut values = ExplicitState::default();
         registry
             .view(&state)

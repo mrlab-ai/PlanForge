@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::Task;
+use planforge_search::config::EmptyConfig;
 use planforge_search::config::parse_call;
 use planforge_search::evaluation::BlindHeuristic;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{
-    BuildContext, EmptyConfig, HEURISTICS, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
-    entry,
+use planforge_search::heuristic_features::{
+    BuildContext, HEURISTICS, HeuristicBuildError, HeuristicConfig, HeuristicFeature, entry,
 };
 
 #[test]

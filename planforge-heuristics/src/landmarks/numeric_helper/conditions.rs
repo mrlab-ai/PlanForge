@@ -6,7 +6,7 @@ use super::*;
 impl NumericTaskHelper {
     pub(super) fn build_numeric_conditions(&mut self, task: &Task) {
         for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-            let affected_var_id = comparison_axiom.get_affected_var_id();
+            let affected_var_id = comparison_axiom.affected_var_id();
             self.comparison_axiom_by_var
                 .insert(affected_var_id, comparison_axiom_id);
             if let Some(marker) = self.fact_to_axiom_marker.get_mut(affected_var_id.index()) {
@@ -194,8 +194,8 @@ impl NumericTaskHelper {
         fact_value: ExplicitValueIndex,
     ) -> Option<Vec<LinearNumericCondition>> {
         let operator = comparison_operator_for_fact_value(comparison_axiom, fact_value)?;
-        let lhs = comparison_axiom.get_left_var_id();
-        let rhs = comparison_axiom.get_right_var_id();
+        let lhs = comparison_axiom.left_var_id();
+        let rhs = comparison_axiom.right_var_id();
         // A comparison axiom's affected variable is by definition the carrier of
         // a numeric condition.
         let fact = ExplicitFact::condition(affected_var_id.index(), fact_value.index());

@@ -2,7 +2,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
@@ -179,7 +179,7 @@ impl<'task> HillClimbing<'task> {
     ) -> Result<Self, HeuristicBuildError> {
         let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
         let mut initial_state = ExplicitState::default();
-        let initial = registry.get_initial_state();
+        let initial = registry.register_initial_state();
         registry
             .view(&initial)
             .fill_explicit(&mut initial_state)

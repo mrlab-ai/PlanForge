@@ -655,9 +655,9 @@ fn comparison_operator_for_fact_value(
     );
 
     let operator = if fact_value.index() == 0 {
-        comparison_axiom.get_operator().clone()
+        comparison_axiom.operator().clone()
     } else {
-        invert_comparison_operator(comparison_axiom.get_operator())
+        invert_comparison_operator(comparison_axiom.operator())
     };
 
     match operator {

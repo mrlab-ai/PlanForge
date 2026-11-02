@@ -4,7 +4,7 @@ use planforge_search::config::*;
 use planforge_search::search::*;
 
 fn register() {
-    planforge_search::heuristic_factory::HEURISTICS
+    planforge_search::heuristic_features::HEURISTICS
         .ensure_registered(planforge_heuristics::heuristics);
 }
 

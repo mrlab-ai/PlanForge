@@ -34,7 +34,7 @@ fn run(path: &str) {
     let task: Arc<Task> = Arc::new(Task::from_file(path));
     let mut heuristic = GoalCountHeuristic;
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     let initial_h = heuristic
         .evaluate(&EvaluationState::new(&initial_state, &task, &registry))
         .expect("goal-count should evaluate the initial state");

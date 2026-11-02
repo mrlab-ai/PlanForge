@@ -209,9 +209,9 @@ impl StateRegistry {
     pub fn view<'s>(&'s self, state: &'s ConcreteState) -> ConcreteStateView<'s> {
         ConcreteStateView {
             packer: &self.layout.global_state_packer,
-            prop: self.get_buffer(state.get_id()),
+            prop: self.buffer(state.id()),
             backing: ConcreteStateViewBacking::Registered {
-                state_id: state.get_id(),
+                state_id: state.id(),
                 numeric_template: &self.layout.numeric_template,
                 regular_numeric_slots: &self.layout.regular_numeric_slots,
                 cost_numeric_indices: &self.layout.cost_numeric_indices,
@@ -368,7 +368,7 @@ impl StateRegistry {
     ///
     /// # Panics
     /// Panics if the index is out of bounds.
-    pub fn get_buffer(&self, index: usize) -> &[u64] {
+    pub fn buffer(&self, index: usize) -> &[u64] {
         self.state_data_pool
             .get(index)
             .expect("State index out of bounds")
@@ -389,7 +389,7 @@ impl StateRegistry {
             .find(key, |&(existing_hash, compact_existing_id)| {
                 existing_hash == key && {
                     let existing_id = compact_existing_id as StateID;
-                    self.get_buffer(existing_id)[..num_bins] == bins[..num_bins]
+                    self.buffer(existing_id)[..num_bins] == bins[..num_bins]
                 }
             })
             .map(|&(_, id)| id as StateID)
@@ -424,7 +424,7 @@ impl StateRegistry {
             .find(key, |&(candidate_hash, compact_candidate)| {
                 candidate_hash == key
                     && bins_eq_masked(
-                        &self.get_buffer(compact_candidate as StateID)[..num_bins],
+                        &self.buffer(compact_candidate as StateID)[..num_bins],
                         bins,
                         mask,
                     )
@@ -498,7 +498,7 @@ impl StateRegistry {
             .find(key, |&(candidate_hash, compact_candidate)| {
                 candidate_hash == key
                     && bins_eq_masked(
-                        &self.get_buffer(compact_candidate as StateID)[..num_bins],
+                        &self.buffer(compact_candidate as StateID)[..num_bins],
                         buffer,
                         mask,
                     )
@@ -513,7 +513,7 @@ impl StateRegistry {
     /// 2. Processes numeric variables by type (regular, constant, cost, derived).
     /// 3. Evaluates axioms to compute derived values.
     /// 4. Registers the resulting state.
-    pub fn get_initial_state(&mut self) -> ConcreteState {
+    pub fn register_initial_state(&mut self) -> ConcreteState {
         let mut init_buffer = vec![0u64; self.layout.global_state_packer.num_bins()];
 
         // Get copies of initial state values to avoid borrowing conflicts.
@@ -619,7 +619,7 @@ impl StateRegistry {
     /// and registers it in the state pool.
     ///
     /// `numeric_values` is indexed by numeric-variable id, so it accepts a full
-    /// vector as returned by [`Self::get_numeric_vars`]. Constant entries are
+    /// vector as returned by [`Self::numeric_values`]. Constant entries are
     /// checked against the values this registry already holds and derived
     /// entries are recomputed by the axiom pass; see
     /// `Self::process_register_numeric_variables`.
@@ -697,33 +697,18 @@ impl StateRegistry {
         }
     }
 
-    /// Generates a successor state by applying an operator to the current state
-    pub fn get_successor_state(
+    /// The successor of `state` under `operator`, registered, and the
+    /// operator's metric cost in `state`. Expanding all successors of one
+    /// state, [`Self::build_expansion_context`] and
+    /// [`Self::apply_operator_in_context`] decode the state once.
+    pub fn successor(
         &mut self,
-        current_state: &ConcreteState,
+        state: &ConcreteState,
         operator: &Operator,
-    ) -> Result<ConcreteState, StateInsertError> {
-        let mut successor_values = Vec::new();
-        let mut cost_values = Vec::new();
-        self.get_successor_state_with_buffers_and_cost(
-            current_state,
-            operator,
-            &mut successor_values,
-            &mut cost_values,
-        )
-        .map(|(successor, _)| successor)
-    }
-
-    pub fn get_successor_state_with_buffers_and_cost(
-        &mut self,
-        current_state: &ConcreteState,
-        operator: &Operator,
-        successor_values: &mut Vec<NumericValue>,
-        cost_values: &mut Vec<NumericValue>,
     ) -> Result<(ConcreteState, f64), StateInsertError> {
-        let mut ctx = ExpansionContext::default();
-        self.build_expansion_context(current_state, &mut ctx)?;
-        self.apply_operator_in_context(current_state, operator, &ctx, successor_values, cost_values)
+        let mut context = ExpansionContext::default();
+        self.build_expansion_context(state, &mut context)?;
+        self.apply_operator_in_context(state, operator, &context, &mut Vec::new(), &mut Vec::new())
     }
 
     /// Fill `ctx` with the parent's numeric values, cost vars, and metric
@@ -780,7 +765,7 @@ impl StateRegistry {
         // effects to write.
         let previous_buffer = self
             .state_data_pool
-            .get(parent.get_id())
+            .get(parent.id())
             .expect("the parent is a registered state");
         next_buffer.extend_from_slice(previous_buffer);
 
@@ -898,7 +883,7 @@ impl StateRegistry {
 
     fn fill_cost_information(&self, state: &ConcreteState, output: &mut Vec<NumericValue>) {
         let cost_info_borrow = &self.cost_info;
-        let cost_info_data = cost_info_borrow.get(state.get_id());
+        let cost_info_data = cost_info_borrow.get(state.id());
         output.resize(cost_info_data.len(), NumericValue::new(0.0));
         output.copy_from_slice(cost_info_data);
     }
@@ -910,7 +895,7 @@ impl StateRegistry {
     /// - Using stored constants for constant variables.
     /// - Retrieving cost variables from per-state storage.
     /// - Evaluating arithmetic axioms to compute derived values.
-    pub fn get_numeric_vars(
+    pub fn numeric_values(
         &self,
         state: &ConcreteState,
     ) -> Result<Vec<NumericValue>, AssignmentAxiomError> {
@@ -950,7 +935,7 @@ impl StateRegistry {
             NumericType::Cost => {
                 let cost_index = self.layout.cost_index(metric_fluent_id);
                 let cost_info_borrow = &self.cost_info;
-                let cost_values = cost_info_borrow.get(state.get_id());
+                let cost_values = cost_info_borrow.get(state.id());
                 Ok(cost_values[cost_index])
             }
             NumericType::Constant => {
@@ -961,7 +946,7 @@ impl StateRegistry {
                 Ok(value)
             }
             NumericType::Derived => {
-                let numeric_vals = self.get_numeric_vars(state)?;
+                let numeric_vals = self.numeric_values(state)?;
                 Ok(self.evaluate_metric(&numeric_vals))
             }
         }
@@ -998,12 +983,12 @@ impl StateRegistry {
     /// Return an empty vector if no cost information is stored for the state.
     #[cfg(test)]
     pub(crate) fn get_cost_information(&self, state: &ConcreteState) -> Vec<NumericValue> {
-        self.cost_info.get(state.get_id()).to_vec()
+        self.cost_info.get(state.id()).to_vec()
     }
 
     /// Set cost information for a given state.
     ///
     fn set_cost_information(&mut self, state: &ConcreteState, values: &[NumericValue]) {
-        self.cost_info.set(state.get_id(), values);
+        self.cost_info.set(state.id(), values);
     }
 }

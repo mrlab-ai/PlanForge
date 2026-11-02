@@ -34,8 +34,8 @@ pub fn validate_restricted_task(task: &Task) -> Result<()> {
     }
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
         for (side, numeric_var_id) in [
-            ("left", comparison_axiom.get_left_var_id()),
-            ("right", comparison_axiom.get_right_var_id()),
+            ("left", comparison_axiom.left_var_id()),
+            ("right", comparison_axiom.right_var_id()),
         ] {
             if task.numeric_type(numeric_var_id) == NumericType::Derived {
                 return not_restricted(format!(
@@ -161,7 +161,7 @@ pub struct RestrictFeature;
 
 impl super::TransformationFeature for RestrictFeature {
     const NAME: &'static str = "restrict";
-    type Config = crate::heuristic_factory::EmptyConfig;
+    type Config = crate::config::EmptyConfig;
 
     fn apply(_: &Self::Config, task: Task) -> Result<Task> {
         Ok(build_restricted_task(&task)?.unwrap_or(task))
@@ -191,8 +191,8 @@ pub fn build_restricted_task(task: &Task) -> Result<Option<Task>> {
     let mut root_exprs = BTreeMap::new();
     for comparison_axiom in task.comparison_axioms() {
         let operands = [
-            comparison_axiom.get_left_var_id(),
-            comparison_axiom.get_right_var_id(),
+            comparison_axiom.left_var_id(),
+            comparison_axiom.right_var_id(),
         ];
         let is_derived = |var_id: VariableIndex| task.numeric_type(var_id) == NumericType::Derived;
         for var_id in operands {
@@ -301,10 +301,10 @@ fn build_task(
         .iter()
         .map(|comparison| {
             ComparisonAxiom::new(
-                comparison.get_affected_var_id(),
-                transformed(comparison.get_left_var_id()),
-                transformed(comparison.get_right_var_id()),
-                comparison.get_operator().clone(),
+                comparison.affected_var_id(),
+                transformed(comparison.left_var_id()),
+                transformed(comparison.right_var_id()),
+                comparison.operator().clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -391,7 +391,7 @@ fn renumber_propositional_axiom_layers(
 
     let comparison_vars = comparison_axioms
         .iter()
-        .map(|axiom| axiom.get_affected_var_id())
+        .map(|axiom| axiom.affected_var_id())
         .collect::<BTreeSet<_>>();
     let remaining_layers = task
         .variables()

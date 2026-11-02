@@ -14,7 +14,7 @@ use super::*;
 /// never loses them, so `FALSE` and `UNKNOWN` are unreachable once the axiom
 /// has fired.
 ///
-/// `AssignmentAxiom::get_affected_var_id` lives in the *numeric* index
+/// `AssignmentAxiom::affected_var_id` lives in the *numeric* index
 /// namespace and must never reach the propositional bucket; conflating the two
 /// namespaces silently dropped legitimate propositional facts in earlier
 /// versions.
@@ -61,7 +61,7 @@ impl FactUniverse {
         let comparison_axioms = task.comparison_axioms();
         let mut descs = Vec::with_capacity(comparison_axioms.len());
         for (axiom_idx, axiom) in comparison_axioms.iter().enumerate() {
-            let affected = axiom.get_affected_var_id();
+            let affected = axiom.affected_var_id();
             let &offset = fact_id_offsets.get(affected.index()).ok_or_else(|| {
                 format!("comparison axiom {axiom_idx} affects out-of-range variable {affected}")
             })?;
@@ -83,9 +83,9 @@ impl FactUniverse {
             to_axiom.push(Some(AxiomIndex::from_usize(axiom_idx)));
             descs.push(ComparisonAxiomDesc {
                 true_fact: fid,
-                left_var: axiom.get_left_var_id(),
-                right_var: axiom.get_right_var_id(),
-                op: axiom.get_operator().clone(),
+                left_var: axiom.left_var_id(),
+                right_var: axiom.right_var_id(),
+                op: axiom.operator().clone(),
             });
         }
 
@@ -484,7 +484,7 @@ pub(super) fn collect_assignment_axioms(
         .iter()
         .enumerate()
         .map(|(axiom_idx, axiom)| {
-            let affected = axiom.get_affected_var_id();
+            let affected = axiom.affected_var_id();
             if affected.index() >= num_numeric
                 || axiom
                     .expression

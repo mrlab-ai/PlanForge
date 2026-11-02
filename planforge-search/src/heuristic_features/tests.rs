@@ -1,8 +1,8 @@
 use super::HEURISTICS;
 use super::{
-    BuildContext, EmptyConfig, HeuristicBuildError, HeuristicFeature, TaskCheck, TaskRequirements,
-    entry,
+    BuildContext, HeuristicBuildError, HeuristicFeature, TaskCheck, TaskRequirements, entry,
 };
+use crate::config::EmptyConfig;
 use crate::evaluation::Heuristic;
 use crate::evaluation::{BlindFeature, BlindHeuristic};
 use planforge_sas::numeric_task::Task;

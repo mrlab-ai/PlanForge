@@ -4,7 +4,7 @@
 use crate::abstractions::build_error;
 use anyhow::{Context, Result};
 use planforge_sas::explicit_state::StateValues;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 
 use super::function::{DomainAbstractionFunction, DomainTransitions, source_set_within};
 use crate::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};

@@ -59,7 +59,7 @@
 use planforge_sas::axioms::{AssignmentAxiom, NumericExpression};
 use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::collections::{HashSet, VecDeque};
 
 use planforge_sas::axioms::{CalOperator, ComparisonOperator, PropositionalAxiom};
@@ -834,13 +834,13 @@ impl Heuristic for FfHeuristic {
 
 /// Registry feature for FF.
 pub struct FfFeature;
-impl planforge_search::heuristic_factory::HeuristicFeature for FfFeature {
+impl planforge_search::heuristic_features::HeuristicFeature for FfFeature {
     const NAME: &'static str = "ff";
-    type Config = planforge_search::heuristic_factory::EmptyConfig;
+    type Config = planforge_search::config::EmptyConfig;
     fn build(
         _: &Self::Config,
-        context: &planforge_search::heuristic_factory::BuildContext,
-    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_factory::HeuristicBuildError> {
+        context: &planforge_search::heuristic_features::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_features::HeuristicBuildError> {
         let heuristic = FfHeuristic::new(&context.task)
             .map_err(|error| format!("failed to construct ff heuristic: {error}"))?;
         Ok(Box::new(heuristic))

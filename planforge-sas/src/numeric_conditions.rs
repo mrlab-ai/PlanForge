@@ -719,7 +719,7 @@ impl NumericConditions {
         let mut builder = DagBuilder::new(num_numeric_vars);
 
         for (id, axiom) in comparison_axioms.iter().enumerate() {
-            let prop_var_id = axiom.get_affected_var_id();
+            let prop_var_id = axiom.affected_var_id();
             let slot = by_prop_var.get_mut(prop_var_id.index()).ok_or(
                 NumericConditionError::UnknownPropositionalVar {
                     comparison_axiom_id: AxiomIndex::new(id as u32),
@@ -735,8 +735,8 @@ impl NumericConditions {
                 });
             }
 
-            let left_numeric_var_id = axiom.get_left_var_id();
-            let right_numeric_var_id = axiom.get_right_var_id();
+            let left_numeric_var_id = axiom.left_var_id();
+            let right_numeric_var_id = axiom.right_var_id();
             builder.restart();
             let left_root = builder.expand(left_numeric_var_id, &definitions, assignment_axioms)?;
             let right_root =
@@ -746,7 +746,7 @@ impl NumericConditions {
             conditions.push(NumericCondition {
                 id,
                 prop_var_id,
-                op: CompOp::from(axiom.get_operator()),
+                op: CompOp::from(axiom.operator()),
                 left_numeric_var_id,
                 right_numeric_var_id,
                 regular_numeric_var_dependencies: regular_leaf_dependencies(
@@ -886,7 +886,7 @@ pub fn assignment_axiom_lookup(
     let mut by_target = vec![None; num_numeric_vars];
     for (assignment_axiom_id, axiom) in assignment_axioms.iter().enumerate() {
         let assignment_axiom_id = AxiomIndex::new(assignment_axiom_id as u32);
-        let target = axiom.get_affected_var_id();
+        let target = axiom.affected_var_id();
         let slot = by_target.get_mut(target.index()).ok_or(
             NumericConditionError::InvalidAssignmentTarget {
                 assignment_axiom_id,

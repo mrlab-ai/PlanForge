@@ -18,7 +18,7 @@ pub mod icaps26;
 pub mod pdb;
 pub mod sources;
 
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use planforge_search::resource_limits::DeadlineExceeded;
 use planforge_search::task_transformations::TransformError;
 use planforge_search::unsupported::UnsupportedTask;

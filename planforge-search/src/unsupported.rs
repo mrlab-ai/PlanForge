@@ -46,7 +46,7 @@ macro_rules! ensure_supported {
 
 #[cfg(test)]
 mod tests {
-    use crate::heuristic_factory::HeuristicBuildError;
+    use crate::heuristic_features::HeuristicBuildError;
     use crate::task_transformations::TransformError;
 
     fn check(supported: bool) -> Result<(), TransformError> {

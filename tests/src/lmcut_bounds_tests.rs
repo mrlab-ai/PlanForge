@@ -28,7 +28,7 @@ fn initial_h(task: &Task, bound_iterations: usize) -> f64 {
     )
     .expect("the LM-cut configuration is supported");
     let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let eval = EvaluationState::new(&initial, task as &Task, &registry);
     heuristic
         .evaluate(&eval)

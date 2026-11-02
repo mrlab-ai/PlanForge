@@ -3,7 +3,7 @@
 
 use crate::abstractions::build_error;
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::hash::Hash;
 
 use anyhow::Result;

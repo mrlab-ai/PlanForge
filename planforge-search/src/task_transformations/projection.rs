@@ -529,8 +529,8 @@ fn include_restricted_comparison_operands(
 ) {
     let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
     for numeric_var_id in [
-        comparison_axiom.get_left_var_id(),
-        comparison_axiom.get_right_var_id(),
+        comparison_axiom.left_var_id(),
+        comparison_axiom.right_var_id(),
     ] {
         assert_ne!(
             task.numeric_type(numeric_var_id),
@@ -558,8 +558,8 @@ fn include_comparisons_over_projected_variables(task: &Task, projection: Variabl
         |numeric_var_id: VariableIndex| task.numeric_type(numeric_var_id) == NumericType::Constant;
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
         let operands = [
-            comparison_axiom.get_left_var_id(),
-            comparison_axiom.get_right_var_id(),
+            comparison_axiom.left_var_id(),
+            comparison_axiom.right_var_id(),
         ];
         let projected = |numeric_var_id: VariableIndex| {
             projection.original_num_var_to_projected[numeric_var_id.index()].is_some()
@@ -574,7 +574,7 @@ fn include_comparisons_over_projected_variables(task: &Task, projection: Variabl
             continue;
         }
         push_unique_mapping(
-            comparison_axiom.get_affected_var_id(),
+            comparison_axiom.affected_var_id(),
             projection.projected_var_to_original,
             projection.original_var_to_projected,
         );
@@ -635,8 +635,8 @@ fn collect_restricted_projected_goals(
                 let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
                 members.regular.contains(&fact.var_index())
                     || [
-                        comparison_axiom.get_left_var_id(),
-                        comparison_axiom.get_right_var_id(),
+                        comparison_axiom.left_var_id(),
+                        comparison_axiom.right_var_id(),
                     ]
                     .iter()
                     .any(|id| members.numeric.contains(id))
@@ -778,22 +778,22 @@ fn project_restricted_comparison_axiom(
 ) -> Option<ComparisonAxiom> {
     let axiom = &task.comparison_axioms()[comparison_axiom_id];
     let affected = var_map
-        .get(axiom.get_affected_var_id().index())
+        .get(axiom.affected_var_id().index())
         .copied()
         .flatten()?;
     let left = num_var_map
-        .get(axiom.get_left_var_id().index())
+        .get(axiom.left_var_id().index())
         .copied()
         .flatten()?;
     let right = num_var_map
-        .get(axiom.get_right_var_id().index())
+        .get(axiom.right_var_id().index())
         .copied()
         .flatten()?;
     Some(ComparisonAxiom::new(
         VariableIndex::from_usize(affected),
         VariableIndex::from_usize(left),
         VariableIndex::from_usize(right),
-        axiom.get_operator().clone(),
+        axiom.operator().clone(),
     ))
 }
 
@@ -802,7 +802,7 @@ fn project_assignment_axiom(
     num_var_map: &[Option<usize>],
 ) -> Option<AssignmentAxiom> {
     let affected = num_var_map
-        .get(axiom.get_affected_var_id().index())
+        .get(axiom.affected_var_id().index())
         .and_then(|mapped| *mapped)?;
     let mapped = |var: VariableIndex| {
         num_var_map
@@ -858,7 +858,7 @@ fn normalize_projected_variable_layers(
 
     let mut affects_comparison = vec![false; num_variables];
     for axiom in comparison_axioms {
-        let var_id = axiom.get_affected_var_id();
+        let var_id = axiom.affected_var_id();
         if var_id.index() < num_variables {
             affects_comparison[var_id.index()] = true;
         }

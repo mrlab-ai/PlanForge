@@ -97,16 +97,11 @@ fn metric_operator_costs_are_the_constant_increments() {
 
     let task: Arc<Task> = Arc::new(task);
     let mut state_registry = StateRegistry::for_task(task.clone());
-    let initial_state = state_registry.get_initial_state();
+    let initial_state = state_registry.register_initial_state();
 
     let mut step_cost = |operator| {
         state_registry
-            .get_successor_state_with_buffers_and_cost(
-                &initial_state,
-                operator,
-                &mut Vec::new(),
-                &mut Vec::new(),
-            )
+            .successor(&initial_state, operator)
             .unwrap()
             .1
     };

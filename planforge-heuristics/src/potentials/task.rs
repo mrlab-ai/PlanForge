@@ -568,7 +568,7 @@ fn goal_implied_comparisons(
     let initial = task.initial_propositional_values();
     let mut implied = Vec::new();
     for comparison in task.comparison_axioms() {
-        let comparison_var = comparison.get_affected_var_id();
+        let comparison_var = comparison.affected_var_id();
         let conditions = helper.comparison_fact_materialized_conditions(comparison_var, true_value);
         if conditions.is_empty() {
             continue;
@@ -649,7 +649,7 @@ fn build_cpp_numeric_features(
         .comparison_axioms()
         .iter()
         .enumerate()
-        .map(|(comparison_id, comparison)| (comparison.get_affected_var_id(), comparison_id))
+        .map(|(comparison_id, comparison)| (comparison.affected_var_id(), comparison_id))
         .collect();
     let mut used_comparison_vars = Vec::new();
     let mut seen_comparisons = BTreeSet::new();
@@ -697,27 +697,27 @@ fn build_cpp_numeric_features(
         let comparison = &task.comparison_axioms()[comparison_id];
         let left = parse_cpp_numeric_expression(
             task,
-            comparison.get_left_var_id(),
+            comparison.left_var_id(),
             &mut auxiliary_by_name,
             &mut features,
         )?;
         let right = parse_cpp_numeric_expression(
             task,
-            comparison.get_right_var_id(),
+            comparison.right_var_id(),
             &mut auxiliary_by_name,
             &mut features,
         )?;
         if !left.is_constant && !right.is_constant {
             insert_cpp_auxiliary_feature(
                 task,
-                comparison.get_left_var_id(),
+                comparison.left_var_id(),
                 left,
                 &mut auxiliary_by_name,
                 &mut features,
             );
             insert_cpp_auxiliary_feature(
                 task,
-                comparison.get_right_var_id(),
+                comparison.right_var_id(),
                 right,
                 &mut auxiliary_by_name,
                 &mut features,

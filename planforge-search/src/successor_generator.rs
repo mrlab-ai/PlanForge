@@ -67,10 +67,10 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use planforge_sas::utils::errors::StateInsertError;
 
+use crate::config::EmptyConfig;
 use crate::config::{
     ApplyOptions, ConfigCall, ConfigError, ConfigValue, FromOptionValue, canonical_call, configure,
 };
-use crate::heuristic_factory::EmptyConfig;
 use crate::registry::{Entry, Registry, options_of};
 
 /// Which operators are applicable in a state.
@@ -97,7 +97,7 @@ impl<G: SuccessorGenerator + ?Sized> SuccessorGenerator for Box<G> {
 
 /// Forward expansion of registered states: a successor generator and the
 /// scratch an expansion needs, reused from one expansion to the next.
-pub struct RegistryExpander<G: SuccessorGenerator> {
+pub struct StateExpander<G: SuccessorGenerator> {
     generator: G,
     propositional: Vec<ExplicitValueIndex>,
     applicable: Vec<OperatorIndex>,
@@ -106,7 +106,7 @@ pub struct RegistryExpander<G: SuccessorGenerator> {
     successor_cost: Vec<NumericValue>,
 }
 
-impl<G: SuccessorGenerator> RegistryExpander<G> {
+impl<G: SuccessorGenerator> StateExpander<G> {
     pub fn new(generator: G) -> Self {
         Self {
             generator,

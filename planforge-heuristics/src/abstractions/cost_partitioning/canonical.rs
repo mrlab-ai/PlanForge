@@ -15,7 +15,7 @@ use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::state_value_cache::StateValueCache;
 use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 
@@ -134,7 +134,7 @@ impl Heuristic for CanonicalAbstractionHeuristic {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<Estimate, EvaluationError> {
-        let state_id = eval_state.state().get_id();
+        let state_id = eval_state.state().id();
         if let Some(value) = self.state_value_cache.get(state_id) {
             return Ok(Estimate::new(value));
         }

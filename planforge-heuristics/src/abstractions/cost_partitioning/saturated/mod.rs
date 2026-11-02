@@ -13,7 +13,7 @@ use crate::abstractions::sources::{
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 use planforge_search::resource_limits::Deadline;
@@ -150,7 +150,7 @@ impl SaturatedCostPartitioningHeuristic {
         let mut abstract_state_ids = Vec::new();
         {
             let mut registry = StateRegistry::for_task(task.clone());
-            let initial_state = registry.get_initial_state();
+            let initial_state = registry.register_initial_state();
             abstract_state_ids_into(
                 &components,
                 &EvaluationState::new(&initial_state, &task, &registry),

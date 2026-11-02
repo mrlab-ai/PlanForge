@@ -6,7 +6,7 @@
 
 mod portfolio;
 
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use portfolio::{
     average_operator_cost, build_conditioned_groups, build_goal_cost_partitions,
     build_static_portfolio, function_value,
@@ -88,7 +88,7 @@ impl NumericPotentialHeuristic {
         let ordinary_columns = optimizer.num_columns();
         let ordinary_rows = optimizer.num_rows();
         let mut registry = StateRegistry::for_task(task_ref.clone());
-        let initial_state = registry.get_initial_state();
+        let initial_state = registry.register_initial_state();
         // The exact verifier of unboundedness. It is built when the first LP
         // turns out unbounded, unless rays are requested from the start: a
         // floating-point unboundedness verdict alone never declares a dead
@@ -568,7 +568,7 @@ impl Heuristic for NumericPotentialHeuristic {
             value = value.max(additive_value);
         }
         value = self.maybe_add_online_function(eval_state, value)?;
-        self.track_online_cache_entry(eval_state.state().get_id());
+        self.track_online_cache_entry(eval_state.state().id());
         Ok(Estimate::new(value))
     }
 
@@ -595,8 +595,7 @@ impl NumericPotentialHeuristic {
             return Ok(envelope_value);
         };
         let online = &mut self.online_state;
-        let advance =
-            !online.new_states_only || online.seen_states.insert(eval_state.state().get_id());
+        let advance = !online.new_states_only || online.seen_states.insert(eval_state.state().id());
         if advance {
             online.evaluations_since_solve += 1;
             online.trigger_states += 1;

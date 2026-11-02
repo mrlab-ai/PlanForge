@@ -113,7 +113,7 @@ fn every_cpp_numeric_potential_option_parses() {
 fn optimize_initial(task: Task) -> (f64, f64) {
     let task: Arc<Task> = Arc::new(task);
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let mut optimizer =
         NumericPotentialOptimizer::new(&task, &NumericPotentialConfig::default()).unwrap();
     let columns = optimizer.num_columns() as f64;
@@ -540,7 +540,7 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
     let mut config = NumericPotentialConfig::default();
     config.ignore_numeric_variables = true;
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     assert!(!optimizer.task().features.is_empty());
     assert!(optimizer.conditionable_goals().is_empty());
@@ -627,7 +627,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
         global_constraint: Some(ExplicitFact::propositional(1, 0)),
     }));
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let mut optimizer =
         NumericPotentialOptimizer::new(&task, &NumericPotentialConfig::default()).unwrap();
     let goal = (VariableIndex::new(1), ExplicitValueIndex::new(0));
@@ -663,7 +663,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
     let mut heuristic =
         NumericPotentialHeuristic::from_config(task.clone(), online_config).unwrap();
     let mut online_registry = StateRegistry::for_task(task.clone());
-    let online_initial = online_registry.get_initial_state();
+    let online_initial = online_registry.register_initial_state();
     let eval_state = EvaluationState::new(&online_initial, &task, &online_registry);
     assert!(
         (heuristic.evaluate(&eval_state).unwrap().value() - 3.0).abs() < 1e-7,
@@ -724,7 +724,7 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
             global_constraint: Some(ExplicitFact::propositional(0, 0)),
         }));
         let mut registry = StateRegistry::for_task(task.clone());
-        let initial = registry.get_initial_state();
+        let initial = registry.register_initial_state();
         let mut config = NumericPotentialConfig::default();
         config.bounds = bounds;
         let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
@@ -786,7 +786,7 @@ fn exact_ray_certifies_numeric_dead_end() {
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let config = NumericPotentialConfig::default();
     let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     let mut generator = RayGenerator::new(&optimizer, config.ray_epsilon).unwrap();
@@ -920,7 +920,7 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
         ..Default::default()
     };
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     assert_eq!(optimizer.num_columns(), 0);
     assert_eq!(optimizer.num_rows(), 0);
@@ -1087,7 +1087,7 @@ fn an_affine_comparison_is_one_linear_feature() {
     let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
     assert_eq!(optimizer.num_columns(), 15);
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let OptimizationOutcome::Optimal { value, .. } = optimizer
         .optimize_for_conditioned_goal(
             VariableIndex::new(1),
@@ -1196,7 +1196,7 @@ fn a_goal_implies_the_monotone_precondition_of_its_only_achiever() {
 fn goal_strengthening_can_be_switched_off() {
     let task: Arc<Task> = Arc::new(threshold_achiever_task(false));
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let mut config = NumericPotentialConfig::default();
     config.goal_strengthening = false;
     let mut optimizer = NumericPotentialOptimizer::new(&task, &config).unwrap();
@@ -1246,7 +1246,7 @@ fn sampling_a_task_without_operators_yields_the_initial_state() {
     let max_potential = config.max_potential;
     let mut heuristic = NumericPotentialHeuristic::from_config(task.clone(), config).unwrap();
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let h = heuristic
         .evaluate(&EvaluationState::new(&initial, &task, &registry))
         .unwrap();

@@ -3,7 +3,7 @@
 //! ones.
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::{HeuristicBuildError, TaskCheck};
+use planforge_search::heuristic_features::{HeuristicBuildError, TaskCheck};
 use planforge_search::task_transformations::projection::validate_abstractable_goal;
 use planforge_search::task_transformations::restriction::validate_restricted_task;
 

@@ -96,8 +96,8 @@ pub(in super::super) fn desired_comparison_interval(
         .comparison_axioms()
         .get(comparison_axiom_id)
         .with_context(|| format!("missing comparison axiom {comparison_axiom_id}"))?;
-    let left_id = axiom.get_left_var_id();
-    let right_id = axiom.get_right_var_id();
+    let left_id = axiom.left_var_id();
+    let right_id = axiom.right_var_id();
     let left_type = semantics.task().numeric_type(left_id);
     let right_type = semantics.task().numeric_type(right_id);
     let left_is_coordinate = left_type == NumericType::Regular
@@ -113,15 +113,13 @@ pub(in super::super) fn desired_comparison_interval(
         left_type,
         right_type,
     ) {
-        (true, false, _, NumericType::Constant) => (
-            left_id,
-            initial[right_id.index()],
-            axiom.get_operator().clone(),
-        ),
+        (true, false, _, NumericType::Constant) => {
+            (left_id, initial[right_id.index()], axiom.operator().clone())
+        }
         (false, true, NumericType::Constant, _) => (
             right_id,
             initial[left_id.index()],
-            reverse_comparison_operator(axiom.get_operator()),
+            reverse_comparison_operator(axiom.operator()),
         ),
         _ => bail!(
             "desired-region Cartesian refinement requires each numeric condition to compare one exact additive coordinate with one constant; comparison axiom {comparison_axiom_id} has operand types {left_type:?} and {right_type:?}"

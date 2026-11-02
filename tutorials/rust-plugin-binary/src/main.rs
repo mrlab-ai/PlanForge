@@ -2,9 +2,10 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use ordered_float::OrderedFloat;
+use planforge_search::config::EmptyConfig;
 use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
-use planforge_search::heuristic_factory::{
-    BuildContext, EmptyConfig, HeuristicBuildError, HeuristicFeature, entry,
+use planforge_search::heuristic_features::{
+    BuildContext, HeuristicBuildError, HeuristicFeature, entry,
 };
 use planforge_search::search::best_first::{self, OpenEntry, OpenList, OpenListFeature};
 
