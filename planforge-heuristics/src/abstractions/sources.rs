@@ -7,8 +7,6 @@ use std::time::{Duration, Instant};
 
 use planforge_search::config::{ApplyOptions, ConfigError, TimeLimit};
 use planforge_search::heuristic_factory::{EmptyConfig, HeuristicBuildError, TaskRequirements};
-
-use crate::requirements::{ABSTRACTABLE_GOAL, RESTRICTED};
 use planforge_search::resource_limits::{Deadline, min_time_limit};
 use planforge_search::task_transformations::TransformationFeature;
 
@@ -18,7 +16,9 @@ use crate::abstractions::collections::generator::{AbstractionGenerator, Collecti
 use crate::abstractions::common::abstraction::CegarAbstraction;
 use crate::abstractions::component::AbstractionComponent;
 use crate::abstractions::domain::generator::DomainAbstractionGenerator;
-use crate::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
+use crate::abstractions::icaps26::{
+    Icaps26CartesianConfig, Icaps26CartesianGenerator, Icaps26RestrictFeature,
+};
 use crate::abstractions::pdb::pattern_collection::PatternCollection;
 use crate::abstractions::pdb::pattern_database::{
     PatternDatabase, PdbBuildConfig, PdbHeuristicConfig,
@@ -42,6 +42,7 @@ use crate::abstractions::domain::config::{
     DomainAbstractionCollectionConfig, DomainAbstractionConfig,
 };
 use crate::abstractions::pdb::pattern_database::PdbInternalHeuristic;
+use crate::requirements::{ABSTRACTABLE_GOAL, RESTRICTED};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbstractionPurpose {
@@ -102,21 +103,24 @@ impl AbstractionSource {
         result.map_err(|error| ConfigError::from(error.to_string()).at(self.name()))
     }
 
+    /// Every abstraction needs a goal it can express; pattern databases and
+    /// the ICAPS 2026 port also need a restricted task, the latter its own
+    /// restriction.
     pub fn requirements(&self) -> TaskRequirements {
-        let restricted = matches!(self, Self::Pdb(_) | Self::Icaps26Cartesian(_));
-        let icaps26 = matches!(self, Self::Icaps26Cartesian(_));
+        let (transformations, checks) = match self {
+            Self::Pdb(_) => (vec![], vec![RESTRICTED, ABSTRACTABLE_GOAL]),
+            Self::Icaps26Cartesian(_) => (
+                vec![Icaps26RestrictFeature::NAME],
+                vec![RESTRICTED, ABSTRACTABLE_GOAL],
+            ),
+            Self::Domain(_)
+            | Self::DomainCollection(_)
+            | Self::Cartesian(_)
+            | Self::CartesianCollection(_) => (vec![], vec![ABSTRACTABLE_GOAL]),
+        };
         TaskRequirements {
-            transformations: icaps26
-                .then_some(
-                    <crate::abstractions::icaps26::Icaps26RestrictFeature as TransformationFeature>::NAME,
-                )
-                .into_iter()
-                .collect(),
-            checks: restricted
-                .then_some(RESTRICTED)
-                .into_iter()
-                .chain([ABSTRACTABLE_GOAL])
-                .collect(),
+            transformations,
+            checks,
         }
     }
 
