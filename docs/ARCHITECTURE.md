@@ -155,10 +155,23 @@ returning a default.
 
 ## Verifying a change
 
+Before a commit, with the crates listed explicitly (`--workspace` would pull
+in `planforge-cplex`, which needs the CPLEX headers):
+
+```sh
+CRATES="-p planforge-sas -p planforge-translate -p planforge-search -p planforge-heuristics -p planforge -p planforge-config-derive -p tests"
+cargo fmt --all --check
+cargo clippy $CRATES --all-targets -- -D warnings
+cargo test $CRATES
+cargo test -p tests --release -- --ignored search_snapshot
+```
+
 A refactoring must not change search behaviour. The `search_snapshot` test
-(`tools/gate.sh semantic`) runs the main heuristic families on the test
-instances and compares plan costs and expanded and generated states with
-`tests/snapshots/search.txt`; identical counts are the requirement, run times
-are only checked for regressions (`tools/gate.sh timing`). Behaviour changes
-are separate commits that rewrite the snapshot (`PLANFORGE_BLESS=1`), so its
-diff shows what they moved.
+runs the main heuristic families on the test instances and compares plan
+costs and expanded and generated states with `tests/snapshots/search.txt`;
+identical counts are the requirement. Behaviour changes are separate commits
+that rewrite the snapshot (`PLANFORGE_BLESS=1`), so its diff shows what they
+moved. Run times are compared only when a change claims to be faster or must
+not be slower: a release build of the change against one of its base
+revision, alternating runs, medians, on tasks whose search reaches the
+changed code.
