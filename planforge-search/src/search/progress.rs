@@ -77,10 +77,17 @@ impl SearchProgress {
 
     /// Reports `h`, reached on a path of cost `g`, if it is below every
     /// estimate reported so far; returns whether it was.
+    #[inline]
     pub fn report_best_h(&mut self, h: f64, g: f64) -> bool {
         if h >= self.best_h {
             return false;
         }
+        self.report_new_best_h(h, g);
+        true
+    }
+
+    #[cold]
+    fn report_new_best_h(&mut self, h: f64, g: f64) {
         self.best_h = h;
         info!(
             "New best heuristic value for {}: {}",
@@ -95,7 +102,6 @@ impl SearchProgress {
             self.elapsed().as_secs_f64(),
             memory_report(),
         );
-        true
     }
 
     /// Reports the first expansion in a higher layer of a monotone priority

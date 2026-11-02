@@ -299,21 +299,16 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         let mut successors = std::mem::take(&mut self.successors);
         let mut evaluations = std::mem::take(&mut self.evaluations);
 
-        self.space.generate_successors(state, &mut successors)?;
-        successors.retain(|successor| {
-            let statistics = &mut self.progress.statistics.nodes;
-            statistics.generated += 1;
-            let path = Some((parent, successor.operator));
-            match self
-                .space
-                .reach(&successor.state, path, parent_g + successor.cost)
-            {
-                Reached::New => statistics.evaluated += 1,
-                Reached::Cheaper { reopened } => statistics.reopened += usize::from(reopened),
-                Reached::Duplicate => return false,
-            }
-            true
-        });
+        let statistics = &mut self.progress.statistics.nodes;
+        self.space
+            .reach_successors(state, &mut successors, |reached| {
+                statistics.generated += 1;
+                match reached {
+                    Reached::New => statistics.evaluated += 1,
+                    Reached::Cheaper { reopened } => statistics.reopened += usize::from(reopened),
+                    Reached::Duplicate => {}
+                }
+            })?;
 
         evaluations.clear();
         for successor in &successors {
@@ -362,6 +357,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
     /// Evaluate `state`, reached on a path of cost `g`, with the primary
     /// heuristic, recording its preferred operators when the open list uses
     /// them and the evaluation when `mpd` tracks it.
+    #[inline]
     fn evaluate(&mut self, state: &ConcreteState, g: f64) -> Result<Evaluation> {
         let state_id = state.get_id();
         let preferred = Q::USES_PREFERRED_OPERATORS.then(|| {
@@ -417,6 +413,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
 /// maximum with that bound stays admissible and consistent, and lifts a
 /// heuristic that is 0 on non-goal states, as an abstraction is on the states
 /// of an abstract goal.
+#[inline]
 fn evaluate<O: NodeOrdering>(
     heuristic: &mut dyn Heuristic,
     eval_state: &EvaluationState<'_, '_>,
