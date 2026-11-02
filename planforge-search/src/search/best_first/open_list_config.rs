@@ -1,6 +1,5 @@
 //! The open lists the `open_list` option of a best-first search names.
 
-use std::any::Any;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 
@@ -22,7 +21,6 @@ pub trait OpenListFeature: 'static {
 
 trait ErasedOpenListConfig: Debug + Send + Sync {
     fn call(&self) -> String;
-    fn config(&self) -> &dyn Any;
     fn build(&self) -> Box<dyn OpenList>;
 }
 
@@ -37,9 +35,6 @@ impl<F: OpenListFeature> Debug for Configured<F> {
 impl<F: OpenListFeature> ErasedOpenListConfig for Configured<F> {
     fn call(&self) -> String {
         canonical_call(F::NAME, &self.0)
-    }
-    fn config(&self) -> &dyn Any {
-        &self.0
     }
     fn build(&self) -> Box<dyn OpenList> {
         F::build(&self.0)
@@ -63,11 +58,6 @@ pub enum OpenListConfig {
 pub struct RegisteredOpenList(Arc<dyn ErasedOpenListConfig>);
 
 impl RegisteredOpenList {
-    /// The typed configuration, if the open list's configuration is a `T`.
-    pub fn config<T: 'static>(&self) -> Option<&T> {
-        self.0.config().downcast_ref()
-    }
-
     pub fn build(&self) -> Box<dyn OpenList> {
         self.0.build()
     }
