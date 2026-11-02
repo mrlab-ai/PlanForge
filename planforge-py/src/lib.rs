@@ -24,14 +24,14 @@ use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, H
 use planforge_search::heuristic_features::TaskRequirements;
 use planforge_search::search::best_first::{AStarSearch, GreedyBestFirstSearch, SearchParams};
 use planforge_search::search::{
-    SearchConfig, SearchError, SearchLimits, SearchOutcome, SearchResult, parse_search_spec,
+    SearchConfig, SearchError, SearchLimits, SearchOutcome, SearchResult,
 };
 use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,
     StateSpaceEnumerationError as RustStateSpaceEnumerationError, enumerate_state_space,
 };
 use planforge_search::successor_generator::{StandardGroundedTree, SuccessorGenerator};
-use planforge_search::task_transformations::{parse_transformation_spec, transform_task};
+use planforge_search::task_transformations::transform_task;
 
 create_exception!(planforge, PlanforgeError, PyException);
 create_exception!(planforge, TranslateError, PlanforgeError);
@@ -1067,9 +1067,10 @@ fn transform_numeric_task(
     transforms: &[String],
     requirements: &TaskRequirements,
 ) -> Result<planforge_sas::numeric_task::Task, String> {
+    let features = planforge_heuristics::features();
     let transformations = transforms
         .iter()
-        .map(|raw| parse_transformation_spec(raw))
+        .map(|raw| features.parse_transformation(raw))
         .collect::<Result<Vec<_>, _>>()?;
     transform_task(task, &transformations, requirements).map_err(|err| err.to_string())
 }
@@ -1507,8 +1508,9 @@ impl Task {
         max_memory: Option<u64>,
     ) -> PyResult<PySearchResult> {
         let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-        let spec =
-            parse_search_spec(&search).map_err(|error| SpecError::new_err(error.to_string()))?;
+        let spec = planforge_heuristics::features()
+            .parse_search(&search)
+            .map_err(|error| SpecError::new_err(error.to_string()))?;
         let time_limit = max_time.map(Duration::from_secs_f64);
         let task = GilReleasedTask(self.task.clone());
         let result = py
@@ -1686,7 +1688,9 @@ fn solve(
     }
 
     let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-    let spec = parse_search_spec(&search).map_err(|error| SpecError::new_err(error.to_string()))?;
+    let spec = planforge_heuristics::features()
+        .parse_search(&search)
+        .map_err(|error| SpecError::new_err(error.to_string()))?;
 
     let time_limit = max_time.map(Duration::from_secs_f64);
     let memory_limit = max_memory;
@@ -1771,10 +1775,6 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
 
 #[pymodule]
 fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    planforge_search::heuristic_features::HEURISTICS
-        .ensure_registered(planforge_heuristics::heuristics);
-    planforge_search::task_transformations::TRANSFORMATIONS
-        .ensure_registered(planforge_heuristics::transformations);
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_class::<PySearchResult>()?;
     m.add_class::<PyEdge>()?;

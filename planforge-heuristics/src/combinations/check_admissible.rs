@@ -312,9 +312,10 @@ impl planforge_search::config::ApplyOptions for CheckAdmissibleConfig {
     fn apply_options(
         &mut self,
         args: &[planforge_search::config::ConfigArg],
+        features: &planforge_search::registry::Features,
     ) -> Result<(), planforge_search::config::ConfigError> {
         let spec = single_wrapped_heuristic_spec("check_admissible", args)?;
-        self.inner = planforge_search::heuristic_features::HeuristicConfig::from_spec(&spec)?;
+        self.inner = features.heuristics.parse(&spec, features)?;
         Ok(())
     }
 

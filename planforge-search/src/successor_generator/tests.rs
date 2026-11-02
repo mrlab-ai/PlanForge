@@ -372,11 +372,14 @@ fn default_chains_through_all_variables_neither_overflow_nor_reorder() {
 
 #[test]
 fn a_search_names_its_successor_generator() {
-    use crate::search::parse_search_spec;
-    let search =
-        parse_search_spec("astar(blind(), successor_generator=standard_grounded_tree())").unwrap();
+    let features = crate::registry::Features::builtin();
+    let search = features
+        .parse_search("astar(blind(), successor_generator=standard_grounded_tree())")
+        .unwrap();
     assert_eq!(search.to_string(), "astar(blind())");
-    let error = parse_search_spec("gbfs(blind(), successor_generator=naive())").unwrap_err();
+    let error = features
+        .parse_search("gbfs(blind(), successor_generator=naive())")
+        .unwrap_err();
     assert!(
         error
             .to_string()

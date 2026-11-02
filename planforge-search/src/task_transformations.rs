@@ -8,9 +8,9 @@
 //! - [`projection`]: the task projected to a pattern of variables, primarily
 //!   the abstract task of a pattern database.
 //!
-//! The `--transform` grammar names the registered transformations,
-//! [`TRANSFORMATIONS`]: the restriction is built in; a binary registers
-//! others like heuristics.
+//! The `--transform` language names the transformations in
+//! [`Features::transformations`](crate::registry::Features): the restriction
+//! is built in; a program adds others like heuristics.
 //!
 //! A task with another goal, which goal-focused abstraction collections
 //! refine for, needs no transformation: [`Task::with_goals`] shares
@@ -26,9 +26,9 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::Task;
 use tracing::info;
 
-use crate::config::{ApplyOptions, ConfigCall, ConfigError, canonical_call, configure, parse_call};
+use crate::config::{ApplyOptions, ConfigCall, ConfigError};
 use crate::heuristic_features::TaskRequirements;
-use crate::registry::{Entry, Registry, options_of};
+use crate::registry::{Configured, Entry, Features, Typed, options_of, parse_configured};
 use crate::unsupported::UnsupportedTask;
 
 /// Why a task could not be transformed.
@@ -71,60 +71,27 @@ pub trait TransformationFeature: 'static {
     fn apply(config: &Self::Config, task: Task) -> Result<Task, TransformError>;
 }
 
-trait ErasedTransformation: Debug + Send + Sync {
+/// The interface of a configured task transformation, whatever its
+/// configuration type: what [`TransformationConfig`] dereferences to.
+pub trait ConfiguredTransformation: Send + Sync {
     fn name(&self) -> &'static str;
-    fn call(&self) -> String;
+    /// The transformed task; `task` itself when it already has the form.
     fn apply(&self, task: Task) -> Result<Task, TransformError>;
 }
 
-struct Configured<F: TransformationFeature>(F::Config);
-
-impl<F: TransformationFeature> Debug for Configured<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple(F::NAME).field(&self.0).finish()
-    }
-}
-
-impl<F: TransformationFeature> ErasedTransformation for Configured<F> {
+impl<F: TransformationFeature> ConfiguredTransformation for Typed<F, F::Config> {
     fn name(&self) -> &'static str {
         F::NAME
     }
-    fn call(&self) -> String {
-        canonical_call(F::NAME, &self.0)
-    }
     fn apply(&self, task: Task) -> Result<Task, TransformError> {
-        F::apply(&self.0, task)
+        F::apply(&self.config, task)
     }
 }
 
-/// A configured task transformation.
-#[derive(Debug, Clone)]
-pub struct TransformationConfig(Arc<dyn ErasedTransformation>);
+/// A configured task transformation. It displays as its canonical call.
+pub type TransformationConfig = Configured<dyn ConfiguredTransformation>;
 
-impl TransformationConfig {
-    pub fn name(&self) -> &'static str {
-        self.0.name()
-    }
-
-    pub fn apply(&self, task: Task) -> Result<Task, TransformError> {
-        self.0.apply(task)
-    }
-}
-
-/// The canonical call, which parses back to an equal configuration.
-impl fmt::Display for TransformationConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0.call())
-    }
-}
-
-impl PartialEq for TransformationConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.call() == other.0.call()
-    }
-}
-
-/// A registered task transformation.
+/// A task transformation's registry entry.
 pub type TransformationEntry = Entry<TransformationConfig>;
 
 pub const fn entry<F: TransformationFeature>() -> TransformationEntry {
@@ -133,27 +100,11 @@ pub const fn entry<F: TransformationFeature>() -> TransformationEntry {
 
 fn parse_feature<F: TransformationFeature>(
     spec: &ConfigCall,
+    features: &Features,
 ) -> Result<TransformationConfig, ConfigError> {
-    let config = configure(F::NAME, F::Config::default(), &spec.args)?;
-    Ok(TransformationConfig(Arc::new(Configured::<F>(config))))
-}
-
-/// Every task transformation the `--transform` grammar names.
-pub static TRANSFORMATIONS: Registry<TransformationConfig> = Registry::new(
-    "task transformation",
-    &[entry::<restriction::RestrictFeature>()],
-);
-
-pub fn parse_transformation_spec(raw: &str) -> Result<TransformationConfig, ConfigError> {
-    TRANSFORMATIONS.parse(&parse_call(raw)?)
-}
-
-/// The `--transform` help text.
-pub fn transformation_help() -> String {
-    format!(
-        "Task transformation, applied before the search in the order given. Available transformations: {}",
-        TRANSFORMATIONS.names().collect::<Vec<_>>().join(", ")
-    )
+    parse_configured(F::NAME, spec, features, |typed: Typed<F, F::Config>| {
+        Arc::new(typed) as Arc<dyn ConfiguredTransformation>
+    })
 }
 
 /// `task` transformed by `transformations` in order, which must include the

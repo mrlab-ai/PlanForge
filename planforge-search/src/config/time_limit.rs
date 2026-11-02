@@ -40,8 +40,13 @@ impl From<Duration> for TimeLimit {
     }
 }
 impl FromOptionValue for TimeLimit {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        Ok(Self::from_seconds(f64::from_option_value(value)?)?)
+    fn from_option_value(
+        value: &ConfigValue,
+        features: &crate::registry::Features,
+    ) -> Result<Self, crate::config::ConfigError> {
+        Ok(Self::from_seconds(f64::from_option_value(
+            value, features,
+        )?)?)
     }
 
     fn option_text(&self) -> String {
@@ -55,7 +60,9 @@ mod tests {
 
     #[test]
     fn time_limits_preserve_seconds_and_convert_only_when_a_clock_is_needed() {
-        let parse = |text: &str| TimeLimit::from_option_value(&ConfigValue::Atom(text.into()));
+        let features = crate::registry::Features::builtin();
+        let parse =
+            |text: &str| TimeLimit::from_option_value(&ConfigValue::Atom(text.into()), &features);
         assert_eq!(parse("infinity").unwrap().duration().unwrap(), None);
         assert_eq!(
             parse("2.5").unwrap().duration().unwrap(),

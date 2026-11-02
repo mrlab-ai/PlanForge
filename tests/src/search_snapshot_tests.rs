@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::search::{SearchLimits, SearchOutcome, parse_search_spec};
-use planforge_search::task_transformations::{parse_transformation_spec, transform_task};
+use planforge_search::search::{SearchLimits, SearchOutcome};
+use planforge_search::task_transformations::transform_task;
 
 use crate::corpus::{self, problem_file_names, subdirectory_names, translate_in_memory};
 
@@ -73,9 +73,16 @@ fn instances() -> Vec<(String, String)> {
 
 /// One snapshot line: the run's outcome, or the error that ended it.
 fn run(task: &Task, transformation: Option<&str>, spec: &str) -> String {
-    let search = parse_search_spec(spec).unwrap_or_else(|error| panic!("{spec}: {error}"));
+    let features = planforge_heuristics::features();
+    let search = features
+        .parse_search(spec)
+        .unwrap_or_else(|error| panic!("{spec}: {error}"));
     let transformations: Vec<_> = transformation
-        .map(|raw| parse_transformation_spec(raw).unwrap_or_else(|error| panic!("{raw}: {error}")))
+        .map(|raw| {
+            features
+                .parse_transformation(raw)
+                .unwrap_or_else(|error| panic!("{raw}: {error}"))
+        })
         .into_iter()
         .collect();
     let task = match transform_task(task.clone(), &transformations, &search.requirements()) {
@@ -149,10 +156,6 @@ fn snapshot(instances: &[(String, String)]) -> String {
 #[test]
 #[ignore = "semantic gate; run with --release -- --ignored search_snapshot"]
 fn search_snapshot() {
-    planforge_search::heuristic_features::HEURISTICS
-        .ensure_registered(planforge_heuristics::heuristics);
-    planforge_search::task_transformations::TRANSFORMATIONS
-        .ensure_registered(planforge_heuristics::transformations);
     let actual = snapshot(&instances());
     let path = snapshot_path();
     if std::env::var_os("PLANFORGE_BLESS").is_some() {

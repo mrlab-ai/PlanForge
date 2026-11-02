@@ -8,17 +8,18 @@
 //! # Where to start
 //!
 //! Each extension point is a trait; a feature the configuration language
-//! names is that trait plus a typed configuration, registered in the
-//! feature's registry (a binary registers through `planforge::Extensions`).
+//! names is that trait plus a typed configuration, added to its kind's
+//! registry in a [`registry::Features`] value, which then parses
+//! configuration strings ([`registry::Features::parse_search`]).
 //!
-//! | To add | Implement | Registry |
+//! | To add | Implement | Registry in [`registry::Features`] |
 //! |---|---|---|
-//! | a heuristic | [`evaluation::Heuristic`], [`heuristic_features::HeuristicFeature`] | [`heuristic_features::HEURISTICS`] |
-//! | a search algorithm | [`search::SearchFeature`], composing [`search::SearchSpace`] and [`search::SearchProgress`] | [`search::SEARCH_ALGORITHMS`] |
+//! | a heuristic | [`evaluation::Heuristic`], [`heuristic_features::HeuristicFeature`] | `heuristics` |
+//! | a search algorithm | [`search::SearchFeature`], composing [`search::SearchSpace`] and [`search::SearchProgress`] | `search_algorithms` |
 //! | a best-first node ordering | [`search::best_first::NodeOrdering`] | -- (a search algorithm instantiates it) |
-//! | an open list | [`search::best_first::OpenList`], [`search::best_first::OpenListFeature`] | [`search::best_first::OPEN_LISTS`] |
-//! | a successor generator | [`successor_generator::SuccessorGenerator`], [`successor_generator::SuccessorGeneratorFeature`] | [`successor_generator::SUCCESSOR_GENERATORS`] |
-//! | a task transformation | [`task_transformations::TransformationFeature`] | [`task_transformations::TRANSFORMATIONS`] |
+//! | an open list | [`search::best_first::OpenList`], [`search::best_first::OpenListFeature`] | `open_lists` |
+//! | a successor generator | [`successor_generator::SuccessorGenerator`], [`successor_generator::SuccessorGeneratorFeature`] | `successor_generators` |
+//! | a task transformation | [`task_transformations::TransformationFeature`] | `transformations` |
 //! | a requirement on the task | [`heuristic_features::TaskCheck`] in [`heuristic_features::TaskRequirements`] | -- (a heuristic feature returns it) |
 //!
 //! The tutorials in the repository show each path end to end.

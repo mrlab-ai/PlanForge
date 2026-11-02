@@ -72,7 +72,7 @@ fn every_cpp_numeric_potential_option_parses() {
     ]
     .map(|(name, value)| option(name, value));
     let mut config = NumericPotentialConfig::default();
-    config.apply_options(&args).unwrap();
+    config.apply_options(&args, &crate::features()).unwrap();
     config.validate().unwrap();
     assert_eq!(config.opt, OptimizeFor::DiverseSamples);
     assert_eq!(config.num_samples, 228);
@@ -85,7 +85,7 @@ fn every_cpp_numeric_potential_option_parses() {
 
     assert!(
         config
-            .apply_options(&[option("not_a_cpp_option", "1")])
+            .apply_options(&[option("not_a_cpp_option", "1")], &crate::features())
             .unwrap_err()
             .to_string()
             .contains("unknown option")
