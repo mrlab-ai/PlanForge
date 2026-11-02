@@ -13,7 +13,7 @@ use tracing::info;
 
 use super::{Plan, SearchOutcome};
 use crate::evaluation::EvaluationState;
-use crate::successor_generator::RegistryExpander;
+use crate::successor_generator::{RegistryExpander, SuccessorGenerator};
 
 /// One transition out of an expanded state: the registered successor, the
 /// operator leading to it and its cost.
@@ -58,7 +58,7 @@ pub struct SearchSpace {
     task: Arc<Task>,
     registry: StateRegistry,
     initial_state: ConcreteState,
-    expander: RegistryExpander,
+    expander: RegistryExpander<Box<dyn SuccessorGenerator>>,
     /// Per-operator costs, for a task whose costs do not depend on the state.
     operator_costs: Vec<f64>,
     /// Whether a metric prices each transition instead.
@@ -67,8 +67,9 @@ pub struct SearchSpace {
 }
 
 impl SearchSpace {
-    /// The search space of `task`, holding its registered initial state.
-    pub fn new(task: Arc<Task>) -> Self {
+    /// The search space of `task`, holding its registered initial state,
+    /// whose successors `generator` lists.
+    pub fn new(task: Arc<Task>, generator: Box<dyn SuccessorGenerator>) -> Self {
         let mut registry = StateRegistry::for_task(task.clone());
         // Registering the initial state fixes the numeric constants the
         // metric's operator costs read.
@@ -78,7 +79,7 @@ impl SearchSpace {
             registry.global_state_packer().num_bins()
         );
         Self {
-            expander: RegistryExpander::new(&task),
+            expander: RegistryExpander::new(generator),
             operator_costs: task.effective_operator_costs().to_vec(),
             use_metric: task.metric().use_metric(),
             task,

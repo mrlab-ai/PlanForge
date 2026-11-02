@@ -35,6 +35,7 @@ use planforge_search::search::{
     SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchLimits, SearchResult,
 };
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
+use planforge_search::successor_generator::{SUCCESSOR_GENERATORS, SuccessorGeneratorEntry};
 use planforge_search::task_transformations::{
     TRANSFORMATIONS, TransformationConfig, TransformationEntry, parse_transformation_spec,
     transform_task, transformation_help,
@@ -101,6 +102,7 @@ pub struct Extensions {
     pub heuristics: Vec<HeuristicEntry>,
     pub search_algorithms: Vec<SearchEntry>,
     pub transformations: Vec<TransformationEntry>,
+    pub successor_generators: Vec<SuccessorGeneratorEntry>,
 }
 
 /// Run the standard PlanForge CLI, with `extensions` registered next to
@@ -114,6 +116,9 @@ pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
         .map_err(std::io::Error::other)?;
     SEARCH_ALGORITHMS
         .register(extensions.search_algorithms)
+        .map_err(std::io::Error::other)?;
+    SUCCESSOR_GENERATORS
+        .register(extensions.successor_generators)
         .map_err(std::io::Error::other)?;
     let mut transformations = planforge_heuristics::transformations();
     transformations.extend(extensions.transformations);

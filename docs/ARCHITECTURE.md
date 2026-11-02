@@ -65,7 +65,11 @@ propositional values without decoding a whole state.
   (`task_transformations::TRANSFORMATIONS`, with `restrict` built in)
   transforms the task before it. A binary registers the other features once,
   before it parses a configuration.
-- `successor_generator`, `state_space` (the exact state space), `graph` (the
+- `successor_generator`: the `SuccessorGenerator` trait (which operators
+  are applicable in a state; applying them stays with the `StateRegistry`),
+  the decision tree that is the default, and their registry
+  `SUCCESSOR_GENERATORS`.
+- `state_space` (the exact state space), `graph` (the
   backward goal-distance search shared with the abstractions),
   `task_transformations`, `resource_limits`.
 
@@ -92,6 +96,7 @@ One module per technique, each depending on the core only:
 |---|---|---|---|
 | a heuristic | `Heuristic`, and a `HeuristicFeature` for its configuration | one entry in `planforge_heuristics::heuristics()`, or `planforge::Extensions::heuristics` with `planforge::run_with` from your own binary | `tutorials/rust-goal-count`, `tutorials/rust-plugin-binary` |
 | a search algorithm | a `SearchFeature` whose search composes `SearchSpace` and `SearchProgress` (for best-first search, a `NodeOrdering`) | `planforge::Extensions::search_algorithms` | `tutorials/rust-custom-search` |
+| a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `planforge::Extensions::successor_generators`; a search names it with `successor_generator=...` | `successor_generator::DecisionTree` |
 | a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::transformations()`, or `planforge::Extensions::transformations` | `task_transformations::restriction::RestrictFeature` |
 
 A heuristic owns its state (`&mut self`), reads the task through `&Task` or a

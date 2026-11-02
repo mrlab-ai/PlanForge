@@ -31,7 +31,7 @@ use planforge_search::state_space::{
     EnumerationLimits, OwnedStateSpace,
     StateSpaceEnumerationError as RustStateSpaceEnumerationError, enumerate_state_space,
 };
-use planforge_search::successor_generator::SuccessorTree;
+use planforge_search::successor_generator::{DecisionTree, SuccessorGenerator};
 use planforge_search::task_transformations::{parse_transformation_spec, transform_task};
 
 create_exception!(planforge, PlanforgeError, PyException);
@@ -1006,7 +1006,7 @@ impl Heuristic for PyHeuristic {
 struct Task {
     task: Arc<planforge_sas::numeric_task::Task>,
     registry: RefCell<StateRegistry>,
-    succ: SuccessorTree,
+    succ: DecisionTree,
 }
 
 struct GilReleasedTask(Arc<planforge_sas::numeric_task::Task>);
@@ -1546,7 +1546,7 @@ impl Task {
 impl Task {
     fn build(task: Arc<planforge_sas::numeric_task::Task>) -> Self {
         let registry = StateRegistry::for_task(task.clone());
-        let succ = SuccessorTree::new(&task);
+        let succ = DecisionTree::new(&task);
         Task {
             task,
             registry: RefCell::new(registry),
@@ -1572,7 +1572,7 @@ impl Task {
         let mut values = Vec::new();
         state.fill_state(registry, &mut values);
         let mut ids = Vec::new();
-        self.succ.get_applicable_operators(&values, &mut ids);
+        self.succ.applicable_operators(&values, &mut ids);
         ids.iter().map(OperatorIndex::index).collect()
     }
 

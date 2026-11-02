@@ -162,15 +162,7 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
         assignment_axioms: vec![],
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
-    let search = AStarSearch::new(
-        task.clone(),
-        SearchParams {
-            heuristic: Box::new(FailingHeuristic),
-            lazy: None,
-            mpd: false,
-            limits: SearchLimits::default(),
-        },
-    );
+    let search = AStarSearch::new(task.clone(), SearchParams::new(Box::new(FailingHeuristic)));
 
     let error = search.run().unwrap_err();
     assert!(
@@ -225,10 +217,8 @@ fn mpd_reevaluates_and_reinserts_a_stale_open_entry() {
     let mut search = AStarSearch::new(
         task.clone(),
         SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
             mpd: true,
-            limits: SearchLimits::default(),
+            ..SearchParams::new(Box::new(heuristic))
         },
     );
 
@@ -255,15 +245,7 @@ fn static_astar_does_not_pay_for_revision_checks() {
         reevaluate_on_every_pop: false,
     };
     let task = one_step_task();
-    let mut search = AStarSearch::new(
-        task.clone(),
-        SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
-            mpd: false,
-            limits: SearchLimits::default(),
-        },
-    );
+    let mut search = AStarSearch::new(task.clone(), SearchParams::new(Box::new(heuristic)));
 
     search.initialize().unwrap();
     revision.set(1);
@@ -290,10 +272,8 @@ fn uncached_mpd_reevaluates_every_popped_entry() {
     let mut search = AStarSearch::new(
         task.clone(),
         SearchParams {
-            heuristic: Box::new(heuristic),
-            lazy: None,
             mpd: true,
-            limits: SearchLimits::default(),
+            ..SearchParams::new(Box::new(heuristic))
         },
     );
 

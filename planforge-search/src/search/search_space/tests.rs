@@ -1,9 +1,11 @@
 use super::*;
+use crate::successor_generator::DecisionTree;
 use crate::test_tasks::one_step_task;
 
 #[test]
 fn reach_records_the_cheapest_path_and_reopens_closed_nodes() {
-    let mut space = SearchSpace::new(one_step_task());
+    let task = one_step_task();
+    let mut space = SearchSpace::new(task.clone(), Box::new(DecisionTree::new(&task)));
     let initial = space.initial_state();
     assert_eq!(space.reach(&initial, None, 0.0), Reached::New);
     let mut successors = Vec::new();
