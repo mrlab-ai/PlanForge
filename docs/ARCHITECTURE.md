@@ -45,8 +45,14 @@ propositional values without decoding a whole state.
 
 ## The search core (`planforge-search`)
 
-- `search`: best-first search (A*, greedy, lazy and multi-path variants) over
-  a `NodeOrdering`, and the `--search` configuration language.
+- `search`: the building blocks of a search algorithm -- `SearchSpace` (the
+  state registry, successor generation, the search nodes and plan
+  extraction) and `SearchProgress` (limits, statistics, progress reports) --,
+  best-first search on them (A*, greedy, lazy and multi-path variants) over a
+  `NodeOrdering`, and the `--search` configuration language. Best-first
+  search expands a node in three phases: it generates the successors and
+  drops the duplicates, evaluates the rest in one loop, and queues them in
+  generation order.
 - `evaluation`: the `Heuristic` trait, `EvaluationState`, blind search, and
   shared helpers (random walks, seeds, a per-state value cache).
 - `registry`: the registries of the features the configuration language
@@ -85,7 +91,7 @@ One module per technique, each depending on the core only:
 | To add | Implement | Register | Example |
 |---|---|---|---|
 | a heuristic | `Heuristic`, and a `HeuristicFeature` for its configuration | one entry in `planforge_heuristics::heuristics()`, or `planforge::Extensions::heuristics` with `planforge::run_with` from your own binary | `tutorials/rust-goal-count`, `tutorials/rust-plugin-binary` |
-| a search algorithm | a `SearchFeature` (for best-first search, a `NodeOrdering`) | `planforge::Extensions::search_algorithms` | `tutorials/rust-custom-search` |
+| a search algorithm | a `SearchFeature` whose search composes `SearchSpace` and `SearchProgress` (for best-first search, a `NodeOrdering`) | `planforge::Extensions::search_algorithms` | `tutorials/rust-custom-search` |
 | a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::transformations()`, or `planforge::Extensions::transformations` | `task_transformations::restriction::RestrictFeature` |
 
 A heuristic owns its state (`&mut self`), reads the task through `&Task` or a

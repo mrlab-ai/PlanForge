@@ -4,7 +4,7 @@ use std::time::Duration;
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
-use planforge_search::search::{AStarSearch, SearchOutcome, SearchParams};
+use planforge_search::search::{AStarSearch, SearchLimits, SearchOutcome, SearchParams};
 
 /// Goal-count heuristic: number of goal facts not satisfied in the state.
 struct GoalCountHeuristic;
@@ -36,7 +36,10 @@ fn run(path: &str) {
         .expect("goal-count should evaluate the initial state");
 
     let params = SearchParams {
-        time_limit: Some(Duration::from_secs(5)),
+        limits: SearchLimits {
+            time: Some(Duration::from_secs(5)),
+            memory_bytes: None,
+        },
         ..SearchParams::new(Box::new(heuristic))
     };
     let result = AStarSearch::new(task, params).run().expect("search failed");
