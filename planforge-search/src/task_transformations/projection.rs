@@ -409,22 +409,6 @@ impl ProjectedTask {
         &self.task
     }
 
-    pub fn project_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        let mut projected_prop_values = Vec::with_capacity(self.projected_var_to_original.len());
-        let mut projected_numeric_values =
-            Vec::with_capacity(self.projected_num_var_to_original.len());
-        self.project_state_values_into(
-            StateValues::new(propositional_values, numeric_values),
-            &mut projected_prop_values,
-            &mut projected_numeric_values,
-        );
-        Ok((projected_prop_values, projected_numeric_values))
-    }
-
     /// Fill `projected_prop_values` and `projected_numeric_values` with the
     /// values the projected variables take in the state of the base task with
     /// `propositional_values` and `source_numeric_values`.

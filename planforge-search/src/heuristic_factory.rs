@@ -239,7 +239,7 @@ pub static HEURISTICS: Registry<HeuristicConfig> = Registry::new(
     &[entry::<crate::evaluation::heuristic::BlindFeature>()],
 );
 
-pub fn heuristic_help() -> String {
+pub(crate) fn heuristic_help() -> String {
     format!(
         "Heuristics: {}. `planforge heuristics` lists their options and defaults. Custom Rust heuristics can be passed directly as Box<dyn Heuristic>.",
         HEURISTICS.names().collect::<Vec<_>>().join(", ")
