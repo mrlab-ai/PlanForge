@@ -80,6 +80,46 @@ propositional values without decoding a whole state.
   backward goal-distance search shared with the abstractions),
   `task_transformations`, `resource_limits`.
 
+## Evaluation, caching and batching
+
+Best-first search evaluates states in one place per phase:
+`BestFirstSearch::expand` generates the successors of a node and detects
+duplicates, then evaluates the remaining successors in one plain loop over
+one call, `BestFirstSearch::evaluate`, then queues them in generation order.
+Two rules keep that loop the only place that decides when the primary
+heuristic of an expansion runs:
+
+- **Open lists never evaluate.** An `OpenList` orders `OpenEntry`s (g, h,
+  state, insertion order) whose estimates the search computed before pushing
+  them.
+- **The engine keeps no heuristic cache.** A heuristic that wants to reuse
+  estimates owns that cache (`&mut self`, as `numeric_potential` does). The
+  engine records the last estimate of a state only for `mpd`, to decide
+  whether to evaluate it again, never instead of evaluating it.
+
+`Task`, `StateRegistry` and `EvaluationState` are `Sync`, which
+`planforge-search/src/evaluation/evaluator.rs` asserts at compile time, so
+the states of one expansion can be evaluated in parallel without copying.
+
+### Adding batched evaluation
+
+Batched evaluation, for example a neural network over all successors of an
+expansion, touches three places and nothing else:
+
+1. the `Heuristic` trait: a default method
+   `evaluate_batch(&mut self, states: &[EvaluationState], estimates: &mut Vec<f64>)`
+   that calls `evaluate` per state, so every heuristic keeps working
+   unchanged;
+2. the evaluation phase of `BestFirstSearch::expand`: build the
+   `EvaluationState`s of the successors (`SearchSpace::evaluation_state`),
+   call `evaluate_batch` once, and hand each estimate to
+   `BestFirstSearch::record_evaluation`, which checks, bounds, counts and
+   records it exactly as for a single evaluation;
+3. the batched heuristic, which overrides `evaluate_batch`.
+
+Preferred operators stay per state: an open list that uses them
+(`preferred_first`) keeps the single-state call.
+
 ## The heuristics (`planforge-heuristics`)
 
 One module per technique, each depending on the core only:

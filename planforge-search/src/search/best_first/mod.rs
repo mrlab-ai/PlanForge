@@ -28,8 +28,8 @@ use self::preferred_operators::PreferredOperators;
 use super::progress::SearchProgress;
 use super::search_space::{Reached, SearchSpace, Successor};
 use super::{SearchLimits, SearchOutcome, SearchResult};
+use crate::evaluation::Heuristic;
 use crate::evaluation::heuristic::minimum_action_cost;
-use crate::evaluation::{EvaluationState, Heuristic};
 use crate::successor_generator::SuccessorGeneratorConfig;
 
 pub type AStarSearch<'a> = BestFirstSearch<'a, AStar, TieBreakingOpenList<AStar>>;
@@ -268,19 +268,19 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         if let Some(lazy) = self.lazy.as_deref_mut()
             && !entry.is_lazy_evaluated()
         {
-            let evaluation = evaluate(
-                lazy,
-                &self.space.evaluation_state(&state),
-                self.min_action_cost,
-                None,
-            )
-            .with_context(|| format!("slow heuristic evaluation failed for state {state_id}"))?;
+            let is_goal = self.space.is_goal(state_id);
+            let h = lazy
+                .evaluate(&self.space.evaluation_state(&state))
+                .map_err(anyhow::Error::from)
+                .and_then(|h| bounded_estimate(lazy, h, state_id, is_goal, self.min_action_cost))
+                .with_context(|| {
+                    format!("slow heuristic evaluation failed for state {state_id}")
+                })?;
             self.progress.statistics.evaluations += 1;
-            if evaluation.is_dead_end() {
+            if h == f64::INFINITY {
                 return Ok(self.prune(state_id));
             }
-            let h = entry.h().max(evaluation.h);
-            return Ok(self.requeue(entry, h, true));
+            return Ok(self.requeue(entry, entry.h().max(h), true));
         }
 
         if O::MONOTONE {
@@ -355,34 +355,46 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         Ok(())
     }
 
-    /// Evaluate `state` with the primary
-    /// heuristic, recording its preferred operators when the open list uses
-    /// them and the evaluation when `mpd` tracks it.
+    /// Evaluate `state` with the primary heuristic, storing its preferred
+    /// operators when the open list uses them.
     #[inline]
     fn evaluate(&mut self, state: &ConcreteState) -> Result<Evaluation> {
-        let state_id = state.get_id();
-        let uses_preferred_operators = self.open_list.uses_preferred_operators();
-        let preferred = uses_preferred_operators.then(|| {
+        let eval_state = self.space.evaluation_state(state);
+        let h = if self.open_list.uses_preferred_operators() {
             self.preferred_scratch.clear();
-            &mut self.preferred_scratch
-        });
-        let evaluation = evaluate(
-            &mut *self.heuristic,
-            &self.space.evaluation_state(state),
-            self.min_action_cost,
-            preferred,
-        )?;
+            let h = self
+                .heuristic
+                .evaluate_with_preferred(&eval_state, &mut self.preferred_scratch)?;
+            self.preferred
+                .store(state.get_id(), &self.preferred_scratch);
+            h
+        } else {
+            self.heuristic.evaluate(&eval_state)?
+        };
+        self.record_evaluation(state, h)
+    }
+
+    /// The evaluation of `state` that the primary heuristic estimated as `h`:
+    /// checked and bounded by [`bounded_estimate`], counted, and recorded
+    /// when `mpd` tracks it. A batched evaluation would hand each estimate of
+    /// a batch to it.
+    #[inline]
+    fn record_evaluation(&mut self, state: &ConcreteState, h: f64) -> Result<Evaluation> {
+        let state_id = state.get_id();
+        let is_goal = self.space.is_goal(state_id);
+        let h = bounded_estimate(&*self.heuristic, h, state_id, is_goal, self.min_action_cost)?;
+        let evaluation = Evaluation {
+            h,
+            revision: self.heuristic.revision(),
+        };
         self.progress.statistics.evaluations += 1;
-        if uses_preferred_operators {
-            self.preferred.store(state_id, &self.preferred_scratch);
-        }
         if let Some(records) = &mut self.evaluation_records {
             if records.len() <= state_id {
                 records.resize(state_id + 1, None);
             }
             records[state_id] = Some(EvaluationRecord {
                 revision: evaluation.revision,
-                h: evaluation.h,
+                h,
             });
         }
         Ok(evaluation)
@@ -415,35 +427,23 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
     }
 }
 
-/// Evaluate `state` with `heuristic`. A non-goal state's estimate is raised to
-/// the cheapest operator cost: every plan from it applies an operator, so the
-/// maximum with that bound stays admissible and consistent, and lifts a
-/// heuristic that is 0 on non-goal states, as an abstraction is on the states
-/// of an abstract goal.
+/// `h`, the estimate of `heuristic` for the state `state_id`, checked and,
+/// for a non-goal state, raised to the cheapest operator cost: every plan
+/// from a non-goal state applies an operator, so the maximum with that bound
+/// stays admissible and consistent, and lifts a heuristic that is 0 on
+/// non-goal states, as an abstraction is on the states of an abstract goal.
 #[inline]
-fn evaluate(
-    heuristic: &mut dyn Heuristic,
-    eval_state: &EvaluationState<'_, '_>,
+fn bounded_estimate(
+    heuristic: &dyn Heuristic,
+    h: f64,
+    state_id: StateID,
+    is_goal: bool,
     min_action_cost: f64,
-    preferred: Option<&mut Vec<OperatorIndex>>,
-) -> Result<Evaluation> {
-    let h = match preferred {
-        Some(preferred) => heuristic.evaluate_with_preferred(eval_state, preferred),
-        None => heuristic.evaluate(eval_state),
-    }?;
+) -> Result<f64> {
     ensure!(
         !h.is_nan(),
-        "heuristic {} estimated NaN for state {}",
-        heuristic.name(),
-        eval_state.state().get_id()
+        "heuristic {} estimated NaN for state {state_id}",
+        heuristic.name()
     );
-    let h = if eval_state.is_goal() {
-        h
-    } else {
-        h.max(min_action_cost)
-    };
-    Ok(Evaluation {
-        h,
-        revision: heuristic.revision(),
-    })
+    Ok(if is_goal { h } else { h.max(min_action_cost) })
 }

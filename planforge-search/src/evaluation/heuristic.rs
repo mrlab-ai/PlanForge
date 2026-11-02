@@ -8,7 +8,8 @@ use planforge_sas::numeric_task::Task;
 ///
 /// Evaluating takes `&mut self` because heuristics keep state between
 /// evaluations -- caches, scratch buffers, online-learned components -- and
-/// the search owns the heuristic it calls.
+/// the search owns the heuristic it calls. The search keeps no cache of
+/// estimates: a heuristic that wants one keeps it itself.
 pub trait Heuristic {
     /// The estimated cost of reaching a goal from `state`; infinite for a
     /// state the heuristic proves to be a dead end.
