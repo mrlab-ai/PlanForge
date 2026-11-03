@@ -1,6 +1,7 @@
-//! What the heuristics of this crate need of the task, as
-//! [`TaskCheck`]s, and of the build: an unrestricted CPLEX for the LP-based
-//! ones.
+//! What the heuristics of this crate need of the task and of the build.
+//!
+//! Needs of the task are [`TaskCheck`]s; the LP-based heuristics need an
+//! unrestricted CPLEX in the build.
 
 use planforge_sas::numeric_task::Task;
 use planforge_search::heuristic_features::{HeuristicBuildError, TaskCheck};

@@ -1,3 +1,7 @@
+//! A built Cartesian abstraction: its refinement hierarchy, goal distances
+//! and, until discarded, its transitions, and how cost partitioning saturates
+//! it.
+
 use crate::abstractions::build_error;
 use planforge_sas::explicit_state::StateValues;
 use planforge_search::heuristic_features::HeuristicBuildError;
@@ -19,6 +23,8 @@ use crate::abstractions::cost_partitioning::costs::{
     saturate_regions,
 };
 use planforge_search::resource_limits::Deadline;
+
+use crate::abstractions::common::DEADLINE_POLL_STRIDE;
 
 /// A Cartesian abstraction: the refinement hierarchy that maps concrete
 /// states to abstract ones, and, until discarded, its transitions.
@@ -180,7 +186,10 @@ impl CartesianAbstraction {
             .transitions
             .iter()
             .map(|transition| {
-                if transition.transition_id.is_multiple_of(1024) {
+                if transition
+                    .transition_id
+                    .is_multiple_of(DEADLINE_POLL_STRIDE)
+                {
                     deadline.ensure(SOURCE_SETS)?;
                 }
                 regions

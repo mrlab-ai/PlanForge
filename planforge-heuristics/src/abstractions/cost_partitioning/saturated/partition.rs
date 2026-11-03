@@ -1,3 +1,6 @@
+//! One cost partitioning along an order: each abstraction saturates the
+//! remaining costs in turn.
+
 use std::ops::ControlFlow;
 
 use planforge_sas::utils::float_tolerance;

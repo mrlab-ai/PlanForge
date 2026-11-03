@@ -1,3 +1,5 @@
+//! The options of numeric potential heuristics and their feature.
+
 use planforge_search::config::{ConfigError, TimeLimit, option_enum};
 use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_features::{
@@ -208,6 +210,7 @@ impl NumericPotentialConfig {
 }
 
 /// `numeric_potential(...)`, registered in every build.
+#[derive(Debug)]
 pub struct NumericPotentialFeature;
 impl HeuristicFeature for NumericPotentialFeature {
     const NAME: &'static str = "numeric_potential";

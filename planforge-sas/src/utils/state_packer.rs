@@ -105,7 +105,7 @@ impl VariableInfo {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct StatePacker {
     var_infos: Vec<VariableInfo>,
     num_bins: usize,

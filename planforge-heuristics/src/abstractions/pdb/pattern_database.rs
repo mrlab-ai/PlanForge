@@ -1,3 +1,6 @@
+//! A pattern database: the projection of a task to a pattern, explored from
+//! the initial state, and the goal distances of its abstract states.
+
 #[cfg(test)]
 mod tests;
 
@@ -95,6 +98,7 @@ pub struct PdbBuildConfig {
 /// but did not expand lies on the frontier, and takes the frontier heuristic,
 /// at least the cheapest operator cost, as its distance. The goal distances
 /// then follow by backward Dijkstra from the goal and frontier states.
+#[derive(Debug)]
 pub struct PatternDatabase {
     task: Arc<ProjectedTask>,
     states: AbstractStates,
@@ -379,6 +383,7 @@ impl PatternDatabase {
 
 /// The abstract states a pattern database explored, and how a projected
 /// state finds its id among them.
+#[derive(Debug)]
 enum AbstractStates {
     Dense(DenseStates),
     /// The registry the exploration registered the states in.
@@ -387,6 +392,7 @@ enum AbstractStates {
 
 /// The states of an exhausted projection without numeric input variables,
 /// addressed by the perfect hash of their propositional input values.
+#[derive(Debug)]
 struct DenseStates {
     variables: Vec<DenseVariable>,
     /// The abstract state at each hash, [`DenseStates::UNREACHED`] where the
@@ -394,6 +400,7 @@ struct DenseStates {
     ids: Vec<u32>,
 }
 
+#[derive(Debug)]
 struct DenseVariable {
     projected: usize,
     original: usize,
@@ -475,6 +482,7 @@ impl DenseStates {
 
 /// The transitions of an explored abstract state space, grouped by target
 /// state, and the states backward searches over them start from.
+#[derive(Debug)]
 struct AbstractTransitions {
     /// `predecessors[offsets[s]..offsets[s + 1]]` are the
     /// `(parent, projected operator)` transitions entering state `s`.
@@ -727,6 +735,7 @@ impl InnerHeuristics {
 }
 
 /// The failed-lookup heuristic of a built pattern database.
+#[derive(Debug)]
 enum FailedLookupHeuristic {
     Zero,
     Blind,
@@ -734,6 +743,7 @@ enum FailedLookupHeuristic {
 }
 
 /// LM-cut on the projection of a pattern database.
+#[derive(Debug)]
 struct ProjectedLmcut {
     landmarks: LandmarkCutLandmarks,
     propositional: Vec<ExplicitValueIndex>,
@@ -784,7 +794,7 @@ fn lmcut_estimate(
 }
 
 /// Reused buffers for projecting a base task state and looking it up.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct LookupScratch {
     propositional: Vec<ExplicitValueIndex>,
     numeric: Vec<NumericValue>,

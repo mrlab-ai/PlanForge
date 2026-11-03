@@ -1,5 +1,6 @@
-//! What every abstraction CEGAR builds offers and records about its
-//! construction and use, for domain and Cartesian abstractions alike.
+//! What every abstraction CEGAR builds offers, domain or Cartesian.
+//!
+//! It also records how the abstraction was built and is used.
 
 use anyhow::Result;
 use planforge_sas::explicit_state::StateValues;

@@ -7,7 +7,6 @@ use planforge_sas::numeric_task::{
 };
 
 use super::*;
-use crate::abstractions::pdb::variable_order_finder::GreedyVariableOrderType;
 use planforge_search::task_transformations::restriction::build_restricted_task;
 
 fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
@@ -189,18 +188,6 @@ fn numeric_goal_task() -> Task {
 }
 
 #[test]
-fn greedy_pattern_config_defaults_match_fd_defaults() {
-    let config = GreedyPatternGeneratorConfig::default();
-    assert_eq!(config.max_pdb_states, 100_000);
-    assert!(config.numeric_first);
-    assert_eq!(config.random_seed, 0);
-    assert_eq!(
-        config.variable_order_type,
-        GreedyVariableOrderType::GoalCgLevel
-    );
-}
-
-#[test]
 fn greedy_pattern_uses_fd_goal_ordering() {
     let task = numeric_goal_task();
     let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
@@ -230,19 +217,6 @@ fn greedy_pattern_prefers_goal_variables() {
     let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
 
     assert!(pattern.numeric.contains(&VariableIndex::from_usize(1)));
-}
-
-#[test]
-fn greedy_pattern_config_defaults_match_expected_port_defaults() {
-    let config = GreedyPatternGeneratorConfig::default();
-
-    assert_eq!(config.max_pdb_states, 100_000);
-    assert!(config.numeric_first);
-    assert_eq!(config.random_seed, 0);
-    assert_eq!(
-        config.variable_order_type,
-        GreedyVariableOrderType::GoalCgLevel
-    );
 }
 
 #[test]

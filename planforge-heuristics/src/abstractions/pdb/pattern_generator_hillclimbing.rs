@@ -1,3 +1,6 @@
+//! iPDB: hill climbing in the space of pattern collections, adding the pattern
+//! that improves the estimate of most sampled states.
+
 #[cfg(test)]
 mod tests;
 

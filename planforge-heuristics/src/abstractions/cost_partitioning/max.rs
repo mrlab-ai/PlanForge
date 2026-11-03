@@ -1,3 +1,6 @@
+//! The maximum over abstractions, and `max(...)` over arbitrary heuristics,
+//! which groups its abstraction children into one such maximum.
+
 use crate::abstractions::features::{abstraction_source, max_over_sources};
 use crate::combinations::maximum::MaximumHeuristic;
 use planforge_search::config::ConfigError;
@@ -12,6 +15,7 @@ use planforge_sas::numeric_task::NumericValue;
 use super::standalone_estimate;
 use crate::abstractions::component::AbstractionComponent;
 
+#[derive(Debug)]
 pub struct MaxAbstractionHeuristic {
     name: String,
     components: Vec<AbstractionComponent>,
@@ -63,6 +67,7 @@ pub struct MaxConfig {
 
 /// `max(h_1, ..., h_n)`. The abstraction heuristics among the children are
 /// one maximum over their abstractions; the others are maximized with it.
+#[derive(Debug)]
 pub struct MaxFeature;
 impl HeuristicFeature for MaxFeature {
     const NAME: &'static str = "max";

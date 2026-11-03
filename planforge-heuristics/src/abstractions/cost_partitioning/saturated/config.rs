@@ -1,3 +1,6 @@
+//! The options of saturated cost partitioning: how orders are generated, which
+//! saturator, label or regional costs, and the time limits.
+
 use planforge_search::config::{ConfigError, TimeLimit};
 use std::time::Duration;
 

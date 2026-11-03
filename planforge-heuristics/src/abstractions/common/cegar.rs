@@ -1,3 +1,6 @@
+//! The CEGAR loop shared by Cartesian and domain abstractions: its options,
+//! how it finds flaws and splits, and the limits that stop it.
+
 pub(crate) mod flaw_splits;
 pub mod initial_splits;
 pub mod options;

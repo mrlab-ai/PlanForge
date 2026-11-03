@@ -1,3 +1,6 @@
+//! The greedy pattern generator: one pattern of variables in causal-graph
+//! order, up to a size limit.
+
 #[cfg(test)]
 mod tests;
 

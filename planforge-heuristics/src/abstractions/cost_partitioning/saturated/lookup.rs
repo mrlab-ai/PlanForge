@@ -1,3 +1,7 @@
+//! The lookup tables of a saturated cost partitioning.
+//!
+//! They are indexed by the abstract states of an evaluated state.
+
 use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::utils::float_tolerance;
 

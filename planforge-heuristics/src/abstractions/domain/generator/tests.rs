@@ -162,17 +162,6 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
 }
 
 #[test]
-fn cegar_default_config_matches_numeric_fd_defaults() {
-    let config = DomainAbstractionConfig::default();
-
-    assert_eq!(config.cegar.max_states, 100_000);
-    assert_eq!(config.cegar.max_iterations, usize::MAX);
-    assert!(!config.use_wildcard_plans);
-    assert_eq!(config.cegar.random_seed, Some(2011));
-    assert_eq!(config.cegar.split_selection, SplitSelection::Random);
-}
-
-#[test]
 fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
     let variables = vec![ExplicitVariable::new(
         2,

@@ -152,6 +152,7 @@ enum NumericSlot {
 /// - Deduplicating identical states to save memory.
 /// - Evaluating axioms when states change.
 /// - Managing numeric variables and cost information.
+#[derive(Debug)]
 pub struct StateRegistry {
     /// Unique identifier for this registry instance.
     id: usize,

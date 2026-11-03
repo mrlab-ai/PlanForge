@@ -1,3 +1,6 @@
+//! A collection of patterns, each the variables one pattern database projects
+//! to.
+
 #[cfg(test)]
 mod tests;
 

@@ -143,6 +143,7 @@ impl std::error::Error for ProjectedTaskBuildError {}
 ///
 /// The projected task keeps the base task's operator costs, so its goal
 /// distances are those of the abstraction the pattern induces.
+#[derive(Debug)]
 pub struct ProjectedTask {
     task: Arc<Task>,
     base_operator_ids: Vec<OperatorIndex>,

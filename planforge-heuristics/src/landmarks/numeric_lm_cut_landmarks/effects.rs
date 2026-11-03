@@ -107,10 +107,7 @@ impl LandmarkCutLandmarks {
                     "LM-cut helper simple effect target {local_var_id} is invalid for operator {original_operator_id}"
                 )
             })?;
-            let weight = coefficients
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let weight = coefficients[actual_var_id.index()];
             if weight.abs() < self.config.precision {
                 continue;
             }
@@ -126,10 +123,7 @@ impl LandmarkCutLandmarks {
                         conditional_effect.target_local_var_id
                     )
                 })?;
-            let weight = coefficients
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let weight = coefficients[actual_var_id.index()];
             if weight.abs() < self.config.precision {
                 continue;
             }
@@ -146,10 +140,7 @@ impl LandmarkCutLandmarks {
                     "LM-cut helper linear effect target {local_var_id} is invalid for operator {original_operator_id}"
                 )
             })?;
-            let weight = coefficients
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let weight = coefficients[actual_var_id.index()];
             if weight.abs() < self.config.precision {
                 continue;
             }
@@ -280,11 +271,7 @@ impl LandmarkCutLandmarks {
                 )? {
                     continue;
                 }
-                let weight = condition
-                    .coefficients
-                    .get(linear_effect.affected_var_id.index())
-                    .copied()
-                    .unwrap_or(0.0);
+                let weight = condition.coefficients[linear_effect.affected_var_id.index()];
                 if weight > self.config.precision {
                     plus_effect_ids.push(self.get_numeric_proposition_id(condition_id)?);
                 } else if weight < -self.config.precision {
@@ -368,10 +355,7 @@ impl LandmarkCutLandmarks {
                         linear_effect.target_local_var_id
                     )
                 })?;
-            let weight: f64 = coefficients
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let weight: f64 = coefficients[actual_var_id.index()];
             if weight.abs() < self.config.precision {
                 continue;
             }
@@ -487,11 +471,8 @@ impl LandmarkCutLandmarks {
 
         let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
         for linear_effect in linear_effects {
-            let target_coefficient: f64 = condition
-                .coefficients
-                .get(linear_effect.affected_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let target_coefficient: f64 =
+                condition.coefficients[linear_effect.affected_var_id.index()];
             if target_coefficient.abs() < self.config.precision {
                 continue;
             }

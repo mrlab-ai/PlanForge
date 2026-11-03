@@ -1,3 +1,6 @@
+//! Systematic patterns: every interesting pattern up to a size, built along
+//! the causal graph from the goal variables.
+
 #[cfg(test)]
 mod tests;
 
@@ -240,9 +243,8 @@ pub(super) fn goal_variables(task: &Task, causal_graph: &CausalGraph) -> Vec<Cau
         }
     }
 
-    // The goal used to name the derived atom above a comparison, so reaching the
-    // comparison meant walking the axiom bodies; it now names the comparison
-    // variable itself, which `validate_abstractable_goal` guarantees.
+    // The goal names the comparison variable itself, which
+    // `validate_abstractable_goal` guarantees.
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
         if !goal_var_ids.contains(&comparison_axiom.affected_var_id()) {
             continue;

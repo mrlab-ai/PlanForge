@@ -291,10 +291,7 @@ struct GoalConditions {
 
 /// A comparison goal becomes the linear conditions materializing it; every
 /// other goal fact is propositional, since `validate_abstractable_goal` has
-/// refused a goal on a derived variable. That case used to be rewritten into
-/// the conditions of its one defining axiom, and rejected when there was not
-/// exactly one -- a rewrite that had to be equivalent to the goal, not merely
-/// implied by it, to keep the LP bound admissible. With `goal_strengthening`,
+/// refused a goal on a derived variable. With `goal_strengthening`,
 /// a comparison every reachable goal state satisfies joins the goal.
 fn goal_conditions(
     task: &Task,

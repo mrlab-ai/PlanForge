@@ -1,11 +1,12 @@
-//! The splits a restart of a standard collection starts CEGAR from, the same
-//! for domain and Cartesian abstractions: a propositional variable is split
-//! into its initial value and the rest; a condition variable's goal
-//! conditions are split at the initial values of the coordinates they refine
-//! along, so an operator can change them. A numeric variable gets no split of
-//! its own: its restart starts from the trivial abstraction, as with the
-//! `init_value` initial splits of the numeric Fast Downward collections this
-//! ports.
+//! The initial splits of a restart in a standard collection.
+//!
+//! They are the same for domain and Cartesian abstractions: a propositional
+//! variable is split into its initial value and the rest; a condition
+//! variable's goal conditions are split at the initial values of the
+//! coordinates they refine along, so an operator can change them. A numeric
+//! variable gets no split of its own: its restart starts from the trivial
+//! abstraction, as with the `init_value` initial splits of the numeric Fast
+//! Downward collections this ports.
 
 use planforge_sas::numeric_task::VariableKind;
 use planforge_sas::utils::value_lattice::ValueLattice;

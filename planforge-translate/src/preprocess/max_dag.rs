@@ -1,4 +1,11 @@
+//! Fast Downward's `max_dag`: the order of the SAS+ variables in a component.
+//!
+//! The node with the least remaining incoming weight comes first, which breaks
+//! the cycles of the weighted causal graph at their lightest edges.
+
 use std::collections::BTreeMap;
+
+use super::causal_graph::GOAL_EDGE_SURCHARGE;
 
 use tracing::{Level, debug};
 
@@ -45,9 +52,7 @@ impl MaxDag {
         let mut done: Vec<bool> = vec![false; num_nodes];
         let mut result: Vec<usize> = Vec::new();
 
-        while !heap.is_empty() {
-            let first_key = *heap.keys().next().unwrap();
-            let removed = heap.remove(&first_key).unwrap();
+        while let Some((_, removed)) = heap.pop_first() {
             debug!("minimal element is {}", removed);
             done[removed] = true;
             result.push(removed);
@@ -55,10 +60,7 @@ impl MaxDag {
             for succ in succs {
                 let target = succ.0;
                 if !done[target] {
-                    let mut arc_weight = succ.1;
-                    while arc_weight >= 100000 {
-                        arc_weight -= 100000;
-                    }
+                    let arc_weight = succ.1 % GOAL_EDGE_SURCHARGE;
                     let old_key = heap_positions[target];
                     let new_weight = old_key.0 - arc_weight;
                     heap.remove(&old_key);

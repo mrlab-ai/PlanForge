@@ -1,3 +1,6 @@
+//! The coordinates abstractions refine on: the propositional variables and the
+//! numeric expressions whose values a split partitions.
+
 mod lattices;
 mod preimage;
 
@@ -169,6 +172,7 @@ fn constant_effect_delta(task: &Task, effect: &AssignmentEffect) -> Option<Numer
 /// numeric variables whose value every operator changes by a constant.
 /// Abstractions split coordinates, and a condition over one coordinate is an
 /// interval of it, so regression over coordinates is exact.
+#[derive(Debug)]
 pub(crate) struct Coordinates<'task> {
     task: &'task Task,
     views: Arc<[Option<AdditiveNumericView>]>,

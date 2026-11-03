@@ -1,3 +1,6 @@
+//! The states potential functions are fitted to, sampled by random walks as
+//! the C++ implementation does.
+
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use std::sync::Arc;

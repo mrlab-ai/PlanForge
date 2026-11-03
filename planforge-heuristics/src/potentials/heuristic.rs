@@ -32,6 +32,7 @@ use super::{
     OptimizationOutcome, OptimizeFor, PotentialTask,
 };
 
+#[derive(Debug)]
 pub struct NumericPotentialHeuristic {
     task: PotentialTask,
     functions: Vec<NumericPotentialFunction>,
@@ -54,6 +55,7 @@ pub struct NumericPotentialHeuristic {
     numeric_scratch: Vec<NumericValue>,
 }
 
+#[derive(Debug)]
 struct OnlineState {
     max_functions: usize,
     base_interval: usize,

@@ -1,3 +1,6 @@
+//! An abstraction as a component of a collection or cost partitioning: a CEGAR
+//! abstraction or a pattern database, with its kind and goal.
+
 use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::Task;
 use std::collections::BTreeSet;
@@ -48,6 +51,7 @@ pub struct GoalFocusedMember {
 }
 
 /// An abstraction that collection heuristics combine.
+#[derive(Debug)]
 pub enum AbstractionComponent {
     Cegar {
         abstraction: Box<dyn CegarAbstraction>,

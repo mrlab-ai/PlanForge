@@ -1,8 +1,7 @@
-// `field_reassign_with_default` fires on the `let mut config = ...::default();`
-// followed by field writes that vary one option per test; `DOCS_RS=1 cargo
-// clippy -p planforge-search --features cplex --all-targets` lints this file
-// without a CPLEX installation.
-#![allow(clippy::field_reassign_with_default)]
+#![expect(
+    clippy::field_reassign_with_default,
+    reason = "each test changes the defaults it is about, one field at a time"
+)]
 
 use std::sync::Arc;
 

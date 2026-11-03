@@ -51,6 +51,7 @@ use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 use super::super::standalone_estimate;
 use crate::abstractions::component::AbstractionComponent;
 
+#[derive(Debug)]
 pub struct PostHocOptimizationHeuristic {
     name: String,
     components: Vec<AbstractionComponent>,

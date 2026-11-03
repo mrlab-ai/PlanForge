@@ -21,7 +21,7 @@ pub(super) fn build_goal_cost_partitions(
                 && existing
                     .iter()
                     .zip(&partition)
-                    .all(|(left, right)| (*left - *right).abs() <= 1e-9)
+                    .all(|(left, right)| (*left - *right).abs() <= float_tolerance::SEARCH_EPSILON)
         }) {
             partitions.push(partition);
         }
@@ -217,7 +217,11 @@ fn build_diverse_portfolio(
     let mut functions = Vec::new();
     let mut initial_function = Some(initial_function);
     if config.include_initial_state_potential {
-        functions.push(initial_function.take().unwrap());
+        functions.push(
+            initial_function
+                .take()
+                .expect("the initial-state function joins the portfolio once"),
+        );
     }
     if config.include_all_states_potential
         && functions.len() < config.num_heuristics
@@ -230,7 +234,11 @@ fn build_diverse_portfolio(
         || config.max_diverse_generation_time.seconds() <= 0.0
     {
         if functions.is_empty() {
-            functions.push(initial_function.take().unwrap());
+            functions.push(
+                initial_function
+                    .take()
+                    .expect("the initial-state function joins the portfolio once"),
+            );
         }
         return Ok(functions);
     }
@@ -244,7 +252,11 @@ fn build_diverse_portfolio(
     }
     if samples.is_empty() {
         if functions.is_empty() {
-            functions.push(initial_function.take().unwrap());
+            functions.push(
+                initial_function
+                    .take()
+                    .expect("the initial-state function joins the portfolio once"),
+            );
         }
         return Ok(functions);
     }
@@ -302,7 +314,11 @@ fn build_diverse_portfolio(
         functions.push(candidate);
     }
     if functions.is_empty() {
-        functions.push(initial_function.take().unwrap());
+        functions.push(
+            initial_function
+                .take()
+                .expect("the initial-state function joins the portfolio once"),
+        );
     }
     Ok(functions)
 }

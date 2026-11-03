@@ -1,3 +1,6 @@
+//! Log summaries of regional cost partitioning: the abstract source sets and
+//! the costs left on transitions.
+
 use tracing::debug;
 use tracing::{Level, enabled};
 

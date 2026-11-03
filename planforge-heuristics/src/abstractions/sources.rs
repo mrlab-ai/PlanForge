@@ -1,6 +1,7 @@
-//! The abstraction sources a heuristic is built from -- single abstractions,
-//! collections and pattern databases -- and their construction under a shared
-//! time budget.
+//! The abstraction sources a heuristic is built from, and their construction.
+//!
+//! A source is a single abstraction, a collection or pattern databases; the
+//! sources of one heuristic are built under a shared time budget.
 
 use planforge_sas::numeric_task::Task;
 use std::time::{Duration, Instant};

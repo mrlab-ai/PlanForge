@@ -1,3 +1,7 @@
+//! The linear program whose optima are admissible potential functions.
+//!
+//! Its optima are also consistent; it is solved for several objectives.
+
 use planforge_sas::numeric_task::Task;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -407,7 +411,7 @@ impl NumericPotentialOptimizer {
             }
             SolveStatus::Infeasible => Ok(OptimizationOutcome::Infeasible),
             SolveStatus::Unbounded => Ok(OptimizationOutcome::Unbounded {
-                primal_ray: self.model.primal_ray().unwrap_or_default(),
+                primal_ray: self.model.primal_ray().map_err(|error| error.to_string())?,
             }),
             SolveStatus::IterationLimit
             | SolveStatus::TimeLimit

@@ -1,3 +1,6 @@
+//! The refinement hierarchy of a Cartesian abstraction: the tree of splits
+//! that maps a concrete state to its abstract state.
+
 use anyhow::{Context, Result, ensure};
 use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};

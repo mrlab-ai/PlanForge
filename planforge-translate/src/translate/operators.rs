@@ -12,14 +12,12 @@ pub(super) fn translate_strips_operator(
     translation: &mut Translation,
     operator: &PropositionalAction,
 ) -> Vec<SASOperator> {
-    let conditions = translate_strips_conditions(translation, &operator.precondition);
-
-    if conditions.is_none() {
+    let Some(conditions) = translate_strips_conditions(translation, &operator.precondition) else {
         return vec![];
-    }
+    };
 
     let mut sas_operators = vec![];
-    for condition in conditions.unwrap() {
+    for condition in conditions {
         if let Some(op) = translate_strips_operator_aux(translation, operator, &condition) {
             sas_operators.push(op);
         }
@@ -41,10 +39,10 @@ pub(super) fn translate_strips_operator_aux(
     let mut add_conds_by_variable: HashMap<usize, Vec<Vec<Condition>>> = HashMap::new();
 
     for (conditions_list, fact) in &operator.add_effects {
-        let eff_condition_list = translate_strips_conditions(translation, conditions_list);
-        if eff_condition_list.is_none() {
+        let Some(eff_condition_list) = translate_strips_conditions(translation, conditions_list)
+        else {
             continue; // Impossible condition
-        }
+        };
         // An add effect of a reachable operator is a reachable atom, which
         // the dictionary encodes.
         let pairs = translation.dictionary.get(fact).unwrap_or_else(|| {
@@ -59,7 +57,7 @@ pub(super) fn translate_strips_operator_aux(
                 .or_default()
                 .entry(val)
                 .or_default()
-                .extend(eff_condition_list.clone().unwrap());
+                .extend(eff_condition_list.clone());
             add_conds_by_variable
                 .entry(var)
                 .or_default()
@@ -72,10 +70,10 @@ pub(super) fn translate_strips_operator_aux(
         HashMap::new();
 
     for (conditions_list, fact) in &operator.del_effects {
-        let eff_condition_list = translate_strips_conditions(translation, conditions_list);
-        if eff_condition_list.is_none() {
+        let Some(eff_condition_list) = translate_strips_conditions(translation, conditions_list)
+        else {
             continue;
-        }
+        };
         // An atom without an encoding is never true, so deleting it does
         // nothing.
         if let Some(pairs) = translation.dictionary.get(fact) {
@@ -85,7 +83,7 @@ pub(super) fn translate_strips_operator_aux(
                     .or_default()
                     .entry(val)
                     .or_default()
-                    .extend(eff_condition_list.clone().unwrap());
+                    .extend(eff_condition_list.clone());
             }
         }
     }
@@ -95,10 +93,10 @@ pub(super) fn translate_strips_operator_aux(
         HashMap::new();
 
     for (conditions_list, assignment) in &operator.assign_effects {
-        let eff_condition_list = translate_strips_conditions(translation, conditions_list);
-        if eff_condition_list.is_none() {
+        let Some(eff_condition_list) = translate_strips_conditions(translation, conditions_list)
+        else {
             continue;
-        }
+        };
         let expr_pne = assignment.expression.as_pne().unwrap_or_else(|| {
             panic!(
                 "numeric effect of operator {} has non-PNE expression {}",
@@ -125,7 +123,7 @@ pub(super) fn translate_strips_operator_aux(
             .or_default()
             .entry((assignment.symbol.clone(), expr_var))
             .or_default()
-            .extend(eff_condition_list.unwrap());
+            .extend(eff_condition_list);
     }
 
     if let Some(cost_assignment) = &operator.cost {
@@ -163,11 +161,10 @@ pub(super) fn translate_strips_operator_aux(
             .cloned()
             .unwrap_or_else(Vec::new);
 
-        let no_add_effect_condition = negate_and_translate_condition(translation, &add_conds);
-
-        if no_add_effect_condition.is_none() {
+        let Some(no_add_effect_condition) = negate_and_translate_condition(translation, &add_conds)
+        else {
             continue; // Always an add effect
-        }
+        };
 
         let none_of_those = translation.ranges[var] - 1;
         for (&val, conds) in del_vals {
@@ -178,7 +175,7 @@ pub(super) fn translate_strips_operator_aux(
                 }
                 guard_cond.set(var, val);
 
-                for no_add_cond in no_add_effect_condition.as_ref().unwrap() {
+                for no_add_cond in &no_add_effect_condition {
                     let mut new_cond = guard_cond.clone();
                     let mut contradicts = false;
                     for (cvar, cval) in no_add_cond.iter() {
@@ -403,10 +400,9 @@ pub(super) fn translate_strips_axiom(
     translation: &mut Translation,
     axiom: &PropositionalAxiom,
 ) -> Vec<SASAxiom> {
-    let conditions = translate_strips_conditions(translation, &axiom.condition);
-    if conditions.is_none() {
+    let Some(conditions) = translate_strips_conditions(translation, &axiom.condition) else {
         return vec![];
-    }
+    };
 
     // Since issue454 every axiom *proves* its head: the rules that refute a
     // derived variable are computed by the consumer that needs them, from the SAS
@@ -424,7 +420,7 @@ pub(super) fn translate_strips_axiom(
     let effect = pairs[0];
 
     let mut axioms = vec![];
-    for condition in conditions.unwrap() {
+    for condition in conditions {
         axioms.push(SASAxiom::new(condition.into_pairs(), effect));
     }
     axioms
