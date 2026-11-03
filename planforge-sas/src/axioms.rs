@@ -166,7 +166,7 @@ impl AssignmentAxiom {
         Ok(value)
     }
 
-    pub fn get_affected_var_id(&self) -> VariableIndex {
+    pub fn affected_var_id(&self) -> VariableIndex {
         self.affected_var_id
     }
 }
@@ -228,17 +228,17 @@ impl ComparisonAxiom {
             .compare(numeric_state, self.left_hand_side, self.right_hand_side)
     }
 
-    pub fn get_affected_var_id(&self) -> VariableIndex {
+    pub fn affected_var_id(&self) -> VariableIndex {
         self.affected_var_id
     }
-    pub fn get_left_var_id(&self) -> VariableIndex {
+    pub fn left_var_id(&self) -> VariableIndex {
         self.left_hand_side
     }
-    pub fn get_right_var_id(&self) -> VariableIndex {
+    pub fn right_var_id(&self) -> VariableIndex {
         self.right_hand_side
     }
 
-    pub fn get_operator(&self) -> &ComparisonOperator {
+    pub fn operator(&self) -> &ComparisonOperator {
         &self.operator
     }
 }
@@ -287,6 +287,7 @@ struct LiteralRef {
     value: ExplicitValueIndex,
 }
 
+#[derive(Debug)]
 pub struct AxiomEvaluator {
     /// The arithmetic axioms, in dependency-layer order.
     assignment_axioms: Vec<AssignmentAxiom>,
@@ -439,7 +440,7 @@ impl AxiomEvaluator {
         for axiom in &self.comparison_axioms {
             let is_hold = axiom.is_hold(numeric_state);
             self.state_packer
-                .set(buffer, axiom.get_affected_var_id().index(), !is_hold as u64);
+                .set(buffer, axiom.affected_var_id().index(), !is_hold as u64);
         }
     }
 

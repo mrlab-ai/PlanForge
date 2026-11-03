@@ -1,8 +1,11 @@
+//! The states potential functions are fitted to, sampled by random walks as
+//! the C++ implementation does.
+
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use std::sync::Arc;
 
-use planforge_search::successor_generator::{RegistryExpander, StandardGroundedTree};
+use planforge_search::successor_generator::{StandardGroundedTree, StateExpander};
 
 /// The C++ planner's seed for its potential-function sampler.
 const SEED: u32 = 2011;
@@ -29,7 +32,7 @@ impl SampleSpace {
 /// C++ planner's random stream.
 pub(crate) struct RandomWalkSampler {
     task: Arc<Task>,
-    expander: RegistryExpander<StandardGroundedTree>,
+    expander: StateExpander<StandardGroundedTree>,
     rng: CppMt19937,
     initial_h: f64,
     average_operator_cost: Option<f64>,
@@ -41,7 +44,7 @@ impl RandomWalkSampler {
     /// has no operators).
     pub(crate) fn new(task: Arc<Task>, initial_h: f64, average_operator_cost: Option<f64>) -> Self {
         Self {
-            expander: RegistryExpander::new(StandardGroundedTree::new(&task)),
+            expander: StateExpander::new(StandardGroundedTree::new(&task)),
             task,
             rng: CppMt19937::new(SEED),
             initial_h,

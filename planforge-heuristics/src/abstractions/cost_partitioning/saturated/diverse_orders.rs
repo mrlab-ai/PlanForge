@@ -1,3 +1,6 @@
+//! Diverse orders (Seipp 2017): orders kept only if they improve the estimate
+//! of some sampled state.
+
 use std::collections::{HashMap, HashSet};
 
 use tracing::info;
@@ -30,7 +33,7 @@ impl ScpBuilder {
             self.config
                 .max_time
                 .duration()
-                .map_err(EvaluationError::ComputationFailed)?,
+                .expect("ScpConfig::validate checked the time limits"),
         )?);
         let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
         let samples = self.sample_states(

@@ -18,8 +18,9 @@ impl TimeLimit {
     pub const fn seconds(self) -> f64 {
         self.0
     }
-    pub fn duration(self) -> Result<Option<Duration>, String> {
-        crate::resource_limits::time_limit_from_secs(self.0).map_err(|error| error.to_string())
+    pub fn duration(self) -> Result<Option<Duration>, super::ConfigError> {
+        crate::resource_limits::time_limit_from_secs(self.0)
+            .map_err(|error| error.to_string().into())
     }
     fn from_seconds(seconds: f64) -> Result<Self, String> {
         if seconds.is_nan() || seconds < 0.0 {
@@ -39,8 +40,13 @@ impl From<Duration> for TimeLimit {
     }
 }
 impl FromOptionValue for TimeLimit {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        Ok(Self::from_seconds(f64::from_option_value(value)?)?)
+    fn from_option_value(
+        value: &ConfigValue,
+        features: &crate::registry::Features,
+    ) -> Result<Self, crate::config::ConfigError> {
+        Ok(Self::from_seconds(f64::from_option_value(
+            value, features,
+        )?)?)
     }
 
     fn option_text(&self) -> String {
@@ -54,7 +60,9 @@ mod tests {
 
     #[test]
     fn time_limits_preserve_seconds_and_convert_only_when_a_clock_is_needed() {
-        let parse = |text: &str| TimeLimit::from_option_value(&ConfigValue::Atom(text.into()));
+        let features = crate::registry::Features::builtin();
+        let parse =
+            |text: &str| TimeLimit::from_option_value(&ConfigValue::Atom(text.into()), &features);
         assert_eq!(parse("infinity").unwrap().duration().unwrap(), None);
         assert_eq!(
             parse("2.5").unwrap().duration().unwrap(),

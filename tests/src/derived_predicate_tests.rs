@@ -37,9 +37,8 @@ use planforge_heuristics::landmarks::lm_cut_numeric_heuristic::{
 use planforge_heuristics::relaxation::FfHeuristic;
 use planforge_sas::numeric_task::{Task, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
-use planforge_search::config::parse_call;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{BuildContext, HeuristicConfig};
+use planforge_search::heuristic_features::BuildContext;
 use planforge_search::search::SearchOutcome;
 use planforge_search::search::best_first::{AStarSearch, SearchParams};
 
@@ -161,7 +160,7 @@ fn fixture_task(name: &str) -> Task {
 fn comparison_heads(task: &Task) -> BTreeSet<usize> {
     task.comparison_axioms()
         .iter()
-        .map(|axiom| axiom.get_affected_var_id().index())
+        .map(|axiom| axiom.affected_var_id().index())
         .collect()
 }
 
@@ -329,9 +328,11 @@ fn derived_predicate_fixtures_keep_their_optima_and_shape() {
 fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
     for &(name, cost, length) in FIXTURE_OPTIMA {
         let task = fixture_task(name);
-        let heuristic =
-            LandmarkCutNumericHeuristic::from_config(&task as &Task, LmCutNumericConfig::default())
-                .expect("the default lmcutnumeric config is supported");
+        let heuristic = LandmarkCutNumericHeuristic::from_config(
+            Arc::new(task.clone()),
+            LmCutNumericConfig::default(),
+        )
+        .expect("the default lmcutnumeric config is supported");
         let found = astar_solution(&task, Box::new(heuristic), &format!("{name}/lmcutnumeric"));
         let expected = Solution { cost, length };
         assert!(
@@ -344,11 +345,7 @@ fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
 
 /// Cost and length of the plan A* returns for `task` under `heuristic`, insisting
 /// that it returns one.
-fn astar_solution<'task>(
-    task: &'task Task,
-    heuristic: Box<dyn Heuristic + 'task>,
-    what: &str,
-) -> Solution {
+fn astar_solution(task: &Task, heuristic: Box<dyn Heuristic>, what: &str) -> Solution {
     let result = AStarSearch::new(Arc::new(task.clone()), SearchParams::new(heuristic))
         .run()
         .unwrap_or_else(|error| panic!("{what}: A* failed: {error}"));
@@ -440,12 +437,11 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
         ),
     );
 
-    planforge_search::heuristic_factory::HEURISTICS
-        .ensure_registered(planforge_heuristics::heuristics);
     let task_ref: Arc<Task> = Arc::new(task.clone());
-    let pdb = HeuristicConfig::from_spec(&parse_call("pdb(patterns=greedy())").unwrap())
+    let pdb = planforge_heuristics::features()
+        .parse_heuristic("pdb(patterns=greedy())")
         .unwrap()
-        .build(&BuildContext::new(&task_ref));
+        .build(&BuildContext::new(task_ref.clone()));
     assert_refusal(
         "the greedy numeric PDB",
         pdb.err()
@@ -487,8 +483,11 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
     let lmcut = astar_solution(
         &task,
         Box::new(
-            LandmarkCutNumericHeuristic::from_config(&task as &Task, LmCutNumericConfig::default())
-                .expect("the default lmcutnumeric config is supported"),
+            LandmarkCutNumericHeuristic::from_config(
+                Arc::new(task.clone()),
+                LmCutNumericConfig::default(),
+            )
+            .expect("the default lmcutnumeric config is supported"),
         ),
         &format!("{name}/lmcutnumeric"),
     );
@@ -554,10 +553,11 @@ fn a_derived_closure_grows_when_an_operator_extends_the_graph() {
         .find(|operator| operator.name() == "build-link n4 n5")
         .expect("the fixture has a `build-link n4 n5` operator");
 
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let extended = registry
-        .get_successor_state(&initial, build_link)
-        .expect("`build-link n4 n5` is applicable in the initial state");
+        .successor(&initial, build_link)
+        .expect("`build-link n4 n5` is applicable in the initial state")
+        .0;
 
     let proven = |state: &_| -> BTreeSet<usize> {
         let mut propositional = Vec::new();

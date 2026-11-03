@@ -3,15 +3,14 @@
 //! [`translate_to_task`], [`translate_to_sas_to_path`],
 //! [`translate_to_sas_to_path_fast`] and [`translate_to_sas_string`] are the
 //! whole public surface. The pipeline stages behind them are private: they only
-//! ever ran in this order, and the one crate that used to reach past them was
-//! this crate's own CLI wrapper.
+//! run in this order.
 //!
 //! This is the first stage of PlanForge's PDDL translation → SAS+ task → search
 //! pipeline. The usual in-memory entry point returns the task consumed by
 //! `planforge-search`:
 //!
 //! ```no_run
-//! # fn main() -> anyhow::Result<()> {
+//! # fn main() -> Result<(), planforge_translate::TranslateError> {
 //! let task = planforge_translate::translate_to_task("domain.pddl", "problem.pddl")?;
 //! let _ = task;
 //! # Ok(())
@@ -22,6 +21,7 @@ mod api;
 mod axiom_rules;
 mod build_model;
 mod constraints;
+mod exploration_rules;
 mod fact_groups;
 mod greedy_join;
 mod grounding;
@@ -43,8 +43,9 @@ mod tools;
 mod translate;
 
 pub use api::{
-    translate_to_sas_string, translate_to_sas_to_path, translate_to_sas_to_path_fast,
-    translate_to_sas_to_path_with_limits, translate_to_task, translate_to_task_with_limits,
+    TranslateError, translate_to_sas_string, translate_to_sas_to_path,
+    translate_to_sas_to_path_fast, translate_to_sas_to_path_with_limits, translate_to_task,
+    translate_to_task_with_limits,
 };
 pub use grounding::{
     DEFAULT_MAX_GROUND_ACTIONS, DEFAULT_MAX_GROUND_ATOMS, DEFAULT_MAX_GROUNDING_MEMORY,

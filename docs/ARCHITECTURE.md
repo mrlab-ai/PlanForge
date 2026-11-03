@@ -17,7 +17,7 @@ planforge-heuristics   (abstractions, landmarks, relaxation, potentials, combina
       ^          \
       |           planforge-cplex (optional, LP backend)
       |
-planforge   (binaries, CLI, limits; registers the heuristics)
+planforge   (binaries, CLI, limits; parses with planforge_heuristics::features())
 ```
 
 ## The task (`planforge-sas`)
@@ -59,23 +59,23 @@ propositional values without decoding a whole state.
   registered one is a `Box<dyn OpenList>`. Open-list entries are 24 bytes.
 - `evaluation`: the `Heuristic` trait, `EvaluationState`, blind search, and
   shared helpers (random walks, seeds, a per-state value cache).
-- `registry`: the registries of the features the configuration language
-  names. Each feature is a typed configuration (derived with
+- `registry`: `Features`, the value that holds one registry per kind of
+  feature the configuration language names, and parses configuration
+  strings. Each feature is a typed configuration (derived with
   `#[derive(ApplyOptions)]`) plus what it does: a `HeuristicFeature`
-  (`heuristic_factory::HEURISTICS`) builds a heuristic, says what it needs
-  of the build (`preflight`, such as an LP solver, checked before
-  translation) and of the task (`TaskRequirements`: transformations by name
-  and `TaskCheck`s the transformed task must pass, such as
-  `planforge_heuristics::requirements::RESTRICTED`), a `SearchFeature`
-  (`search::SEARCH_ALGORITHMS`, with A* and greedy best-first search built in)
-  runs a search, a `TransformationFeature`
-  (`task_transformations::TRANSFORMATIONS`, with `restrict` built in)
-  transforms the task before it. A binary registers the other features once,
-  before it parses a configuration.
+  (`heuristic_features`) builds a heuristic, says what it needs of the build
+  (`preflight`, such as an LP solver, checked before translation) and of the
+  task (`TaskRequirements`: transformations by name and `TaskCheck`s the
+  transformed task must pass, such as
+  `planforge_heuristics::requirements::RESTRICTED`), a `SearchFeature` (A*
+  and greedy best-first search built in) runs a search, a
+  `TransformationFeature` (`restrict` built in) transforms the task before
+  it. `Features::builtin()` holds the built-in features; a program adds the
+  others to its value, and nested configurations, such as the heuristic
+  inside `astar(...)`, are parsed with the same value.
 - `successor_generator`: the `SuccessorGenerator` trait (which operators
   are applicable in a state; applying them stays with the `StateRegistry`),
-  the standard grounded tree that is the default, and their registry
-  `SUCCESSOR_GENERATORS`.
+  and the standard grounded tree that is the default.
 - `state_space` (the exact state space), `graph` (the
   backward goal-distance search shared with the abstractions),
   `task_transformations`, `resource_limits`.
@@ -107,7 +107,7 @@ Batched evaluation, for example a neural network over all successors of an
 expansion, touches three places and nothing else:
 
 1. the `Heuristic` trait: a default method
-   `evaluate_batch(&mut self, states: &[EvaluationState], estimates: &mut Vec<f64>)`
+   `evaluate_batch(&mut self, states: &[EvaluationState], estimates: &mut Vec<Estimate>)`
    that calls `evaluate` per state, so every heuristic keeps working
    unchanged;
 2. the evaluation phase of `BestFirstSearch::expand`: build the
@@ -134,24 +134,44 @@ One module per technique, each depending on the core only:
 - `combinations`: the maximum over arbitrary heuristics and the admissibility
   check around one.
 
-`heuristics()` and `transformations()` list the features of the crate;
-`planforge` registers them.
+`planforge_heuristics::features()` is the built-in features with the
+crate's heuristics and transformations added; `planforge` parses its
+command line with it.
 
 ## Extending PlanForge
 
 | To add | Implement | Register | Example |
 |---|---|---|---|
-| a heuristic | `Heuristic`, and a `HeuristicFeature` for its configuration | one entry in `planforge_heuristics::heuristics()`, or `planforge::Extensions::heuristics` with `planforge::run_with` from your own binary | `tutorials/rust-goal-count`, `tutorials/rust-plugin-binary` |
-| a search algorithm | a `SearchFeature` whose search composes `SearchSpace` and `SearchProgress` (for best-first search, a `NodeOrdering`) | `planforge::Extensions::search_algorithms` | `tutorials/rust-custom-search` |
-| an open list | `OpenList` over `OpenEntry` (g, h, state, insertion order), and an `OpenListFeature` | `planforge::Extensions::open_lists`; a best-first search names it with `open_list=...` | `tutorials/rust-plugin-binary` (`f_heap`) |
+| a heuristic | `Heuristic`, and a `HeuristicFeature` for its configuration | one entry in `planforge_heuristics::features()`, or `features.heuristics.add(..)` before `planforge::run_with(features)` in your own binary | `tutorials/rust-goal-count`, `tutorials/rust-plugin-binary` |
+| a search algorithm | a `SearchFeature` whose search composes `SearchSpace` and `SearchProgress` (for best-first search, a `NodeOrdering`) | `features.search_algorithms.add(..)` | `tutorials/rust-custom-search` |
+| an open list | `OpenList` over `OpenEntry` (g, h, state, insertion order), and an `OpenListFeature` | `features.open_lists.add(..)`; a best-first search names it with `open_list=...` | `tutorials/rust-plugin-binary` (`f_heap`) |
 | a node ordering | `NodeOrdering` (a key from g and h) | a `SearchFeature` that runs `BestFirstSearch<YourOrdering, _>` | `search::best_first::AStar` |
-| a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `planforge::Extensions::successor_generators`; a search names it with `successor_generator=...` | the `successor_generator` module documentation, `successor_generator::StandardGroundedTree` |
-| a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::transformations()`, or `planforge::Extensions::transformations` | `task_transformations::restriction::RestrictFeature` |
+| a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `features.successor_generators.add(..)`; a search names it with `successor_generator=...` | the `successor_generator` module documentation, `successor_generator::StandardGroundedTree` |
+| a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::features()`, or `features.transformations.add(..)` | `task_transformations::restriction::RestrictFeature` |
 | what a heuristic needs | a `TaskCheck` (of the task) or `HeuristicFeature::preflight` (of the build) | returned from the heuristic's `HeuristicFeature` | `planforge_heuristics::requirements` |
 
-A heuristic owns its state (`&mut self`), reads the task through `&Task` or a
-shared `Arc<Task>`, and reports invalid internal states by panicking, never by
-returning a default.
+A heuristic owns its state (`&mut self`) and everything it reads, such as a
+shared `Arc<Task>`, so it is `Send` and outlives the context that built it. It
+returns an `Estimate`: a non-negative cost or `Estimate::DEAD_END`. It reports
+invalid internal states by panicking, never by returning a default.
+
+## Errors
+
+Each area of the libraries has one error type to match on; the binaries map
+them to exit codes.
+
+| Area | Error |
+|---|---|
+| loading a SAS+ task | `planforge_sas::numeric_task::TaskLoadError` |
+| translating PDDL | `planforge_translate::TranslateError` (with `ParseError`, `GroundingLimitError`) |
+| configuration strings | `planforge_search::config::ConfigError` |
+| task transformations | `planforge_search::task_transformations::TransformError` |
+| building a heuristic | `planforge_search::heuristic_factory::HeuristicBuildError` |
+| evaluating a state | `planforge_search::evaluation::EvaluationError` |
+| running a search | `planforge_search::search::SearchError` |
+
+A heuristic that reaches a state it cannot handle because of a bug panics
+instead of returning one of these.
 
 ## Verifying a change
 

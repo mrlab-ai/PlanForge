@@ -1,3 +1,6 @@
+//! The order in which the greedy pattern generator adds variables, as Fast
+//! Downward's variable order finder.
+
 #[cfg(test)]
 mod tests;
 
@@ -26,6 +29,7 @@ option_enum!("variable_order_type", GreedyVariableOrderType {
     GoalCgLevel => "goal_cg_level",
 });
 
+#[derive(Debug)]
 pub struct VariableOrderFinder {
     remaining_vars: Vec<(VariableIndex, bool)>,
     is_goal_variable: Vec<bool>,
@@ -72,12 +76,11 @@ impl VariableOrderFinder {
         let num_numeric_variables = task.numeric_variables().len();
         let mut is_numeric_goal_variable = vec![false; num_numeric_variables];
         // A numeric variable counts as a goal variable when the goal names a
-        // comparison over it. The goal used to name the derived atom above such a
-        // comparison instead, which is why this walked the axiom bodies;
-        // `validate_abstractable_goal` refuses that goal, so the comparison
-        // variable is named directly and `is_goal_variable` already holds it.
+        // comparison over it; `validate_abstractable_goal` guarantees that the
+        // goal names the comparison variable itself, so `is_goal_variable`
+        // already holds it.
         for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-            if !is_goal_variable[comparison_axiom.get_affected_var_id().index()] {
+            if !is_goal_variable[comparison_axiom.affected_var_id().index()] {
                 continue;
             }
             if let Some(numeric_var_id) = causal_graph.comparison_numeric_var(comparison_axiom_id)

@@ -1,3 +1,6 @@
+//! Orders of the abstractions: random orders and the greedy order by heuristic
+//! value per stolen cost.
+
 use std::collections::HashSet;
 use std::time::Duration;
 

@@ -109,7 +109,7 @@ impl LandmarkCutLandmarks {
         }
 
         for comparison_axiom in self.task.comparison_axioms().iter() {
-            let affected_var_id = comparison_axiom.get_affected_var_id();
+            let affected_var_id = comparison_axiom.affected_var_id();
             let condition_ids = self
                 .numeric_helper
                 .get_comparison_fact_condition_ids(affected_var_id, COMPARISON_FALSE_FACT_VALUE);

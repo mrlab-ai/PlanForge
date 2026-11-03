@@ -12,16 +12,17 @@ mod heuristic;
 use crate::abstractions::sources::CombinationConfig;
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 
 /// `posthoc_optimization(sources)`.
+#[derive(Debug)]
 pub struct PostHocFeature;
 impl HeuristicFeature for PostHocFeature {
     const NAME: &'static str = "posthoc_optimization";
     type Config = CombinationConfig;
-    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+    fn preflight(_: &Self::Config) -> Result<(), HeuristicBuildError> {
         crate::requirements::require_cplex()
     }
     fn requirements(config: &Self::Config) -> TaskRequirements {
@@ -31,15 +32,15 @@ impl HeuristicFeature for PostHocFeature {
         config.validate()
     }
     #[cfg(feature = "cplex")]
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         use crate::abstractions::sources::{
             AbstractionPurpose, build_components, remaining_construction_time,
         };
         let deadline = config.deadline()?;
-        let task = &**context.task;
+        let task = &*context.task;
         let components = build_components(
             task,
             &config.sources,
@@ -56,10 +57,10 @@ impl HeuristicFeature for PostHocFeature {
         Ok(Box::new(heuristic))
     }
     #[cfg(not(feature = "cplex"))]
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        _: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        _: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         unreachable!("the registry rejects a CPLEX heuristic in a build without CPLEX")
     }
 }

@@ -28,6 +28,7 @@ use planforge_sas::numeric_task::{
     VariableIndex,
 };
 
+use crate::task_transformations::TransformError;
 use crate::task_transformations::restriction::validate_restricted_task;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -137,11 +138,30 @@ impl fmt::Display for ProjectedTaskBuildError {
 
 impl std::error::Error for ProjectedTaskBuildError {}
 
+/// A pattern database cannot be built on a task the projection does not
+/// support; a pattern naming no variable of the task is a failure.
+impl From<ProjectedTaskBuildError> for crate::heuristic_features::HeuristicBuildError {
+    fn from(error: ProjectedTaskBuildError) -> Self {
+        match error {
+            ProjectedTaskBuildError::UnrestrictedTask { .. }
+            | ProjectedTaskBuildError::UnabstractableGoal { .. }
+            | ProjectedTaskBuildError::UnsupportedPatternNumericVarType { .. } => {
+                Self::Unsupported(error.to_string())
+            }
+            ProjectedTaskBuildError::InvalidRegularVarId { .. }
+            | ProjectedTaskBuildError::InvalidNumericVarId { .. } => {
+                Self::Failure(error.to_string())
+            }
+        }
+    }
+}
+
 /// The projection of a task onto a pattern: a task of its own over the
 /// pattern's variables, and the ids that lead back to the base task.
 ///
 /// The projected task keeps the base task's operator costs, so its goal
 /// distances are those of the abstraction the pattern induces.
+#[derive(Debug)]
 pub struct ProjectedTask {
     task: Arc<Task>,
     base_operator_ids: Vec<OperatorIndex>,
@@ -153,10 +173,16 @@ pub struct ProjectedTask {
 
 impl ProjectedTask {
     pub fn new(base: &Task, pattern: &Pattern) -> Result<Self, ProjectedTaskBuildError> {
-        validate_restricted_task(base)
-            .map_err(|reason| ProjectedTaskBuildError::UnrestrictedTask { reason })?;
-        validate_abstractable_goal(base)
-            .map_err(|reason| ProjectedTaskBuildError::UnabstractableGoal { reason })?;
+        validate_restricted_task(base).map_err(|reason| {
+            ProjectedTaskBuildError::UnrestrictedTask {
+                reason: reason.to_string(),
+            }
+        })?;
+        validate_abstractable_goal(base).map_err(|reason| {
+            ProjectedTaskBuildError::UnabstractableGoal {
+                reason: reason.to_string(),
+            }
+        })?;
         let num_vars = base.variables().len();
         let num_numeric_vars = base.numeric_variables().len();
 
@@ -522,8 +548,8 @@ fn include_restricted_comparison_operands(
 ) {
     let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
     for numeric_var_id in [
-        comparison_axiom.get_left_var_id(),
-        comparison_axiom.get_right_var_id(),
+        comparison_axiom.left_var_id(),
+        comparison_axiom.right_var_id(),
     ] {
         assert_ne!(
             task.numeric_type(numeric_var_id),
@@ -551,8 +577,8 @@ fn include_comparisons_over_projected_variables(task: &Task, projection: Variabl
         |numeric_var_id: VariableIndex| task.numeric_type(numeric_var_id) == NumericType::Constant;
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
         let operands = [
-            comparison_axiom.get_left_var_id(),
-            comparison_axiom.get_right_var_id(),
+            comparison_axiom.left_var_id(),
+            comparison_axiom.right_var_id(),
         ];
         let projected = |numeric_var_id: VariableIndex| {
             projection.original_num_var_to_projected[numeric_var_id.index()].is_some()
@@ -567,7 +593,7 @@ fn include_comparisons_over_projected_variables(task: &Task, projection: Variabl
             continue;
         }
         push_unique_mapping(
-            comparison_axiom.get_affected_var_id(),
+            comparison_axiom.affected_var_id(),
             projection.projected_var_to_original,
             projection.original_var_to_projected,
         );
@@ -628,8 +654,8 @@ fn collect_restricted_projected_goals(
                 let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
                 members.regular.contains(&fact.var_index())
                     || [
-                        comparison_axiom.get_left_var_id(),
-                        comparison_axiom.get_right_var_id(),
+                        comparison_axiom.left_var_id(),
+                        comparison_axiom.right_var_id(),
                     ]
                     .iter()
                     .any(|id| members.numeric.contains(id))
@@ -771,22 +797,22 @@ fn project_restricted_comparison_axiom(
 ) -> Option<ComparisonAxiom> {
     let axiom = &task.comparison_axioms()[comparison_axiom_id];
     let affected = var_map
-        .get(axiom.get_affected_var_id().index())
+        .get(axiom.affected_var_id().index())
         .copied()
         .flatten()?;
     let left = num_var_map
-        .get(axiom.get_left_var_id().index())
+        .get(axiom.left_var_id().index())
         .copied()
         .flatten()?;
     let right = num_var_map
-        .get(axiom.get_right_var_id().index())
+        .get(axiom.right_var_id().index())
         .copied()
         .flatten()?;
     Some(ComparisonAxiom::new(
         VariableIndex::from_usize(affected),
         VariableIndex::from_usize(left),
         VariableIndex::from_usize(right),
-        axiom.get_operator().clone(),
+        axiom.operator().clone(),
     ))
 }
 
@@ -795,7 +821,7 @@ fn project_assignment_axiom(
     num_var_map: &[Option<usize>],
 ) -> Option<AssignmentAxiom> {
     let affected = num_var_map
-        .get(axiom.get_affected_var_id().index())
+        .get(axiom.affected_var_id().index())
         .and_then(|mapped| *mapped)?;
     let mapped = |var: VariableIndex| {
         num_var_map
@@ -851,7 +877,7 @@ fn normalize_projected_variable_layers(
 
     let mut affects_comparison = vec![false; num_variables];
     for axiom in comparison_axioms {
-        let var_id = axiom.get_affected_var_id();
+        let var_id = axiom.affected_var_id();
         if var_id.index() < num_variables {
             affects_comparison[var_id.index()] = true;
         }
@@ -957,19 +983,19 @@ fn normalize_projected_variable_layers(
 /// quantified or nested goal. Every non-abstraction configuration — blind, `ff`,
 /// `lmcutnumeric` — still solves both, since it tests the goal fact in a state the
 /// axiom evaluator has closed.
-pub fn validate_abstractable_goal(task: &Task) -> std::result::Result<(), String> {
+pub fn validate_abstractable_goal(task: &Task) -> std::result::Result<(), TransformError> {
     for fact in task.goals() {
         if fact.is_condition() {
             continue;
         }
         let variable = &task.variables()[fact.var()];
         if let Some(layer) = variable.axiom_layer() {
-            return Err(format!(
+            return Err(TransformError::Unsupported(format!(
                 "abstractions support conjunctive goals only: goal fact {fact:?} names the \
                  derived variable {:?} ({:?}) in axiom layer {layer}, which no operator writes",
                 variable.name(),
                 task.fact_name(fact)
-            ));
+            )));
         }
     }
     Ok(())

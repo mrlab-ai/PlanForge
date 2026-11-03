@@ -1,5 +1,5 @@
 /// The one way evaluating the arithmetic axioms in a state can fail.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssignmentAxiomError {
     DivisionByZero { divisor: usize },
 }
@@ -31,3 +31,11 @@ pub struct StateNotFoundError {
 pub struct StateInsertError {
     pub message: String,
 }
+
+impl std::fmt::Display for StateInsertError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for StateInsertError {}

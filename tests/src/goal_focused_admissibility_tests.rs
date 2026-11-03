@@ -72,18 +72,12 @@ fn optimal_plan_states(task: &Task) -> (StateRegistry, Vec<(ConcreteState, f64)>
     };
 
     let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
-    let mut state = registry.get_initial_state();
+    let mut state = registry.register_initial_state();
     let mut prefix_costs = vec![0.0];
     let mut states = vec![state.clone()];
-    let (mut successor_values, mut cost_values) = (Vec::new(), Vec::new());
     for operator in &plan {
         let (successor, cost) = registry
-            .get_successor_state_with_buffers_and_cost(
-                &state,
-                operator,
-                &mut successor_values,
-                &mut cost_values,
-            )
+            .successor(&state, operator)
             .expect("an optimal plan's operators apply in sequence");
         prefix_costs.push(prefix_costs.last().unwrap() + cost);
         states.push(successor.clone());
@@ -172,11 +166,11 @@ fn assert_admissible_along_plan(
     heuristic: &mut dyn Heuristic,
 ) {
     for (step, (state, optimal_cost)) in states.iter().enumerate() {
-        let mut eval = EvaluationState::new(state, task as &Task, registry);
-        eval.set_is_goal(step + 1 == states.len());
+        let eval = EvaluationState::new(state, task as &Task, registry);
         let h = heuristic
             .evaluate(&eval)
-            .unwrap_or_else(|error| panic!("{what}: evaluation failed at step {step}: {error:?}"));
+            .unwrap_or_else(|error| panic!("{what}: evaluation failed at step {step}: {error:?}"))
+            .value();
         assert!(
             h.is_finite(),
             "{what}: h={h} on solvable plan state {step} (h*={optimal_cost})"

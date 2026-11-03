@@ -8,18 +8,19 @@
 //! # Where to start
 //!
 //! Each extension point is a trait; a feature the configuration language
-//! names is that trait plus a typed configuration, registered in the
-//! feature's registry (a binary registers through `planforge::Extensions`).
+//! names is that trait plus a typed configuration, added to its kind's
+//! registry in a [`registry::Features`] value, which then parses
+//! configuration strings ([`registry::Features::parse_search`]).
 //!
-//! | To add | Implement | Registry |
+//! | To add | Implement | Registry in [`registry::Features`] |
 //! |---|---|---|
-//! | a heuristic | [`evaluation::Heuristic`], [`heuristic_factory::HeuristicFeature`] | [`heuristic_factory::HEURISTICS`] |
-//! | a search algorithm | [`search::SearchFeature`], composing [`search::SearchSpace`] and [`search::SearchProgress`] | [`search::SEARCH_ALGORITHMS`] |
+//! | a heuristic | [`evaluation::Heuristic`], [`heuristic_features::HeuristicFeature`] | `heuristics` |
+//! | a search algorithm | [`search::SearchFeature`], composing [`search::SearchSpace`] and [`search::SearchProgress`] | `search_algorithms` |
 //! | a best-first node ordering | [`search::best_first::NodeOrdering`] | -- (a search algorithm instantiates it) |
-//! | an open list | [`search::best_first::OpenList`], [`search::best_first::OpenListFeature`] | [`search::best_first::OPEN_LISTS`] |
-//! | a successor generator | [`successor_generator::SuccessorGenerator`], [`successor_generator::SuccessorGeneratorFeature`] | [`successor_generator::SUCCESSOR_GENERATORS`] |
-//! | a task transformation | [`task_transformations::TransformationFeature`] | [`task_transformations::TRANSFORMATIONS`] |
-//! | a requirement on the task | [`heuristic_factory::TaskCheck`] in [`heuristic_factory::TaskRequirements`] | -- (a heuristic feature returns it) |
+//! | an open list | [`search::best_first::OpenList`], [`search::best_first::OpenListFeature`] | `open_lists` |
+//! | a successor generator | [`successor_generator::SuccessorGenerator`], [`successor_generator::SuccessorGeneratorFeature`] | `successor_generators` |
+//! | a task transformation | [`task_transformations::TransformationFeature`] | `transformations` |
+//! | a requirement on the task | [`heuristic_features::TaskCheck`] in [`heuristic_features::TaskRequirements`] | -- (a heuristic feature returns it) |
 //!
 //! The tutorials in the repository show each path end to end.
 //!
@@ -31,7 +32,7 @@
 //! use std::sync::Arc;
 //!
 //! use planforge_sas::numeric_task::Task;
-//! use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+//! use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
 //! use planforge_search::search::SearchOutcome;
 //! use planforge_search::search::best_first::{AStarSearch, SearchParams};
 //!
@@ -39,10 +40,10 @@
 //! struct GoalCount;
 //!
 //! impl Heuristic for GoalCount {
-//!     fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+//!     fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<Estimate, EvaluationError> {
 //!         let view = state.state_registry().view(state.state());
 //!         let unsatisfied = state.task().goals().iter().filter(|goal| !goal.is_held(view));
-//!         Ok(unsatisfied.count() as f64)
+//!         Ok(Estimate::new(unsatisfied.count() as f64))
 //!     }
 //!
 //!     fn name(&self) -> &str {
@@ -66,7 +67,7 @@ extern crate self as planforge_search;
 pub mod config;
 pub mod evaluation;
 pub mod graph;
-pub mod heuristic_factory;
+pub mod heuristic_features;
 pub mod registry;
 pub mod resource_limits;
 pub mod search;

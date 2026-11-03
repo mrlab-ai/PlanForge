@@ -29,7 +29,12 @@ fn astar_heuristic(input: &str) -> ConfigCall {
 /// The combination `input` configures, parsed and validated.
 fn combination<O: ApplyOptions + Default>(input: &str) -> Result<CombinationConfig<O>, String> {
     let spec = astar_heuristic(input);
-    let config = configure(&spec.name, CombinationConfig::<O>::default(), &spec.args)?;
+    let config = configure(
+        &spec.name,
+        CombinationConfig::<O>::default(),
+        &spec.args,
+        &crate::features(),
+    )?;
     config.validate().map_err(|error| error.at(&spec.name))?;
     Ok(config)
 }
@@ -61,7 +66,7 @@ fn cartesian_source_config(
 ) -> Result<CartesianAbstractionConfig, String> {
     let mut config = CartesianAbstractionConfig::default();
     config.cegar.keep_transitions = purpose.needs_transition_system();
-    Ok(configure("cartesian", config, args)?)
+    Ok(configure("cartesian", config, args, &crate::features())?)
 }
 
 #[test]
@@ -72,7 +77,7 @@ fn parses_astar_domain_with_named_options() {
     assert_eq!(h.name, "domain");
 
     let mut cfg = DomainAbstractionConfig::default();
-    cfg.apply_options(&h.args).unwrap();
+    cfg.apply_options(&h.args, &crate::features()).unwrap();
     assert_eq!(cfg.cegar.max_states, 10_000);
     assert!(!cfg.use_wildcard_plans);
     assert!(cfg.cegar.combine_labels);
@@ -101,9 +106,14 @@ fn hierarchical_scp_sets_every_scp_option() {
     let h = astar_heuristic(
         "astar(scp([domain_collection()], goal_cover_orders_per_goal=2, random_orders=5))",
     );
-    let config = configure(&h.name, CombinationConfig::<ScpConfig>::default(), &h.args)
-        .unwrap()
-        .options;
+    let config = configure(
+        &h.name,
+        CombinationConfig::<ScpConfig>::default(),
+        &h.args,
+        &crate::features(),
+    )
+    .unwrap()
+    .options;
     assert_eq!(config.goal_cover_orders_per_goal, 2);
     assert_eq!(config.random_orders, 5);
 }
@@ -111,9 +121,14 @@ fn hierarchical_scp_sets_every_scp_option() {
 #[test]
 fn hierarchical_scp_rejects_positional_options() {
     let h = astar_heuristic("astar(scp([domain_collection()], 5))");
-    let error = configure(&h.name, CombinationConfig::<ScpConfig>::default(), &h.args)
-        .unwrap_err()
-        .to_string();
+    let error = configure(
+        &h.name,
+        CombinationConfig::<ScpConfig>::default(),
+        &h.args,
+        &crate::features(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(
         error.contains("too many positional arguments"),
         "got `{error}`"
@@ -123,9 +138,14 @@ fn hierarchical_scp_rejects_positional_options() {
 #[test]
 fn list_is_a_typed_error_for_a_scalar_option() {
     let h = astar_heuristic("astar(scp([domain_collection()], max_time=[5]))");
-    let error = configure(&h.name, CombinationConfig::<ScpConfig>::default(), &h.args)
-        .unwrap_err()
-        .to_string();
+    let error = configure(
+        &h.name,
+        CombinationConfig::<ScpConfig>::default(),
+        &h.args,
+        &crate::features(),
+    )
+    .unwrap_err()
+    .to_string();
     assert_eq!(error, "scp.max_time: expected scalar value, got a list");
 }
 
@@ -145,12 +165,19 @@ fn both_representations_take_the_same_cegar_options() {
                    random_seed=5, flaw_kind=regression, flaw_scope=whole_plan, split_kind=wanted, \
                    split_selection=random, split_selection_rank=1, debug=true";
     let domain = astar_heuristic(&format!("astar(domain({options}))"));
-    let domain = configure("domain", DomainAbstractionConfig::default(), &domain.args).unwrap();
+    let domain = configure(
+        "domain",
+        DomainAbstractionConfig::default(),
+        &domain.args,
+        &crate::features(),
+    )
+    .unwrap();
     let cartesian = astar_heuristic(&format!("astar(cartesian({options}))"));
     let cartesian = configure(
         "cartesian",
         CartesianAbstractionConfig::default(),
         &cartesian.args,
+        &crate::features(),
     )
     .unwrap();
     assert_eq!(domain.cegar, cartesian.cegar);
@@ -180,7 +207,7 @@ fn parses_whole_plan_regression_flaws() {
 fn parses_single_domain_time_limit() {
     let h = astar_heuristic("astar(domain(max_states=1000,max_time=900,flaw_scope=whole_plan))");
     let mut cfg = DomainAbstractionConfig::default();
-    cfg.apply_options(&h.args).unwrap();
+    cfg.apply_options(&h.args, &crate::features()).unwrap();
     assert_eq!(cfg.cegar.max_states, 1000);
     assert_eq!(
         cfg.cegar.max_time,
@@ -189,7 +216,7 @@ fn parses_single_domain_time_limit() {
     assert_eq!(cfg.cegar.flaw_scope, FlawScope::WholePlan);
 
     let h = astar_heuristic("astar(domain(max_time=infinity))");
-    cfg.apply_options(&h.args).unwrap();
+    cfg.apply_options(&h.args, &crate::features()).unwrap();
     assert_eq!(cfg.cegar.max_time, None.into());
 }
 
@@ -200,7 +227,7 @@ fn parses_greedy_pattern_options() {
     )
     .unwrap();
     let mut cfg = GreedyPatternGeneratorConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args, &crate::features()).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
     assert_eq!(cfg.random_seed, 7);
@@ -215,7 +242,7 @@ fn positional_args_map_to_canonical_order() {
     // greedy's positional order starts with max_pdb_states, numeric_first, random_seed
     let h = parse_call("greedy(321, false, 7)").unwrap();
     let mut cfg = GreedyPatternGeneratorConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args, &crate::features()).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
     assert_eq!(cfg.random_seed, 7);
@@ -226,7 +253,7 @@ fn mixed_positional_and_named_args_work() {
     // First positional → max_pdb_states; the named ones are explicit.
     let h = parse_call("greedy(321, numeric_first=false, random_seed=7)").unwrap();
     let mut cfg = GreedyPatternGeneratorConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args, &crate::features()).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
     assert_eq!(cfg.random_seed, 7);
@@ -236,9 +263,13 @@ fn mixed_positional_and_named_args_work() {
 fn positional_then_named_for_same_slot_errors() {
     // Positional 321 → max_pdb_states, then max_pdb_states=999 collides.
     let h = parse_call("greedy(321, max_pdb_states=999)").unwrap();
-    let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
-        .unwrap_err()
-        .to_string();
+    let err = ApplyOptions::apply_options(
+        &mut GreedyPatternGeneratorConfig::default(),
+        &h.args,
+        &crate::features(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(
         err.contains("duplicate option `max_pdb_states`"),
         "got `{err}`"
@@ -249,9 +280,13 @@ fn positional_then_named_for_same_slot_errors() {
 fn too_many_positional_args_errors() {
     // greedy has 4 positional slots; 5 should error.
     let h = parse_call("greedy(1, false, 2, cg_goal_level, extra)").unwrap();
-    let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
-        .unwrap_err()
-        .to_string();
+    let err = ApplyOptions::apply_options(
+        &mut GreedyPatternGeneratorConfig::default(),
+        &h.args,
+        &crate::features(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("too many positional"), "got `{err}`");
 }
 
@@ -261,7 +296,7 @@ fn parses_astar_lmcutnumeric_with_named_options() {
         "astar(lmcutnumeric(ceiling_less_than_one=true, ignore_numeric=true, irmax=true, disable_ma=true, use_second_order_simple=true, use_constant_assignment=true, bound_iterations=7, precision=0.5, epsilon=0.25))",
     );
     let mut cfg = LmCutNumericConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args, &crate::features()).unwrap();
     assert!(cfg.ceiling_less_than_one);
     assert!(cfg.ignore_numeric);
     assert!(cfg.irmax);
@@ -298,7 +333,7 @@ fn parses_goal_focused_domain_collection_options() {
         "astar(domain_collection(collection_strategy=goal_focused, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_kind=wanted))",
     );
     let mut cfg = DomainAbstractionCollectionConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args, &crate::features()).unwrap();
     assert_eq!(cfg.collection_strategy, CollectionStrategy::GoalFocused);
     assert_eq!(cfg.variants_per_goal, 10);
     assert!(cfg.progress_states);
@@ -316,9 +351,14 @@ fn parses_domain_collection_with_trailing_comma() {
 #[test]
 fn rejects_unknown_options_inside_known_heuristics() {
     let h = astar_heuristic("astar(scp(domain_collection(), deviation_flaws=false))");
-    let err = configure(&h.name, CombinationConfig::<ScpConfig>::default(), &h.args)
-        .unwrap_err()
-        .to_string();
+    let err = configure(
+        &h.name,
+        CombinationConfig::<ScpConfig>::default(),
+        &h.args,
+        &crate::features(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("deviation_flaws"), "got `{err}`");
 
     let err = domain_collection_source_error(
@@ -355,7 +395,13 @@ fn typed_sources_take_one_list_or_a_single_source() {
         parse_call("scp(domain(max_states=7), random_orders=5, goal_cover_orders_per_goal=2)")
             .unwrap();
     let parse = |spec: &ConfigCall| {
-        configure("scp", CombinationConfig::<ScpConfig>::default(), &spec.args).unwrap()
+        configure(
+            "scp",
+            CombinationConfig::<ScpConfig>::default(),
+            &spec.args,
+            &crate::features(),
+        )
+        .unwrap()
     };
     let listed = parse(&listed);
     let single = parse(&single);
@@ -435,20 +481,38 @@ fn pdb_sources_take_patterns_and_heuristics_as_separate_options() {
         "pdb()",
     ] {
         let spec = parse_call(spec).unwrap();
-        configure("pdb", PdbSourceConfig::default(), &spec.args).unwrap();
+        configure(
+            "pdb",
+            PdbSourceConfig::default(),
+            &spec.args,
+            &crate::features(),
+        )
+        .unwrap();
     }
     for spec in [
         "pdb(max_pdb_states=321)",
         "pdb(patterns=greedy(exploration_heuristic=lmcut))",
     ] {
         let spec = parse_call(spec).unwrap();
-        configure("pdb", PdbSourceConfig::default(), &spec.args).unwrap_err();
+        configure(
+            "pdb",
+            PdbSourceConfig::default(),
+            &spec.args,
+            &crate::features(),
+        )
+        .unwrap_err();
     }
     let spec = parse_call(
         "pdb(patterns=hillclimbing(), exploration_heuristic=lmcut, frontier_heuristic=zero)",
     )
     .unwrap();
-    let config = configure("pdb", PdbSourceConfig::default(), &spec.args).unwrap();
+    let config = configure(
+        "pdb",
+        PdbSourceConfig::default(),
+        &spec.args,
+        &crate::features(),
+    )
+    .unwrap();
     assert_eq!(config.exploration_heuristic, PdbInternalHeuristic::Lmcut);
     assert_eq!(config.frontier_heuristic, PdbInternalHeuristic::Zero);
     assert_eq!(config.failed_lookup_heuristic, PdbInternalHeuristic::Blind);
@@ -464,15 +528,20 @@ fn pdb_sources_take_patterns_and_heuristics_as_separate_options() {
 #[test]
 fn config_errors_keep_the_nested_option_path() {
     let spec = parse_call("scp([domain(max_states=bogus)])").unwrap();
-    let error =
-        configure("scp", CombinationConfig::<ScpConfig>::default(), &spec.args).unwrap_err();
+    let error = configure(
+        "scp",
+        CombinationConfig::<ScpConfig>::default(),
+        &spec.args,
+        &crate::features(),
+    )
+    .unwrap_err();
     assert_eq!(
         error.path(),
         ["scp", "sources", "[0]", "domain", "max_states"]
     );
     assert!(error.message().contains("non-negative integer"));
     assert!(matches!(
-        planforge_search::heuristic_factory::HeuristicBuildError::from(error),
-        planforge_search::heuristic_factory::HeuristicBuildError::Config(_)
+        planforge_search::heuristic_features::HeuristicBuildError::from(error),
+        planforge_search::heuristic_features::HeuristicBuildError::Config(_)
     ));
 }

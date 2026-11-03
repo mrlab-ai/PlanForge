@@ -1,8 +1,10 @@
 //! A built domain abstraction: the function that maps concrete states to
 //! abstract ones, its goal distances, and, until discarded, its transitions.
 
+use crate::abstractions::build_error;
 use anyhow::{Context, Result};
 use planforge_sas::explicit_state::StateValues;
+use planforge_search::heuristic_features::HeuristicBuildError;
 
 use super::function::{DomainAbstractionFunction, DomainTransitions, source_set_within};
 use crate::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
@@ -93,25 +95,9 @@ impl CegarAbstraction for DomainAbstraction {
         &mut self,
         regions: &RegionSemantics<'_>,
         deadline: Deadline,
-    ) -> Result<()> {
-        let data = self
-            .transitions
-            .as_mut()
-            .context("cannot build source sets after the transitions were discarded")?;
-        if data.regional.is_some() {
-            return Ok(());
-        }
-        let system = data
-            .transitions
-            .explicit_system(deadline)
-            .context("failed to build the explicit transition system")?;
-        let source_sets = self.function.build_abstract_source_sets(
-            regions,
-            &data.transitions.operators,
-            deadline,
-        )?;
-        data.regional = Some((system, source_sets));
-        Ok(())
+    ) -> Result<(), HeuristicBuildError> {
+        self.build_source_sets(regions, deadline)
+            .map_err(build_error)
     }
 
     fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
@@ -124,18 +110,26 @@ impl CegarAbstraction for DomainAbstraction {
         operator_costs: &[f64],
         perimeter_state: Option<usize>,
         deadline: Deadline,
-    ) -> Result<(Vec<f64>, Vec<f64>)> {
-        saturate_labels(
-            &mut self.transitions()?.graph(),
-            operator_costs,
-            perimeter_state,
-            deadline,
-        )
+    ) -> Result<(Vec<f64>, Vec<f64>), HeuristicBuildError> {
+        self.label_saturation(operator_costs, perimeter_state, deadline)
+            .map_err(build_error)
     }
 
     /// A transition's labels cost what remains on the part of their source
     /// sets inside its source state.
     fn saturate_regions(
+        &self,
+        remaining: &RemainingCosts,
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation), HeuristicBuildError> {
+        self.regional_saturation(remaining, perimeter_state, deadline)
+            .map_err(build_error)
+    }
+}
+
+impl DomainAbstraction {
+    fn regional_saturation(
         &self,
         remaining: &RemainingCosts,
         perimeter_state: Option<usize>,
@@ -161,5 +155,44 @@ impl CegarAbstraction for DomainAbstraction {
             perimeter_state,
             deadline,
         )
+    }
+
+    fn label_saturation(
+        &self,
+        operator_costs: &[f64],
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, Vec<f64>)> {
+        saturate_labels(
+            &mut self.transitions()?.graph(),
+            operator_costs,
+            perimeter_state,
+            deadline,
+        )
+    }
+
+    fn build_source_sets(
+        &mut self,
+        regions: &RegionSemantics<'_>,
+        deadline: Deadline,
+    ) -> Result<()> {
+        let data = self
+            .transitions
+            .as_mut()
+            .context("cannot build source sets after the transitions were discarded")?;
+        if data.regional.is_some() {
+            return Ok(());
+        }
+        let system = data
+            .transitions
+            .explicit_system(deadline)
+            .context("failed to build the explicit transition system")?;
+        let source_sets = self.function.build_abstract_source_sets(
+            regions,
+            &data.transitions.operators,
+            deadline,
+        )?;
+        data.regional = Some((system, source_sets));
+        Ok(())
     }
 }

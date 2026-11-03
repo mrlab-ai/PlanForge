@@ -48,6 +48,7 @@ pub(crate) const SOURCE_SETS: &str = "abstract source sets";
 
 /// What regions of the concrete state space admit, guarantee, and let an
 /// operator lead into.
+#[derive(Debug)]
 pub struct RegionSemantics<'task> {
     task: &'task Task,
     coordinates: Coordinates<'task>,

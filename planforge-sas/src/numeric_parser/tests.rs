@@ -324,7 +324,7 @@ fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
     let heads: Vec<VariableIndex> = task
         .comparison_axioms()
         .iter()
-        .map(|axiom| axiom.get_affected_var_id())
+        .map(|axiom| axiom.affected_var_id())
         .collect();
     assert_eq!(heads, [VariableIndex::new(1), VariableIndex::new(3)]);
 }

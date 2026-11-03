@@ -125,27 +125,24 @@ fn build_dtgs(task: &SASTask) -> Vec<DomainTransitionGraph> {
             }
         };
 
+    // The value of `var_no` an effect requires: its operator's condition or
+    // its own effect condition on the variable, `-1` for none, and `None` if
+    // the two contradict each other.
     let get_effective_pre = |var_no: usize,
                              conditions: &HashMap<usize, usize>,
                              effect_conditions: &[(usize, usize)]|
      -> Option<i32> {
-        let mut result: i32 = *conditions
-            .get(&var_no)
-            .map(|v| v as &usize)
-            .unwrap_or(&(usize::MAX)) as i32;
-        if result == usize::MAX as i32 {
-            result = -1;
-        }
+        let mut required = conditions.get(&var_no).copied();
         for &(cond_var_no, cond_val) in effect_conditions {
             if cond_var_no == var_no {
-                if result == -1 {
-                    result = cond_val as i32;
-                } else if cond_val as i32 != result {
-                    return None; // contradictory conditions
+                match required {
+                    None => required = Some(cond_val),
+                    Some(value) if value != cond_val => return None,
+                    Some(_) => {}
                 }
             }
         }
-        Some(result)
+        Some(required.map_or(-1, |value| value as i32))
     };
 
     for op in &task.operators {

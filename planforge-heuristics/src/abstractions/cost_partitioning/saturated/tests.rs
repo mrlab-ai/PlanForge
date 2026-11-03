@@ -140,9 +140,9 @@ pub(super) fn evaluate_initial(
     heuristic: &mut dyn Heuristic,
 ) -> Result<f64, EvaluationError> {
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(task.clone()));
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     let eval_state = EvaluationState::new(&initial_state, task, &registry);
-    heuristic.evaluate(&eval_state)
+    heuristic.evaluate(&eval_state).map(Estimate::value)
 }
 
 /// Offline diversified SCP over a goal-focused Cartesian collection of `task`,

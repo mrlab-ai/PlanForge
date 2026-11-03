@@ -25,7 +25,10 @@ mod tests;
 mod usage;
 
 pub use remaining::RemainingCosts;
-pub use saturation::*;
+pub(crate) use saturation::{
+    ExplicitSaturationGraph, SaturationGraph, cheapest_label, saturate_labels, saturate_regions,
+};
+pub use saturation::{SourceSetCost, SourceSetCostAllocation};
 
 /// The operation an expired SCP table deadline names.
 const SCP_TABLE_CONSTRUCTION: &str = "SCP table construction";

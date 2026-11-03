@@ -14,6 +14,8 @@
 
 use std::collections::HashSet;
 
+use crate::registry::Features;
+
 pub use parser::parse_call;
 pub use planforge_config_derive::{ApplyOptions, FromOptionValue};
 
@@ -42,6 +44,7 @@ macro_rules! option_enum {
         impl $crate::config::FromOptionValue for $type {
             fn from_option_value(
                 value: &$crate::config::ConfigValue,
+                _: &$crate::registry::Features,
             ) -> ::std::result::Result<Self, $crate::config::ConfigError> {
                 match value.as_atom()?.to_ascii_lowercase().as_str() {
                     $($name => Ok(Self::$variant),)+
@@ -133,20 +136,16 @@ impl ConfigValue {
 }
 
 impl ConfigCall {
-    pub fn blind() -> Self {
-        Self::new("blind", Vec::new())
-    }
-
     /// Read a nested heuristic out of an option value, as in
     /// `check_admissible(<inner>)` or `astar(lazy=<inner>)`.
     ///
     /// Named/positional/duplicate validation is deferred to the heuristic's own
     /// config, which owns the canonical option order.
-    pub fn from_value(value: &ConfigValue) -> Result<Self, String> {
+    pub fn from_value(value: &ConfigValue) -> Result<Self, ConfigError> {
         match value {
             ConfigValue::Call(call) => Ok(call.clone()),
-            ConfigValue::Atom(atom) => Err(format!("expected heuristic, got `{atom}`")),
-            ConfigValue::List(_) => Err("expected heuristic, got a list".to_string()),
+            ConfigValue::Atom(atom) => Err(format!("expected heuristic, got `{atom}`").into()),
+            ConfigValue::List(_) => Err("expected heuristic, got a list".into()),
         }
     }
 }
@@ -247,26 +246,24 @@ pub fn for_each_option(
     Ok(())
 }
 
-// =============================================================================
-// Traits
-//
-// Deliberately not sealed. Sealing them meant a new option type could only be
-// added inside this crate, which is why heuristic construction used to live in
-// a crate of its own and adding a heuristic touched two crates. Anything that
-// can be spelled as a `--search` option value is welcome to implement these.
-// =============================================================================
-
 /// Implemented by typed configs that can be populated from a `&[ConfigArg]`.
 /// Normally derived via `#[derive(ApplyOptions)]`; written by hand only for
 /// configs whose CLI surface differs structurally from the struct layout
 /// (e.g. coupled writes, curated subsets).
 pub trait ApplyOptions {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), ConfigError>;
+    /// Applies the options `args`; a value that names a feature, such as a
+    /// nested heuristic, is parsed with `features`.
+    fn apply_options(&mut self, args: &[ConfigArg], features: &Features)
+    -> Result<(), ConfigError>;
 
     /// Appends the options this configuration accepts, with their values in
     /// `self` as the defaults, in the order `apply_options` documents them.
     fn describe_options(&self, out: &mut Vec<OptionDoc>);
 }
+
+/// The configuration of a feature without options.
+#[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
+pub struct EmptyConfig {}
 
 /// One option of a configuration, for help texts.
 #[derive(Debug, Clone, PartialEq)]
@@ -285,15 +282,20 @@ pub fn configure<C: ApplyOptions>(
     name: &str,
     mut config: C,
     args: &[ConfigArg],
+    features: &Features,
 ) -> Result<C, ConfigError> {
-    config.apply_options(args).map_err(|error| error.at(name))?;
+    config
+        .apply_options(args, features)
+        .map_err(|error| error.at(name))?;
     Ok(config)
 }
 
 /// Implemented by every type that can appear as the value of an option.
 /// The derive picks `from_option_value` for each field automatically.
 pub trait FromOptionValue: Sized {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError>;
+    /// The value `value` denotes; a value that names a feature is looked up
+    /// in `features`.
+    fn from_option_value(value: &ConfigValue, features: &Features) -> Result<Self, ConfigError>;
 
     /// The value as an option argument that `from_option_value` reads back.
     fn option_text(&self) -> String;
@@ -338,7 +340,7 @@ pub(crate) fn canonical_call<C: ApplyOptions + Default>(name: &str, config: &C) 
 // =============================================================================
 
 impl FromOptionValue for bool {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
+    fn from_option_value(value: &ConfigValue, _: &Features) -> Result<Self, ConfigError> {
         match value.as_atom()?.to_ascii_lowercase().as_str() {
             "true" => Ok(true),
             "false" => Ok(false),
@@ -352,7 +354,7 @@ impl FromOptionValue for bool {
 }
 
 impl FromOptionValue for usize {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
+    fn from_option_value(value: &ConfigValue, _: &Features) -> Result<Self, ConfigError> {
         let scalar = value.as_atom()?;
         scalar
             .parse::<usize>()
@@ -365,7 +367,7 @@ impl FromOptionValue for usize {
 }
 
 impl FromOptionValue for u64 {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
+    fn from_option_value(value: &ConfigValue, _: &Features) -> Result<Self, ConfigError> {
         let scalar = value.as_atom()?;
         scalar
             .parse::<u64>()
@@ -378,7 +380,7 @@ impl FromOptionValue for u64 {
 }
 
 impl FromOptionValue for f64 {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
+    fn from_option_value(value: &ConfigValue, _: &Features) -> Result<Self, ConfigError> {
         let s = value.as_atom()?;
         match s.parse::<f64>() {
             Ok(number) if !number.is_nan() => Ok(number),
@@ -396,14 +398,14 @@ impl FromOptionValue for f64 {
 }
 
 impl<T: FromOptionValue> FromOptionValue for Option<T> {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
+    fn from_option_value(value: &ConfigValue, features: &Features) -> Result<Self, ConfigError> {
         if value
             .as_atom()
             .is_ok_and(|atom| atom.eq_ignore_ascii_case("none"))
         {
             Ok(None)
         } else {
-            T::from_option_value(value).map(Some)
+            T::from_option_value(value, features).map(Some)
         }
     }
 
@@ -414,16 +416,17 @@ impl<T: FromOptionValue> FromOptionValue for Option<T> {
 }
 
 impl<T: FromOptionValue> FromOptionValue for Vec<T> {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
+    fn from_option_value(value: &ConfigValue, features: &Features) -> Result<Self, ConfigError> {
         match value {
             ConfigValue::List(values) => values
                 .iter()
                 .enumerate()
                 .map(|(index, value)| {
-                    T::from_option_value(value).map_err(|error| error.at(format!("[{index}]")))
+                    T::from_option_value(value, features)
+                        .map_err(|error| error.at(format!("[{index}]")))
                 })
                 .collect(),
-            value => T::from_option_value(value).map(|value| vec![value]),
+            value => T::from_option_value(value, features).map(|value| vec![value]),
         }
     }
 
@@ -434,7 +437,7 @@ impl<T: FromOptionValue> FromOptionValue for Vec<T> {
 }
 
 impl FromOptionValue for String {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
+    fn from_option_value(value: &ConfigValue, _: &Features) -> Result<Self, ConfigError> {
         Ok(value.as_atom()?.to_string())
     }
 
@@ -478,9 +481,10 @@ mod tests {
     }
 
     fn decode(raw: &str) -> Result<Example, String> {
-        Ok(Example::from_option_value(&ConfigValue::Call(parse_call(
-            raw,
-        )?))?)
+        Ok(Example::from_option_value(
+            &ConfigValue::Call(parse_call(raw)?),
+            &Features::builtin(),
+        )?)
     }
 
     #[test]
@@ -509,18 +513,30 @@ mod tests {
     #[test]
     fn vectors_accept_lists_or_singletons_and_options_share_none_handling() {
         let scalar = ConfigValue::Atom("7".into());
-        assert_eq!(Vec::<usize>::from_option_value(&scalar).unwrap(), [7]);
         assert_eq!(
-            Vec::<usize>::from_option_value(&ConfigValue::List(vec![scalar.clone(), scalar]))
-                .unwrap(),
+            Vec::<usize>::from_option_value(&scalar, &Features::builtin()).unwrap(),
+            [7]
+        );
+        assert_eq!(
+            Vec::<usize>::from_option_value(
+                &ConfigValue::List(vec![scalar.clone(), scalar]),
+                &Features::builtin()
+            )
+            .unwrap(),
             [7, 7]
         );
         let none = ConfigValue::Atom("NoNe".into());
-        assert_eq!(Option::<usize>::from_option_value(&none).unwrap(), None);
-        assert_eq!(Option::<bool>::from_option_value(&none).unwrap(), None);
+        assert_eq!(
+            Option::<usize>::from_option_value(&none, &Features::builtin()).unwrap(),
+            None
+        );
+        assert_eq!(
+            Option::<bool>::from_option_value(&none, &Features::builtin()).unwrap(),
+            None
+        );
         let nested = ConfigValue::List(vec![ConfigValue::List(vec![none])]);
         assert_eq!(
-            Vec::<Vec<Option<bool>>>::from_option_value(&nested).unwrap(),
+            Vec::<Vec<Option<bool>>>::from_option_value(&nested, &Features::builtin()).unwrap(),
             [vec![None]]
         );
     }

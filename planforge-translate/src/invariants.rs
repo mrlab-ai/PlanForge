@@ -1,5 +1,7 @@
+//! Invariant candidates and the check that no action breaks them, the core of
+//! the mutex group computation.
+
 use itertools::Itertools;
-/// Invariant parts and invariant checking for mutex group computation.
 use std::collections::{HashMap, HashSet};
 
 use super::constraints::{Assignment, ConstraintSystem, NegativeClause, class_of};
@@ -358,7 +360,11 @@ impl Invariant {
     }
 
     pub fn arity(&self) -> usize {
-        self.parts.iter().next().unwrap().arity()
+        self.parts
+            .iter()
+            .next()
+            .expect("an invariant has at least one part")
+            .arity()
     }
 
     pub fn get_parameters(&self, atom: &Condition) -> Vec<String> {

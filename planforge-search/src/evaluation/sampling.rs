@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use crate::evaluation::EvaluationError;
 use crate::resource_limits::Deadline;
-use crate::successor_generator::{RegistryExpander, StandardGroundedTree};
+use crate::successor_generator::{StandardGroundedTree, StateExpander};
 
 /// Samples states as the ends of random walks from the initial state.
 pub struct RandomWalkSampler {
     task: Arc<Task>,
     registry: StateRegistry,
-    expander: RegistryExpander<StandardGroundedTree>,
+    expander: StateExpander<StandardGroundedTree>,
     initial_state: ConcreteState,
     average_operator_cost: f64,
 }
@@ -26,7 +26,7 @@ pub struct RandomWalkSampler {
 impl RandomWalkSampler {
     pub fn new(task: Arc<Task>) -> Self {
         let mut registry = StateRegistry::for_task(task.clone());
-        let initial_state = registry.get_initial_state();
+        let initial_state = registry.register_initial_state();
         let num_operators = task.operators().len();
         let average_operator_cost = if num_operators == 0 {
             0.0
@@ -37,7 +37,7 @@ impl RandomWalkSampler {
                 / num_operators as f64
         };
         Self {
-            expander: RegistryExpander::new(StandardGroundedTree::new(&task)),
+            expander: StateExpander::new(StandardGroundedTree::new(&task)),
             task,
             registry,
             initial_state,

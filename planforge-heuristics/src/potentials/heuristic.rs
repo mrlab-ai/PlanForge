@@ -6,6 +6,7 @@
 
 mod portfolio;
 
+use planforge_search::heuristic_features::HeuristicBuildError;
 use portfolio::{
     average_operator_cost, build_conditioned_groups, build_goal_cost_partitions,
     build_static_portfolio, function_value,
@@ -22,7 +23,7 @@ use planforge_sas::state_registry::{ConcreteState, ConcreteStateView, StateRegis
 use planforge_sas::utils::float_tolerance;
 use tracing::{debug, info, warn};
 
-use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
 
 use super::rays::{Ray, RayGenerator};
 use super::sampling::{RandomWalkSampler, SampleSpace};
@@ -31,6 +32,7 @@ use super::{
     OptimizationOutcome, OptimizeFor, PotentialTask,
 };
 
+#[derive(Debug)]
 pub struct NumericPotentialHeuristic {
     task: PotentialTask,
     functions: Vec<NumericPotentialFunction>,
@@ -53,6 +55,7 @@ pub struct NumericPotentialHeuristic {
     numeric_scratch: Vec<NumericValue>,
 }
 
+#[derive(Debug)]
 struct OnlineState {
     max_functions: usize,
     base_interval: usize,
@@ -79,15 +82,21 @@ impl NumericPotentialHeuristic {
     pub fn from_config(
         task_ref: Arc<Task>,
         config: NumericPotentialConfig,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HeuristicBuildError> {
         config.validate()?;
+        Self::build(task_ref, config).map_err(HeuristicBuildError::Failure)
+    }
+
+    /// [`Self::from_config`] for a validated `config`; the LP machinery
+    /// reports its failures as messages.
+    fn build(task_ref: Arc<Task>, config: NumericPotentialConfig) -> Result<Self, String> {
         let task = &*task_ref;
         let mut optimizer = NumericPotentialOptimizer::new(task, &config)?;
         let potential_task = optimizer.task().clone();
         let ordinary_columns = optimizer.num_columns();
         let ordinary_rows = optimizer.num_rows();
         let mut registry = StateRegistry::for_task(task_ref.clone());
-        let initial_state = registry.get_initial_state();
+        let initial_state = registry.register_initial_state();
         // The exact verifier of unboundedness. It is built when the first LP
         // turns out unbounded, unless rays are requested from the start: a
         // floating-point unboundedness verdict alone never declares a dead
@@ -514,9 +523,12 @@ fn log_construction(
 }
 
 impl Heuristic for NumericPotentialHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         if self.dead_end_certified {
-            return Ok(f64::INFINITY);
+            return Ok(Estimate::DEAD_END);
         }
         let registry = eval_state.state_registry();
         let state = registry.view(eval_state.state());
@@ -529,7 +541,7 @@ impl Heuristic for NumericPotentialHeuristic {
             if candidate > self.ray_epsilon {
                 self.ray_hit_counts[ray_id] += 1;
                 self.states_pruned_by_rays += 1;
-                return Ok(f64::INFINITY);
+                return Ok(Estimate::DEAD_END);
             }
         }
         let mut value: f64 = 0.0;
@@ -564,8 +576,8 @@ impl Heuristic for NumericPotentialHeuristic {
             value = value.max(additive_value);
         }
         value = self.maybe_add_online_function(eval_state, value)?;
-        self.track_online_cache_entry(eval_state.state().get_id());
-        Ok(value)
+        self.track_online_cache_entry(eval_state.state().id());
+        Ok(Estimate::new(value))
     }
 
     fn name(&self) -> &str {
@@ -591,8 +603,7 @@ impl NumericPotentialHeuristic {
             return Ok(envelope_value);
         };
         let online = &mut self.online_state;
-        let advance =
-            !online.new_states_only || online.seen_states.insert(eval_state.state().get_id());
+        let advance = !online.new_states_only || online.seen_states.insert(eval_state.state().id());
         if advance {
             online.evaluations_since_solve += 1;
             online.trigger_states += 1;

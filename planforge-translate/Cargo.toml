@@ -12,6 +12,5 @@ license = "LGPL-3.0"
 
 [dependencies]
 planforge-sas = { path = "../planforge-sas", version = "0.1.0" }
-anyhow = "1"
 tracing = "0.1"
 itertools = "0.13"

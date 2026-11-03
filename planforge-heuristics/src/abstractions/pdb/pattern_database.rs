@@ -1,8 +1,12 @@
+//! A pattern database: the projection of a task to a pattern, explored from
+//! the initial state, and the goal distances of its abstract states.
+
 #[cfg(test)]
 mod tests;
 
 use planforge_sas::explicit_state::StateValues;
 use planforge_search::graph::{BackwardGraph, backward_goal_distances, no_limit};
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -19,7 +23,7 @@ use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use crate::landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use planforge_search::config::option_enum;
-use planforge_search::successor_generator::{RegistryExpander, StandardGroundedTree};
+use planforge_search::successor_generator::{StandardGroundedTree, StateExpander};
 
 use planforge_search::task_transformations::projection::ProjectedTask;
 
@@ -94,6 +98,7 @@ pub struct PdbBuildConfig {
 /// but did not expand lies on the frontier, and takes the frontier heuristic,
 /// at least the cheapest operator cost, as its distance. The goal distances
 /// then follow by backward Dijkstra from the goal and frontier states.
+#[derive(Debug)]
 pub struct PatternDatabase {
     task: Arc<ProjectedTask>,
     states: AbstractStates,
@@ -113,7 +118,7 @@ pub struct PatternDatabase {
 impl PatternDatabase {
     /// The pattern database over `task` with blind inner heuristics, keeping
     /// its transitions.
-    pub fn new(task: ProjectedTask, max_states: usize) -> Result<Self, String> {
+    pub fn new(task: ProjectedTask, max_states: usize) -> Result<Self, HeuristicBuildError> {
         Self::build(
             task,
             PdbBuildConfig {
@@ -124,7 +129,7 @@ impl PatternDatabase {
         )
     }
 
-    pub fn build(task: ProjectedTask, config: PdbBuildConfig) -> Result<Self, String> {
+    pub fn build(task: ProjectedTask, config: PdbBuildConfig) -> Result<Self, HeuristicBuildError> {
         let task = Arc::new(task);
         let task_ref: Arc<Task> = task.task().clone();
         let mut registry = StateRegistry::for_task(task_ref.clone());
@@ -378,6 +383,7 @@ impl PatternDatabase {
 
 /// The abstract states a pattern database explored, and how a projected
 /// state finds its id among them.
+#[derive(Debug)]
 enum AbstractStates {
     Dense(DenseStates),
     /// The registry the exploration registered the states in.
@@ -386,6 +392,7 @@ enum AbstractStates {
 
 /// The states of an exhausted projection without numeric input variables,
 /// addressed by the perfect hash of their propositional input values.
+#[derive(Debug)]
 struct DenseStates {
     variables: Vec<DenseVariable>,
     /// The abstract state at each hash, [`DenseStates::UNREACHED`] where the
@@ -393,6 +400,7 @@ struct DenseStates {
     ids: Vec<u32>,
 }
 
+#[derive(Debug)]
 struct DenseVariable {
     projected: usize,
     original: usize,
@@ -474,6 +482,7 @@ impl DenseStates {
 
 /// The transitions of an explored abstract state space, grouped by target
 /// state, and the states backward searches over them start from.
+#[derive(Debug)]
 struct AbstractTransitions {
     /// `predecessors[offsets[s]..offsets[s + 1]]` are the
     /// `(parent, projected operator)` transitions entering state `s`.
@@ -595,12 +604,12 @@ fn explore(
     max_new_states: usize,
     heuristic: PdbInternalHeuristic,
     inner: &mut InnerHeuristics,
-) -> Result<Exploration, String> {
-    let mut expander = RegistryExpander::new(StandardGroundedTree::new(task));
+) -> Result<Exploration, HeuristicBuildError> {
+    let mut expander = StateExpander::new(StandardGroundedTree::new(task));
     let operators = task.operators();
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     assert_eq!(
-        initial_state.get_id(),
+        initial_state.id(),
         0,
         "a fresh registry registers the initial state first"
     );
@@ -630,12 +639,12 @@ fn explore(
         }
         let mut expansion = expander
             .expand(registry, &state)
-            .map_err(|error| error.message)?;
+            .map_err(|error| HeuristicBuildError::Failure(error.message))?;
         for &operator_id in expansion.applicable_operators() {
             let (successor, _) = expansion
                 .successor(registry, &operators[operator_id.index()])
-                .map_err(|error| error.message)?;
-            let successor_id = successor.get_id();
+                .map_err(|error| HeuristicBuildError::Failure(error.message))?;
+            let successor_id = successor.id();
             if successor_id == state_id {
                 continue;
             }
@@ -726,6 +735,7 @@ impl InnerHeuristics {
 }
 
 /// The failed-lookup heuristic of a built pattern database.
+#[derive(Debug)]
 enum FailedLookupHeuristic {
     Zero,
     Blind,
@@ -733,6 +743,7 @@ enum FailedLookupHeuristic {
 }
 
 /// LM-cut on the projection of a pattern database.
+#[derive(Debug)]
 struct ProjectedLmcut {
     landmarks: LandmarkCutLandmarks,
     propositional: Vec<ExplicitValueIndex>,
@@ -783,7 +794,7 @@ fn lmcut_estimate(
 }
 
 /// Reused buffers for projecting a base task state and looking it up.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct LookupScratch {
     propositional: Vec<ExplicitValueIndex>,
     numeric: Vec<NumericValue>,

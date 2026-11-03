@@ -424,7 +424,6 @@ dependencies = [
 name = "planforge-search"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "itertools",
  "libc",
  "ordered-float",
@@ -441,7 +440,6 @@ dependencies = [
 name = "planforge-translate"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "itertools",
  "planforge-sas",
  "tracing",
@@ -838,6 +836,7 @@ version = "0.1.0"
 dependencies = [
  "ordered-float",
  "planforge",
+ "planforge-heuristics",
  "planforge-sas",
  "planforge-search",
 ]

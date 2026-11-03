@@ -294,9 +294,7 @@ pub fn explore(task: &Task, limits: GroundingLimits) -> Result<ExploreResult, Gr
             // them into the parameter list and deliberately leaves the external
             // count alone, because the external ones are what name the action.
             //
-            // This used to skip every tuple longer than the external count, which
-            // silently deleted every action with an `exists` precondition. Any
-            // other length is an inconsistency between rule generation and
+            // Any other length is an inconsistency between rule generation and
             // grounding, so it fails here rather than dropping an action.
             assert_eq!(
                 params.len(),

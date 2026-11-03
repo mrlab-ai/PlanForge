@@ -1,3 +1,6 @@
+//! The source sets of a domain abstraction's operators for regional cost
+//! partitioning.
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -8,6 +11,8 @@ use crate::abstractions::common::regions::{RegionSemantics, SOURCE_SETS};
 use crate::abstractions::common::transition_system::{AbstractOperatorSourceSets, LabelSourceSet};
 use crate::abstractions::domain::abstract_operators::AbstractOperator;
 use planforge_search::resource_limits::Deadline;
+
+use crate::abstractions::common::DEADLINE_POLL_STRIDE;
 
 /// `source_set` narrowed to `region`, the abstract state a transition of
 /// its abstract operator leaves from.
@@ -42,7 +47,7 @@ impl DomainAbstractionFunction {
             .iter()
             .enumerate()
             .map(|(abstract_op_id, operator)| {
-                if abstract_op_id.is_multiple_of(1024) {
+                if abstract_op_id.is_multiple_of(DEADLINE_POLL_STRIDE) {
                     deadline.ensure(SOURCE_SETS)?;
                 }
                 let source = self.cartesian_set_from_facts(task, &operator.preconditions);

@@ -86,7 +86,7 @@ fn normalizes_wrapped_timeout_exit_code() {
 
 #[test]
 fn cli_rejects_nested_config_errors_without_loading_pddl() {
-    crate::register_planforge_features();
+    let features = planforge_heuristics::features();
     for (spec, detail) in [
         (
             "astar(scp(domian(),bogus=1))",
@@ -99,14 +99,18 @@ fn cli_rejects_nested_config_errors_without_loading_pddl() {
             "numeric_potential.bogus",
         ),
     ] {
-        let error = PlannersCli::try_parse_from([
+        let cli = PlannersCli::try_parse_from([
             "planforge",
             "--search",
             spec,
             "missing-domain.pddl",
             "missing-problem.pddl",
         ])
-        .expect_err("configuration must fail during CLI parsing");
-        assert!(error.to_string().contains(detail), "{error}");
+        .expect("the command line itself is well-formed");
+        let Err(error) = crate::RunConfiguration::parse(&cli, &features) else {
+            panic!("`{spec}` must fail to configure");
+        };
+        assert!(error.contains("for '--search <SPEC>'"), "{error}");
+        assert!(error.contains(detail), "{error}");
     }
 }

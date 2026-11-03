@@ -1,9 +1,11 @@
-//! What every abstraction CEGAR builds offers and records about its
-//! construction and use, for domain and Cartesian abstractions alike.
+//! What every abstraction CEGAR builds offers, domain or Cartesian.
+//!
+//! It also records how the abstraction was built and is used.
 
 use anyhow::Result;
 use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::{NumericValue, OperatorIndex};
+use planforge_search::heuristic_features::HeuristicBuildError;
 
 use super::cegar::progression::ConcretePlan;
 use super::cegar::refine::CegarOutcome;
@@ -13,7 +15,7 @@ use super::transition_system::AbstractOperatorSourceSets;
 use crate::abstractions::component::AbstractionKind;
 use crate::abstractions::cost_partitioning::costs::{RemainingCosts, SourceSetCostAllocation};
 use planforge_search::evaluation::Heuristic;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 use planforge_search::resource_limits::Deadline;
 
 /// How CEGAR built an abstraction.
@@ -74,7 +76,7 @@ pub struct AbstractionCore {
 /// An abstraction CEGAR built: an abstraction function with the goal
 /// distances of its abstract states, and, until discarded, the transitions
 /// cost partitioning saturates.
-pub trait CegarAbstraction: std::fmt::Debug {
+pub trait CegarAbstraction: std::fmt::Debug + Send {
     fn kind(&self) -> AbstractionKind;
 
     fn core(&self) -> &AbstractionCore;
@@ -98,7 +100,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
         &mut self,
         regions: &RegionSemantics<'_>,
         deadline: Deadline,
-    ) -> Result<()>;
+    ) -> Result<(), HeuristicBuildError>;
 
     /// The source sets regional cost partitioning attaches costs to; `None`
     /// until [`Self::prepare_regional_saturation`] built them.
@@ -111,7 +113,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
         operator_costs: &[f64],
         perimeter_state: Option<usize>,
         deadline: Deadline,
-    ) -> Result<(Vec<f64>, Vec<f64>)>;
+    ) -> Result<(Vec<f64>, Vec<f64>), HeuristicBuildError>;
 
     /// The goal distances under `remaining` and what every transition
     /// needs of its labels' source sets; see
@@ -121,7 +123,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
         remaining: &RemainingCosts,
         perimeter_state: Option<usize>,
         deadline: Deadline,
-    ) -> Result<(Vec<f64>, SourceSetCostAllocation)>;
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation), HeuristicBuildError>;
 
     fn metadata(&self) -> &AbstractionMetadata {
         &self.core().metadata
@@ -207,9 +209,12 @@ impl<A: CegarAbstraction> AbstractionHeuristic<A> {
 }
 
 impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state = eval_state.values(&mut self.numeric)?;
-        Ok(self.abstraction.goal_distance(state))
+        Ok(Estimate::new(self.abstraction.goal_distance(state)))
     }
 
     /// The abstraction is of the full task and refined from its initial

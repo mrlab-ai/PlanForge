@@ -1,3 +1,6 @@
+//! PDDL axioms: derived predicates and derived numeric expressions, and their
+//! ground instances.
+
 use crate::pddl::f_expression::FluentKind;
 use std::collections::{HashMap, HashSet};
 use std::fmt;

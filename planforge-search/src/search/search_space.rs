@@ -6,14 +6,13 @@ mod tests;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
 use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use tracing::info;
 
-use super::{Plan, SearchOutcome};
+use super::{Plan, SearchError, SearchOutcome};
 use crate::evaluation::EvaluationState;
-use crate::successor_generator::{RegistryExpander, SuccessorGenerator};
+use crate::successor_generator::{StateExpander, SuccessorGenerator};
 
 /// One transition out of an expanded state: the registered successor, the
 /// operator leading to it and its cost.
@@ -58,7 +57,7 @@ pub struct SearchSpace {
     task: Arc<Task>,
     registry: StateRegistry,
     initial_state: ConcreteState,
-    expander: RegistryExpander<Box<dyn SuccessorGenerator>>,
+    expander: StateExpander<Box<dyn SuccessorGenerator>>,
     /// Per-operator costs, for a task whose costs do not depend on the state.
     operator_costs: Vec<f64>,
     /// Whether a metric prices each transition instead.
@@ -73,13 +72,13 @@ impl SearchSpace {
         let mut registry = StateRegistry::for_task(task.clone());
         // Registering the initial state fixes the numeric constants the
         // metric's operator costs read.
-        let initial_state = registry.get_initial_state();
+        let initial_state = registry.register_initial_state();
         info!(
             "State representation: bins={}",
             registry.global_state_packer().num_bins()
         );
         Self {
-            expander: RegistryExpander::new(generator),
+            expander: StateExpander::new(generator),
             operator_costs: task.effective_operator_costs().to_vec(),
             use_metric: task.metric().use_metric(),
             task,
@@ -112,9 +111,7 @@ impl SearchSpace {
     /// The reached state `state` as a heuristic evaluates it.
     #[inline]
     pub fn evaluation_state<'s>(&'s self, state: &'s ConcreteState) -> EvaluationState<'s, 's> {
-        let mut eval_state = EvaluationState::new(state, &self.task, &self.registry);
-        eval_state.set_is_goal(self.is_goal(state.get_id()));
-        eval_state
+        EvaluationState::with_goal_flag(state, &self.task, &self.registry, self.is_goal(state.id()))
     }
 
     pub fn num_registered_states(&self) -> usize {
@@ -128,7 +125,7 @@ impl SearchSpace {
         &mut self,
         state: &ConcreteState,
         successors: &mut Vec<Successor>,
-    ) -> Result<()> {
+    ) -> Result<(), SearchError> {
         successors.clear();
         self.for_each_successor(state, |_, _, successor| successors.push(successor))
     }
@@ -144,9 +141,9 @@ impl SearchSpace {
         state: &ConcreteState,
         successors: &mut Vec<Successor>,
         mut reached: impl FnMut(Reached),
-    ) -> Result<()> {
+    ) -> Result<(), SearchError> {
         successors.clear();
-        let parent = state.get_id();
+        let parent = state.id();
         let parent_g = self.g(parent);
         let task = self.task.clone();
         self.for_each_successor(state, |nodes, registry, successor| {
@@ -168,22 +165,25 @@ impl SearchSpace {
         &mut self,
         state: &ConcreteState,
         mut visit: impl FnMut(&mut SearchNodes, &StateRegistry, Successor),
-    ) -> Result<()> {
-        let state_id = state.get_id();
+    ) -> Result<(), SearchError> {
+        let state_id = state.id();
         let mut expansion = self
             .expander
             .expand(&self.registry, state)
-            .map_err(|error| anyhow!("failed to expand state {state_id}: {error:?}"))?;
+            .map_err(|source| SearchError::Expansion {
+                context: format!("failed to expand state {state_id}"),
+                source,
+            })?;
         for &operator_id in expansion.applicable_operators() {
             let operator = &self.task.operators()[operator_id.index()];
             let (successor, metric_cost) = expansion
                 .successor(&mut self.registry, operator)
-                .map_err(|error| anyhow!("{error:?}"))
-                .with_context(|| {
-                    format!(
+                .map_err(|source| SearchError::Expansion {
+                    context: format!(
                         "failed to apply operator {operator_id} ({}) to state {state_id}",
                         operator.name()
-                    )
+                    ),
+                    source,
                 })?;
             let cost = if self.use_metric {
                 metric_cost
@@ -257,7 +257,7 @@ impl SearchSpace {
         }
         assert_eq!(
             current,
-            self.initial_state.get_id(),
+            self.initial_state.id(),
             "the path to state {state_id} does not start in the initial state"
         );
         plan.reverse();
@@ -317,7 +317,7 @@ impl SearchNodes {
         g: f64,
         is_goal: impl FnOnce() -> bool,
     ) -> Reached {
-        let state_id = state.get_id();
+        let state_id = state.id();
         let (reached, is_goal) = match self.node(state_id) {
             Some(node) if node.is_dead_end || node.g <= g => return Reached::Duplicate,
             Some(node) => (

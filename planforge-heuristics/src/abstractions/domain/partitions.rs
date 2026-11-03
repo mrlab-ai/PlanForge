@@ -1,3 +1,6 @@
+//! The partitions of the numeric variables' domains into intervals that a
+//! domain abstraction refines.
+
 #[cfg(test)]
 mod tests;
 

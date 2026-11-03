@@ -15,9 +15,9 @@ use crate::tests::*;
 fn test_state_registry_initial_state() {
     let task: Arc<Task> = Arc::new(get_root_task());
     let mut state_registry = StateRegistry::for_task(task);
-    let initial_state = state_registry.get_initial_state();
+    let initial_state = state_registry.register_initial_state();
     assert_eq!(
-        initial_state.get_state(&state_registry),
+        initial_state.propositional_values(&state_registry),
         [
             ExplicitValueIndex::new(1),
             ExplicitValueIndex::new(1),
@@ -64,7 +64,7 @@ fn task_with_every_numeric_type() -> Arc<Task> {
 #[test]
 fn concrete_state_view_decodes_inputs_and_derived_values() {
     let mut registry = StateRegistry::for_task(task_with_every_numeric_type());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let view = registry.view(&initial);
 
     let mut numeric = Vec::new();
@@ -78,7 +78,7 @@ fn concrete_state_view_decodes_inputs_and_derived_values() {
     assert_eq!(explicit.propositional, [ExplicitValueIndex::new(1)]);
     assert_eq!(explicit.numeric, numeric);
     assert_eq!(
-        initial.get_numeric_state(&registry),
+        initial.regular_numeric_values(&registry),
         [NumericValue::new(2.0)]
     );
 }
@@ -123,9 +123,12 @@ fn initial_state_registration_does_not_mutate_shared_task() {
     let original_numeric = task.initial_numeric_values().to_vec();
     let mut registry = StateRegistry::for_task(task.clone());
 
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
 
-    assert_eq!(initial.get_state(&registry), [ExplicitValueIndex::new(1)]);
+    assert_eq!(
+        initial.propositional_values(&registry),
+        [ExplicitValueIndex::new(1)]
+    );
     assert_eq!(task.initial_propositional_values(), original_propositions);
     assert_eq!(task.initial_numeric_values(), original_numeric);
 }
@@ -135,7 +138,7 @@ fn test_cost_information_storage() {
     let task: Arc<Task> = Arc::new(get_root_task());
     let mut state_registry = StateRegistry::for_task(task);
 
-    let initial_state = state_registry.get_initial_state();
+    let initial_state = state_registry.register_initial_state();
 
     let cost_info = state_registry.get_cost_information(&initial_state);
     assert_eq!(cost_info, [NumericValue::new(0.0)]);
@@ -215,15 +218,17 @@ fn duplicate_state_keeps_better_metric_cost_information() {
 
     let mut state_registry = StateRegistry::for_task(task.clone());
 
-    let initial_state = state_registry.get_initial_state();
+    let initial_state = state_registry.register_initial_state();
     let expensive_successor = state_registry
-        .get_successor_state(&initial_state, &task.operators()[0])
-        .unwrap();
+        .successor(&initial_state, &task.operators()[0])
+        .unwrap()
+        .0;
     let cheap_successor = state_registry
-        .get_successor_state(&initial_state, &task.operators()[1])
-        .unwrap();
+        .successor(&initial_state, &task.operators()[1])
+        .unwrap()
+        .0;
 
-    assert_eq!(expensive_successor.get_id(), cheap_successor.get_id());
+    assert_eq!(expensive_successor.id(), cheap_successor.id());
     assert_eq!(
         state_registry.get_cost_information(&cheap_successor),
         [NumericValue::new(1.0)]
@@ -291,17 +296,19 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
 
     let mut state_registry = StateRegistry::for_task(task.clone());
 
-    let initial = state_registry.get_initial_state();
+    let initial = state_registry.register_initial_state();
     let first = state_registry
-        .get_successor_state(&initial, &task.operators()[0])
-        .unwrap();
+        .successor(&initial, &task.operators()[0])
+        .unwrap()
+        .0;
     let second = state_registry
-        .get_successor_state(&initial, &task.operators()[1])
-        .unwrap();
+        .successor(&initial, &task.operators()[1])
+        .unwrap()
+        .0;
 
-    assert_eq!(first.get_id(), second.get_id());
+    assert_eq!(first.id(), second.id());
     assert_eq!(
-        state_registry.get_numeric_vars(&first).unwrap()[0],
+        state_registry.numeric_values(&first).unwrap()[0],
         NumericValue::new(0.3)
     );
 }
@@ -332,11 +339,11 @@ fn numeric_states_pack_exact_value_ids_with_propositions() {
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task);
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
 
     assert_eq!(initial.buffer(&registry).len(), 2);
     assert_eq!(
-        initial.get_numeric_state(&registry),
+        initial.regular_numeric_values(&registry),
         [NumericValue::new(1.25), NumericValue::new(-7.5)]
     );
 }
@@ -384,27 +391,28 @@ fn numeric_states_support_more_than_u16_distinct_values() {
 fn distinct_states_with_the_same_hash_remain_distinguishable() {
     let task: Arc<Task> = Arc::new(get_root_task());
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let successor = registry
-        .get_successor_state(&initial, &task.operators()[0])
-        .unwrap();
-    assert_ne!(initial.get_id(), successor.get_id());
+        .successor(&initial, &task.operators()[0])
+        .unwrap()
+        .0;
+    assert_ne!(initial.id(), successor.id());
 
     let initial_bins = initial.buffer(&registry).to_vec();
     let successor_bins = successor.buffer(&registry).to_vec();
     registry.registered_states.clear();
 
     let forced_hash = 7;
-    registry.insert_registered_state_id(forced_hash, initial.get_id());
-    registry.insert_registered_state_id(forced_hash, successor.get_id());
+    registry.insert_registered_state_id(forced_hash, initial.id());
+    registry.insert_registered_state_id(forced_hash, successor.id());
 
     assert_eq!(
         registry.find_registered_state_id(forced_hash, &initial_bins),
-        Some(initial.get_id())
+        Some(initial.id())
     );
     assert_eq!(
         registry.find_registered_state_id(forced_hash, &successor_bins),
-        Some(successor.get_id())
+        Some(successor.id())
     );
     assert_eq!(registry.registered_states.len(), 2);
 }
@@ -412,7 +420,7 @@ fn distinct_states_with_the_same_hash_remain_distinguishable() {
 #[test]
 fn registration_rejects_a_distinct_canonical_constant() {
     let mut registry = StateRegistry::for_task(task_with_every_numeric_type());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let mut numeric = Vec::new();
     registry.view(&initial).fill_numeric(&mut numeric).unwrap();
     numeric[1] += NumericValue::new(1e-12);
@@ -465,16 +473,9 @@ fn a_maximised_metric_charges_its_decrease() {
         global_constraint: Some(ExplicitFact::propositional(0, 0)),
     }));
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
 
-    let (_, step_cost) = registry
-        .get_successor_state_with_buffers_and_cost(
-            &initial,
-            &task.operators()[0],
-            &mut Vec::new(),
-            &mut Vec::new(),
-        )
-        .unwrap();
+    let (_, step_cost) = registry.successor(&initial, &task.operators()[0]).unwrap();
 
     assert_eq!(step_cost, 3.0);
     assert_eq!(crate::numeric_task::metric_operator_costs(&task), [3.0]);

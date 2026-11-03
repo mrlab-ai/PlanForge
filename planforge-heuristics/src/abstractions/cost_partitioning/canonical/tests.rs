@@ -138,7 +138,7 @@ fn with_explicit_subsets(
     let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
         .iter()
         .map(|component| component.relevant_operator_ids(task))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
     validate_additive_subsets(
         components.len(),
         &max_additive_subsets,
@@ -199,7 +199,7 @@ fn validate_additive_subsets(
 fn canonical_domain_abstraction_uses_explicit_subsets() {
     let task = simple_task();
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(task.clone()));
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     let mut da0 = make_abstraction(&task, vec![2.0, 0.0, 0.0, 0.0]);
     da0.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
     let mut da1 = make_abstraction(&task, vec![3.0, 0.0, 0.0, 0.0]);
@@ -222,7 +222,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
     let value = heuristic.evaluate(&eval_state).unwrap();
 
-    assert_eq!(value, 5.0);
+    assert_eq!(value.value(), 5.0);
 }
 
 fn mixed_components(task: &Task) -> Vec<AbstractionComponent> {
@@ -258,21 +258,20 @@ fn mixed_components(task: &Task) -> Vec<AbstractionComponent> {
 fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
     let task = simple_task();
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(task.clone()));
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
 
-    let mut max = MaxAbstractionHeuristic::new(None, mixed_components(&task)).unwrap();
-    assert_eq!(max.evaluate(&eval_state).unwrap(), 5.0);
+    let mut max = MaxAbstractionHeuristic::new(None, mixed_components(&task));
+    assert_eq!(max.evaluate(&eval_state).unwrap().value(), 5.0);
 
-    let mut canonical =
-        CanonicalAbstractionHeuristic::new(None, &task, mixed_components(&task)).unwrap();
+    let mut canonical = CanonicalAbstractionHeuristic::new(None, &task, mixed_components(&task));
     assert!(
         canonical
             .max_additive_subsets
             .iter()
             .any(|subset| subset == &[0, 2])
     );
-    assert_eq!(canonical.evaluate(&eval_state).unwrap(), 5.0);
+    assert_eq!(canonical.evaluate(&eval_state).unwrap().value(), 5.0);
 }
 
 #[test]
@@ -283,14 +282,13 @@ fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() 
     domain.core_mut().metadata.stop_reason = CegarStopReason::ConcretePlan;
     let component = AbstractionComponent::from(domain);
     assert!(component.proves_initial_state_optimal());
-    let max = MaxAbstractionHeuristic::new(None, vec![component]).unwrap();
+    let max = MaxAbstractionHeuristic::new(None, vec![component]);
     assert!(!max.proves_initial_state_optimal());
 
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
     domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
     domain.core_mut().metadata.stop_reason = CegarStopReason::ConcretePlan;
     let canonical =
-        CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)])
-            .unwrap();
+        CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)]);
     assert!(!canonical.proves_initial_state_optimal());
 }

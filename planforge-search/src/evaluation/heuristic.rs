@@ -1,8 +1,54 @@
-//! Base trait for heuristic evaluators.
+//! The heuristic trait and the estimates it returns.
 
 use crate::evaluation::{EvaluationError, EvaluationState};
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::numeric_task::Task;
+
+/// A heuristic estimate: a non-negative cost of reaching a goal, or a dead
+/// end, a state from which the heuristic proved no goal is reachable.
+///
+/// The estimate is an `f64` underneath, with a dead end as `f64::INFINITY`,
+/// so it costs nothing over a plain number, and estimates compare as their
+/// values do: a dead end is larger than every finite estimate.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Estimate(f64);
+
+impl Estimate {
+    /// The estimate of a dead end.
+    pub const DEAD_END: Self = Self(f64::INFINITY);
+
+    /// The estimate `h`; `f64::INFINITY` is a dead end, as in a goal-distance
+    /// table.
+    ///
+    /// # Panics
+    ///
+    /// If `h` is NaN or negative: a heuristic that computes such a value has
+    /// a bug.
+    #[inline]
+    #[track_caller]
+    pub fn new(h: f64) -> Self {
+        assert!(h >= 0.0, "a heuristic estimate is non-negative, got {h}");
+        Self(h)
+    }
+
+    /// Whether the heuristic proved the state a dead end.
+    #[inline]
+    pub fn is_dead_end(self) -> bool {
+        self.0 == f64::INFINITY
+    }
+
+    /// The estimated cost; `f64::INFINITY` for a dead end.
+    #[inline]
+    pub fn value(self) -> f64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Estimate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
 
 /// A heuristic: an estimate of the cost of reaching a goal from a state.
 ///
@@ -10,10 +56,12 @@ use planforge_sas::numeric_task::Task;
 /// evaluations -- caches, scratch buffers, online-learned components -- and
 /// the search owns the heuristic it calls. The search keeps no cache of
 /// estimates: a heuristic that wants one keeps it itself.
-pub trait Heuristic {
-    /// The estimated cost of reaching a goal from `state`; infinite for a
-    /// state the heuristic proves to be a dead end.
-    fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError>;
+///
+/// A heuristic owns what it needs, such as an `Arc<Task>` and its own tables,
+/// and is `Send`, so it can be built on one thread and evaluate on another.
+pub trait Heuristic: Send {
+    /// The estimated cost of reaching a goal from `state`.
+    fn evaluate(&mut self, state: &EvaluationState<'_, '_>) -> Result<Estimate, EvaluationError>;
 
     /// [`Self::evaluate`], additionally appending to `preferred` the
     /// operators applicable in `state` that the heuristic recommends (helpful
@@ -22,7 +70,7 @@ pub trait Heuristic {
         &mut self,
         state: &EvaluationState<'_, '_>,
         _preferred: &mut Vec<OperatorIndex>,
-    ) -> Result<f64, EvaluationError> {
+    ) -> Result<Estimate, EvaluationError> {
         self.evaluate(state)
     }
 
@@ -55,32 +103,35 @@ pub trait Heuristic {
     }
 }
 
-/// A heuristic that returns `0` for goal states and `min_action_cost` for
+/// A heuristic that returns `0` for goal states and `min_operator_cost` for
 /// non-goal states.
 /// This implements the classical blind search heuristic behavior.
 pub struct BlindHeuristic {
     name: String,
-    // Cost to return for non-goal states (minimum action cost).
-    min_action_cost: f64,
+    // Cost to return for non-goal states (the cheapest operator cost).
+    min_operator_cost: f64,
 }
 
 impl BlindHeuristic {
-    /// Build the blind estimate from the task's cheapest effective action cost.
+    /// Build the blind estimate from the task's cheapest effective operator cost.
     pub fn for_task(task: &Task) -> Self {
         Self {
             name: "blind_heuristic".to_string(),
-            min_action_cost: minimum_action_cost(task.effective_operator_costs()),
+            min_operator_cost: min_operator_cost(task.effective_operator_costs()),
         }
     }
 }
 
 impl Heuristic for BlindHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        Ok(if eval_state.is_goal() {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
+        Ok(Estimate::new(if eval_state.is_goal() {
             0.0
         } else {
-            self.min_action_cost
-        })
+            self.min_operator_cost
+        }))
     }
 
     fn name(&self) -> &str {
@@ -91,7 +142,7 @@ impl Heuristic for BlindHeuristic {
 /// The cheapest operator cost: a lower bound on the remaining cost of every
 /// non-goal state, and zero for a task without operators. Tasks reject
 /// negative costs when they are constructed.
-pub fn minimum_action_cost(operator_costs: &[f64]) -> f64 {
+pub fn min_operator_cost(operator_costs: &[f64]) -> f64 {
     operator_costs
         .iter()
         .copied()
@@ -107,13 +158,13 @@ pub fn minimum_action_cost(operator_costs: &[f64]) -> f64 {
 
 /// Registry feature for the blind heuristic.
 pub struct BlindFeature;
-impl crate::heuristic_factory::HeuristicFeature for BlindFeature {
+impl crate::heuristic_features::HeuristicFeature for BlindFeature {
     const NAME: &'static str = "blind";
-    type Config = crate::heuristic_factory::EmptyConfig;
-    fn build<'a>(
+    type Config = crate::config::EmptyConfig;
+    fn build(
         _: &Self::Config,
-        context: &crate::heuristic_factory::BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
-        Ok(Box::new(BlindHeuristic::for_task(context.task)))
+        context: &crate::heuristic_features::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, crate::heuristic_features::HeuristicBuildError> {
+        Ok(Box::new(BlindHeuristic::for_task(&context.task)))
     }
 }

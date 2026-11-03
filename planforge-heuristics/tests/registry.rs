@@ -1,11 +1,9 @@
-//! The registry as a binary sees it once it registered this crate.
-
-use planforge_search::heuristic_factory::HEURISTICS;
+//! The features of this crate as a binary parses with them.
 
 #[test]
 fn heuristic_registry_names_are_unique_and_complete() {
-    HEURISTICS.ensure_registered(planforge_heuristics::heuristics);
-    let names = HEURISTICS.names().collect::<Vec<_>>();
+    let features = planforge_heuristics::features();
+    let names = features.heuristics.names().collect::<Vec<_>>();
     let unique = names
         .iter()
         .copied()
@@ -36,11 +34,8 @@ fn heuristic_registry_names_are_unique_and_complete() {
 /// lists, parse back: the reference documents the configuration grammar.
 #[test]
 fn every_heuristics_default_options_parse_back() {
-    use planforge_search::config::parse_call;
-    use planforge_search::heuristic_factory::HeuristicConfig;
-
-    HEURISTICS.ensure_registered(planforge_heuristics::heuristics);
-    for entry in HEURISTICS.entries() {
+    let features = planforge_heuristics::features();
+    for entry in features.heuristics.entries() {
         let options = entry.options();
         // A combination has no default children; give it one.
         let arguments: Vec<String> = options
@@ -60,13 +55,7 @@ fn every_heuristics_default_options_parse_back() {
         } else {
             spec
         };
-        HeuristicConfig::from_spec(&parse_call(&spec).unwrap_or_else(|error| {
-            panic!(
-                "the reference of `{}` does not parse: {error}\n{spec}",
-                entry.name()
-            )
-        }))
-        .unwrap_or_else(|error| {
+        features.parse_heuristic(&spec).unwrap_or_else(|error| {
             panic!(
                 "the defaults of `{}` are rejected: {error}\n{spec}",
                 entry.name()

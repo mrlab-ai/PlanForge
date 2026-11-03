@@ -24,22 +24,19 @@ pub use output::{
 pub use portfolio::PortfolioOptions;
 
 use allocator::register_event_handlers;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use limits::{
     apply_process_limits, format_time_limit, normalize_wrapped_exit, parse_memory_limit,
     parse_time_limit,
 };
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::{HEURISTICS, HeuristicEntry, TaskRequirements};
-use planforge_search::search::best_first::{OPEN_LISTS, OpenListEntry};
-use planforge_search::search::{
-    SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchLimits, SearchResult,
-};
+use planforge_search::config::ConfigError;
+use planforge_search::heuristic_features::{HeuristicBuildError, TaskRequirements};
+use planforge_search::registry::Features;
+use planforge_search::search::{SearchConfig, SearchError, SearchLimits, SearchResult};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
-use planforge_search::successor_generator::{SUCCESSOR_GENERATORS, SuccessorGeneratorEntry};
 use planforge_search::task_transformations::{
-    TRANSFORMATIONS, TransformationConfig, TransformationEntry, parse_transformation_spec,
-    transform_task, transformation_help,
+    TransformError, TransformationConfig, transform_task,
 };
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
@@ -89,32 +86,16 @@ pub fn init_logger(level: LevelFilter) {
         .init();
 }
 
-/// Registers PlanForge's heuristics and task transformations unless they are
-/// registered already, for a program that uses the library rather than
-/// [`run_with`].
-pub fn register_planforge_features() {
-    HEURISTICS.ensure_registered(planforge_heuristics::heuristics);
-    TRANSFORMATIONS.ensure_registered(planforge_heuristics::transformations);
-}
-
-/// The features a binary adds to PlanForge's own.
-#[derive(Default)]
-pub struct Extensions {
-    pub heuristics: Vec<HeuristicEntry>,
-    pub search_algorithms: Vec<SearchEntry>,
-    pub transformations: Vec<TransformationEntry>,
-    pub successor_generators: Vec<SuccessorGeneratorEntry>,
-    pub open_lists: Vec<OpenListEntry>,
-}
-
-/// Run the standard PlanForge CLI, with `extensions` registered next to
-/// PlanForge's own features. This is the supported way to ship your own
-/// heuristic, search algorithm, open list, successor generator or task
-/// transformation inside the real binary:
+/// Run the standard PlanForge CLI with `features`, which name every
+/// heuristic, search algorithm, open list, successor generator and task
+/// transformation the command line can configure. This is the supported way
+/// to ship your own features inside the real binary: extend
+/// `planforge_heuristics::features()`.
 ///
 /// ```no_run
-/// use planforge_search::search::{SearchFeature, SearchLimits, SearchResult, entry};
-/// # use planforge_search::heuristic_factory::{EmptyConfig, HeuristicConfig};
+/// use planforge_search::search::{SearchError, SearchFeature, SearchLimits, SearchResult, entry};
+/// # use planforge_search::config::EmptyConfig;
+/// # use planforge_search::heuristic_features::HeuristicConfig;
 /// # use planforge_sas::numeric_task::Task;
 /// # use std::sync::Arc;
 /// # struct MySearch;
@@ -122,46 +103,39 @@ pub struct Extensions {
 /// #     const NAME: &'static str = "my_search";
 /// #     type Config = EmptyConfig;
 /// #     fn heuristics(_: &EmptyConfig) -> Vec<&HeuristicConfig> { Vec::new() }
-/// #     fn run(_: &EmptyConfig, _: Arc<Task>, _: SearchLimits) -> std::io::Result<SearchResult> {
+/// #     fn run(_: &EmptyConfig, _: Arc<Task>, _: SearchLimits) -> Result<SearchResult, SearchError> {
 /// #         unimplemented!()
 /// #     }
 /// # }
 ///
 /// fn main() -> std::io::Result<()> {
-///     planforge::run_with(planforge::Extensions {
-///         search_algorithms: vec![entry::<MySearch>()],
-///         ..Default::default()
-///     })
+///     let mut features = planforge_heuristics::features();
+///     features
+///         .search_algorithms
+///         .add(entry::<MySearch>())
+///         .map_err(std::io::Error::other)?;
+///     planforge::run_with(features)
 /// }
 /// ```
-pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
-    let mut heuristics = planforge_heuristics::heuristics();
-    heuristics.extend(extensions.heuristics);
-    HEURISTICS
-        .register(heuristics)
-        .map_err(std::io::Error::other)?;
-    SEARCH_ALGORITHMS
-        .register(extensions.search_algorithms)
-        .map_err(std::io::Error::other)?;
-    SUCCESSOR_GENERATORS
-        .register(extensions.successor_generators)
-        .map_err(std::io::Error::other)?;
-    OPEN_LISTS
-        .register(extensions.open_lists)
-        .map_err(std::io::Error::other)?;
-    let mut transformations = planforge_heuristics::transformations();
-    transformations.extend(extensions.transformations);
-    TRANSFORMATIONS
-        .register(transformations)
-        .map_err(std::io::Error::other)?;
-
-    let cli = PlannersCli::parse();
+pub fn run_with(features: Features) -> std::io::Result<()> {
+    let mut command = PlannersCli::command()
+        .mut_arg("search", |arg| arg.long_help(features.search_help()))
+        .mut_arg("transform", |arg| {
+            arg.long_help(features.transformation_help())
+        });
+    let cli = PlannersCli::from_arg_matches(&command.clone().get_matches())
+        .unwrap_or_else(|error| error.exit());
+    let configuration = RunConfiguration::parse(&cli, &features).unwrap_or_else(|message| {
+        clap::Error::raw(clap::error::ErrorKind::ValueValidation, message)
+            .format(&mut command)
+            .exit()
+    });
     init_logger(
         cli.log_level
             .unwrap_or(tracing_subscriber::filter::LevelFilter::INFO),
     );
-    if let Some(command) = &cli.command {
-        return run_command(command, cli.grounding.limits());
+    if let Some(subcommand) = &cli.command {
+        return run_command(subcommand, cli.grounding.limits(), &features);
     }
     if cli.inputs.is_empty() {
         return Err(std::io::Error::new(
@@ -180,7 +154,7 @@ pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
     }
 
     install_process_hooks(cli.max_memory)?;
-    match run_internal(&cli) {
+    match run_internal(&cli, &configuration) {
         Ok(result) => std::process::exit(exit_code_for_search_outcome(&result.outcome)),
         Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
             tracing::info!("Time limit reached during heuristic construction.");
@@ -192,6 +166,47 @@ pub fn run_with(extensions: Extensions) -> std::io::Result<()> {
         }
         Err(error) => Err(error),
     }
+}
+
+/// The `--search` and `--transform` configurations of a run, parsed with the
+/// binary's features.
+pub struct RunConfiguration {
+    pub search: SearchConfig,
+    pub transformations: Vec<TransformationConfig>,
+}
+
+impl RunConfiguration {
+    /// The configurations `cli` names; an error names the option and value
+    /// it is in.
+    pub fn parse(cli: &PlannersCli, features: &Features) -> Result<Self, String> {
+        let invalid = |option: &str, text: &str, error: ConfigError| {
+            format!("invalid value '{text}' for '{option} <SPEC>': {error}")
+        };
+        Ok(Self {
+            search: features
+                .parse_search(&cli.search)
+                .map_err(|error| invalid("--search", &cli.search, error))?,
+            transformations: cli
+                .transform
+                .iter()
+                .map(|text| {
+                    features
+                        .parse_transformation(text)
+                        .map_err(|error| invalid("--transform", text, error))
+                })
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+
+fn parse_transformations(
+    texts: &[String],
+    features: &Features,
+) -> Result<Vec<TransformationConfig>, ConfigError> {
+    texts
+        .iter()
+        .map(|text| features.parse_transformation(text))
+        .collect()
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -211,13 +226,8 @@ pub struct PlannersCli {
 
     /// Task transformations, applied before the search in the order given:
     /// `restrict` folds derived arithmetic into the comparisons.
-    #[arg(
-        long = "transform",
-        value_name = "SPEC",
-        value_parser = parse_transformation_spec,
-        long_help = transformation_help()
-    )]
-    pub transform: Vec<TransformationConfig>,
+    #[arg(long = "transform", value_name = "SPEC")]
+    pub transform: Vec<String>,
 
     #[command(flatten)]
     pub grounding: GroundingOptions,
@@ -225,14 +235,8 @@ pub struct PlannersCli {
     /// Recursive search configuration.
     /// Examples: `astar(blind())`, `astar(domain())`,
     /// `astar(check_admissible(domain()))`.
-    #[arg(
-        long,
-        value_name = "SPEC",
-        default_value = "astar(blind())",
-        value_parser = planforge_search::search::parse_search_spec,
-        long_help = planforge_search::search::search_algorithm_help()
-    )]
-    pub search: SearchConfig,
+    #[arg(long, value_name = "SPEC", default_value = "astar(blind())")]
+    pub search: String,
 
     #[command(flatten)]
     pub portfolio: PortfolioOptions,
@@ -303,8 +307,8 @@ pub struct EnumerateCli {
 
     /// Task transformations, applied before the enumeration in the order
     /// given.
-    #[arg(long = "transform", value_name = "SPEC", value_parser = parse_transformation_spec)]
-    pub transform: Vec<TransformationConfig>,
+    #[arg(long = "transform", value_name = "SPEC")]
+    pub transform: Vec<String>,
 
     #[arg(value_name = "INPUT", required = true, num_args = 1..=2)]
     pub inputs: Vec<String>,
@@ -313,14 +317,16 @@ pub struct EnumerateCli {
 pub fn run_command(
     command: &PlanforgeCommand,
     grounding_limits: planforge_translate::GroundingLimits,
+    features: &Features,
 ) -> std::io::Result<()> {
     match command {
-        PlanforgeCommand::Enumerate(arguments) => run_enumeration(arguments, grounding_limits),
+        PlanforgeCommand::Enumerate(arguments) => {
+            let transformations = parse_transformations(&arguments.transform, features)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+            run_enumeration(arguments, &transformations, grounding_limits)
+        }
         PlanforgeCommand::Heuristics => {
-            print!(
-                "{}",
-                planforge_search::heuristic_factory::HEURISTICS.reference()
-            );
+            print!("{}", features.heuristics.reference());
             Ok(())
         }
     }
@@ -348,7 +354,7 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     }
     for transformation in &cli.transform {
         child_args.push(OsString::from("--transform"));
-        child_args.push(OsString::from(transformation.to_string()));
+        child_args.push(OsString::from(transformation));
     }
     child_args.push(OsString::from("--max-ground-actions"));
     child_args.push(OsString::from(cli.grounding.max_ground_actions.to_string()));
@@ -359,7 +365,7 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
         cli.grounding.max_grounding_memory.to_string(),
     ));
     child_args.push(OsString::from("--search"));
-    child_args.push(OsString::from(cli.search.to_string()));
+    child_args.push(OsString::from(&cli.search));
     child_args.extend(cli.inputs.iter().cloned().map(OsString::from));
 
     let time_limit = cli.max_time;
@@ -399,6 +405,7 @@ pub fn install_process_hooks(memory_limit: Option<u64>) -> std::io::Result<()> {
 
 fn load_enumeration_task(
     arguments: &EnumerateCli,
+    transformations: &[TransformationConfig],
     grounding_limits: planforge_translate::GroundingLimits,
 ) -> std::io::Result<Task> {
     let task = if arguments.inputs.len() == 2 {
@@ -411,7 +418,7 @@ fn load_enumeration_task(
     } else {
         Task::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
     };
-    transform_task(task, &arguments.transform, &TaskRequirements::default())
+    transform_task(task, transformations, &TaskRequirements::default())
         .map_err(transformation_error)
 }
 
@@ -512,9 +519,14 @@ fn write_state_space_csv(output: &Path, graph: &OwnedStateSpace) -> std::io::Res
 
 fn run_enumeration(
     arguments: &EnumerateCli,
+    transformations: &[TransformationConfig],
     grounding_limits: planforge_translate::GroundingLimits,
 ) -> std::io::Result<()> {
-    let task: Arc<Task> = Arc::new(load_enumeration_task(arguments, grounding_limits)?);
+    let task: Arc<Task> = Arc::new(load_enumeration_task(
+        arguments,
+        transformations,
+        grounding_limits,
+    )?);
     let start = std::time::Instant::now();
     let graph = enumerate_state_space(
         task,
@@ -542,13 +554,17 @@ fn run_enumeration(
     Ok(())
 }
 
-pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
+pub fn run_internal(
+    cli: &PlannersCli,
+    configuration: &RunConfiguration,
+) -> std::io::Result<SearchResult> {
     assert!(
         cli.command.is_none(),
         "subcommands are dispatched before the search pipeline"
     );
     register_event_handlers();
-    cli.search.preflight()?;
+    let search = &configuration.search;
+    search.preflight().map_err(heuristic_build_error)?;
 
     let start_time = std::time::Instant::now();
     let (task, sas_label) = if cli.inputs.len() == 2 {
@@ -570,7 +586,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let task = Task::try_from_file(&path).map_err(std::io::Error::other)?;
         (task, path)
     };
-    let task = transform_task(task, &cli.transform, &cli.search.requirements())
+    let task = transform_task(task, &configuration.transformations, &search.requirements())
         .map_err(transformation_error)?;
     let task: Arc<Task> = Arc::new(task);
     let parse_time = start_time.elapsed();
@@ -586,13 +602,15 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 
     let time_limit = cli.max_time;
     let memory_limit = cli.max_memory;
-    let result = cli.search.solve(
-        task.clone(),
-        SearchLimits {
-            time: time_limit,
-            memory_bytes: memory_limit,
-        },
-    )?;
+    let result = search
+        .solve(
+            task.clone(),
+            SearchLimits {
+                time: time_limit,
+                memory_bytes: memory_limit,
+            },
+        )
+        .map_err(search_error)?;
 
     write_plan_file(&result)?;
     print_search_result(&result);
@@ -602,26 +620,44 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 
 /// The error a failed task transformation ends the run with: a task the
 /// transformation does not support is `Unsupported`.
-fn transformation_error(error: anyhow::Error) -> std::io::Error {
-    let kind = if planforge_search::unsupported::is_unsupported_task(&error) {
-        std::io::ErrorKind::Unsupported
-    } else {
-        std::io::ErrorKind::Other
+fn transformation_error(error: TransformError) -> std::io::Error {
+    let kind = match error {
+        TransformError::Unsupported(_) => std::io::ErrorKind::Unsupported,
+        TransformError::Missing(_) | TransformError::Failed(_) => std::io::ErrorKind::Other,
     };
-    std::io::Error::new(kind, format!("task transformation failed: {error:#}"))
+    std::io::Error::new(kind, format!("task transformation failed: {error}"))
 }
 
 /// The error a failed translation ends the run with: PDDL the translator does
 /// not implement is `Unsupported`, so the run exits with the unsupported code.
-fn translation_error(error: anyhow::Error) -> std::io::Error {
-    let unsupported = error
-        .chain()
-        .filter_map(|cause| cause.downcast_ref::<planforge_translate::ParseError>())
-        .any(|parse_error| parse_error.kind == planforge_translate::ParseErrorKind::Unsupported);
-    let kind = if unsupported {
-        std::io::ErrorKind::Unsupported
-    } else {
-        std::io::ErrorKind::Other
+fn translation_error(error: planforge_translate::TranslateError) -> std::io::Error {
+    let kind = match &error {
+        planforge_translate::TranslateError::Parse(parse_error)
+            if parse_error.kind == planforge_translate::ParseErrorKind::Unsupported =>
+        {
+            std::io::ErrorKind::Unsupported
+        }
+        _ => std::io::ErrorKind::Other,
     };
-    std::io::Error::new(kind, format!("{error:#}"))
+    std::io::Error::new(kind, error)
+}
+
+/// The error a heuristic that cannot be built ends the run with: a timeout
+/// and an unsupported task select their exit codes.
+fn heuristic_build_error(error: HeuristicBuildError) -> std::io::Error {
+    let kind = match error {
+        HeuristicBuildError::Timeout(_) => std::io::ErrorKind::TimedOut,
+        HeuristicBuildError::Unsupported(_) => std::io::ErrorKind::Unsupported,
+        HeuristicBuildError::Config(_) => std::io::ErrorKind::InvalidInput,
+        HeuristicBuildError::Failure(_) => std::io::ErrorKind::Other,
+    };
+    std::io::Error::new(kind, error)
+}
+
+/// The error a failed search ends the run with.
+fn search_error(error: SearchError) -> std::io::Error {
+    match error {
+        SearchError::Build(error) => heuristic_build_error(error),
+        error => std::io::Error::other(format!("search failed: {error}")),
+    }
 }

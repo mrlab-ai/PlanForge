@@ -177,8 +177,8 @@ fn the_successor_tree_lists_the_applicable_operators() {
 
     let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
 
-    let state = state_registry.get_initial_state();
-    let state_values = state.get_state(&state_registry);
+    let state = state_registry.register_initial_state();
+    let state_values = state.propositional_values(&state_registry);
     assert_eq!(
         state_values,
         [ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)]
@@ -197,9 +197,9 @@ fn the_successor_tree_lists_the_applicable_operators() {
 fn test_generate_immediate_successor_of_init_state() {
     let task = get_root_task();
     let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
-    let initial_state = state_registry.get_initial_state();
+    let initial_state = state_registry.register_initial_state();
 
-    let state = initial_state.get_state(&state_registry);
+    let state = initial_state.propositional_values(&state_registry);
     let suc_gen = StandardGroundedTree::new(&task);
 
     let mut applicable_operators = Vec::new();
@@ -208,10 +208,11 @@ fn test_generate_immediate_successor_of_init_state() {
     let op = &task.operators()[applicable_operators[0].index()];
 
     let successor = state_registry
-        .get_successor_state(&initial_state, op)
-        .expect("Failed to get successor state");
+        .successor(&initial_state, op)
+        .expect("Failed to get successor state")
+        .0;
     assert_eq!(
-        successor.get_state(&state_registry),
+        successor.propositional_values(&state_registry),
         [ExplicitValueIndex::new(1), ExplicitValueIndex::new(5)]
     );
 }
@@ -220,9 +221,9 @@ fn test_generate_immediate_successor_of_init_state() {
 fn test_duplicate_successor_should_not_generate_new_id() {
     let task = get_root_task();
     let mut state_registry = StateRegistry::for_task(Arc::new(task.clone()));
-    let initial_state = state_registry.get_initial_state();
+    let initial_state = state_registry.register_initial_state();
 
-    let state = initial_state.get_state(&state_registry);
+    let state = initial_state.propositional_values(&state_registry);
     let suc_gen = StandardGroundedTree::new(&task);
 
     let mut applicable_operators = Vec::new();
@@ -232,28 +233,30 @@ fn test_duplicate_successor_should_not_generate_new_id() {
     let op = &task.operators()[applicable_operators[0].index()];
 
     assert_eq!(op.name(), "drop");
-    assert_eq!(initial_state.get_id(), 0);
+    assert_eq!(initial_state.id(), 0);
     assert_eq!(state_registry.num_registered_states(), 1);
 
     // Generate the successor state twice
     let successor1 = state_registry
-        .get_successor_state(&initial_state, op)
-        .expect("Failed to get first successor state");
+        .successor(&initial_state, op)
+        .expect("Failed to get first successor state")
+        .0;
 
     assert_eq!(state_registry.num_registered_states(), 2);
-    assert_eq!(successor1.get_id(), 1);
+    assert_eq!(successor1.id(), 1);
 
     let successor2 = state_registry
-        .get_successor_state(&initial_state, op)
-        .expect("Failed to get second successor state");
+        .successor(&initial_state, op)
+        .expect("Failed to get second successor state")
+        .0;
 
     assert_eq!(state_registry.num_registered_states(), 2);
-    assert_eq!(successor2.get_id(), 1);
+    assert_eq!(successor2.id(), 1);
 
     // They should have the same ID if duplicate detection is working
     assert_eq!(
-        successor1.get_id(),
-        successor2.get_id(),
+        successor1.id(),
+        successor2.id(),
         "Generating the same successor twice should yield the same state ID"
     );
 }
@@ -263,36 +266,33 @@ fn registry_expander_matches_registry_successors() {
     let task = get_root_task();
     let mut registry = StateRegistry::for_task(Arc::new(task.clone()));
     let mut reference = StateRegistry::for_task(Arc::new(task.clone()));
-    let initial = registry.get_initial_state();
-    let reference_initial = reference.get_initial_state();
-    let mut expander = RegistryExpander::new(StandardGroundedTree::new(&task));
+    let initial = registry.register_initial_state();
+    let reference_initial = reference.register_initial_state();
+    let mut expander = StateExpander::new(StandardGroundedTree::new(&task));
 
     let mut expansion = expander.expand(&registry, &initial).unwrap();
-    assert_eq!(expansion.propositional(), initial.get_state(&registry));
+    assert_eq!(
+        expansion.propositional(),
+        initial.propositional_values(&registry)
+    );
     assert_eq!(
         expansion.numeric(),
-        registry.get_numeric_vars(&initial).unwrap()
+        registry.numeric_values(&initial).unwrap()
     );
     assert_eq!(expansion.applicable_operators(), [OperatorIndex::new(0)]);
     for &operator_id in expansion.applicable_operators() {
         let operator = &task.operators()[operator_id.index()];
         let (successor, cost) = expansion.successor(&mut registry, operator).unwrap();
-        let (reference_successor, reference_cost) = reference
-            .get_successor_state_with_buffers_and_cost(
-                &reference_initial,
-                operator,
-                &mut Vec::new(),
-                &mut Vec::new(),
-            )
-            .unwrap();
+        let (reference_successor, reference_cost) =
+            reference.successor(&reference_initial, operator).unwrap();
         assert_eq!(cost, reference_cost);
         assert_eq!(
-            successor.get_state(&registry),
-            reference_successor.get_state(&reference)
+            successor.propositional_values(&registry),
+            reference_successor.propositional_values(&reference)
         );
         assert_eq!(
-            registry.get_numeric_vars(&successor).unwrap(),
-            reference.get_numeric_vars(&reference_successor).unwrap()
+            registry.numeric_values(&successor).unwrap(),
+            reference.numeric_values(&reference_successor).unwrap()
         );
     }
 }
@@ -372,13 +372,18 @@ fn default_chains_through_all_variables_neither_overflow_nor_reorder() {
 
 #[test]
 fn a_search_names_its_successor_generator() {
-    use crate::search::parse_search_spec;
-    let search =
-        parse_search_spec("astar(blind(), successor_generator=standard_grounded_tree())").unwrap();
+    let features = crate::registry::Features::builtin();
+    let search = features
+        .parse_search("astar(blind(), successor_generator=standard_grounded_tree())")
+        .unwrap();
     assert_eq!(search.to_string(), "astar(blind())");
-    let error = parse_search_spec("gbfs(blind(), successor_generator=naive())").unwrap_err();
+    let error = features
+        .parse_search("gbfs(blind(), successor_generator=naive())")
+        .unwrap_err();
     assert!(
-        error.contains("unknown successor generator `naive`"),
+        error
+            .to_string()
+            .contains("unknown successor generator `naive`"),
         "{error}"
     );
 }

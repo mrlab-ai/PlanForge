@@ -1,3 +1,8 @@
+//! Saturated cost partitioning (Seipp and Helmert 2018) over abstractions.
+//!
+//! The cost partitionings follow orders chosen once (offline), or are
+//! computed for each evaluated state (online).
+
 use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::StateRegistry;
@@ -12,8 +17,8 @@ use crate::abstractions::sources::{
 };
 use planforge_search::config::ConfigError;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
-use planforge_search::heuristic_factory::{
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 use planforge_search::resource_limits::Deadline;
@@ -58,6 +63,7 @@ struct ScpBuilder {
 /// The maximum over saturated cost partitionings of abstraction heuristics
 /// (Seipp, Keller and Helmert 2020), built for the initial state at
 /// construction.
+#[derive(Debug)]
 pub struct SaturatedCostPartitioningHeuristic {
     name: String,
     components: Vec<AbstractionComponent>,
@@ -76,25 +82,23 @@ impl SaturatedCostPartitioningHeuristic {
         config: ScpConfig,
         task: Arc<Task>,
         construction_deadline: Deadline,
-    ) -> Result<Self, EvaluationError> {
+    ) -> Result<Self, HeuristicBuildError> {
         if components.is_empty() {
-            return Err(EvaluationError::ComputationFailed(
+            return Err(HeuristicBuildError::Failure(
                 "SCP requires at least one abstraction component".to_string(),
             ));
         }
-        config
-            .validate()
-            .map_err(EvaluationError::ComputationFailed)?;
+        config.validate()?;
         let mut components = components;
         if config.partitioning.uses_regions() {
             let regions = RegionSemantics::new(&task)
-                .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
+                .map_err(|error| HeuristicBuildError::Failure(format!("{error:#}")))?;
             for (component_id, component) in components.iter_mut().enumerate() {
                 match component {
                     AbstractionComponent::Cegar { abstraction, .. } => abstraction
                         .prepare_regional_saturation(&regions, Deadline::NONE)
                         .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
+                            HeuristicBuildError::Failure(format!(
                                 "failed to build the source sets of component {component_id}: {error:#}"
                             ))
                         })?,
@@ -113,7 +117,7 @@ impl SaturatedCostPartitioningHeuristic {
             let (distances, saturated) =
                 saturate_component_labels(component, &original_costs, None, Deadline::NONE)
                     .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
+                        HeuristicBuildError::Failure(format!(
                             "failed to saturate component {component_id} under the original costs: {error:#}"
                         ))
                     })?;
@@ -150,7 +154,7 @@ impl SaturatedCostPartitioningHeuristic {
         let mut abstract_state_ids = Vec::new();
         {
             let mut registry = StateRegistry::for_task(task.clone());
-            let initial_state = registry.get_initial_state();
+            let initial_state = registry.register_initial_state();
             abstract_state_ids_into(
                 &components,
                 &EvaluationState::new(&initial_state, &task, &registry),
@@ -219,7 +223,7 @@ impl ScpBuilder {
             self.config
                 .table_construction_max_time
                 .duration()
-                .map_err(EvaluationError::ComputationFailed)?,
+                .expect("ScpConfig::validate checked the time limits"),
         )?);
         let abstraction_h = abstraction_heuristic_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
@@ -256,7 +260,7 @@ impl ScpBuilder {
             self.config
                 .initial_order_generation_max_time
                 .duration()
-                .map_err(EvaluationError::ComputationFailed)?,
+                .expect("ScpConfig::validate checked the time limits"),
         )?;
         let best = candidates.partitions.swap_remove(candidates.best_index);
         if best.is_empty() {
@@ -281,7 +285,10 @@ impl ScpBuilder {
 }
 
 impl Heuristic for SaturatedCostPartitioningHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         abstract_state_ids_into(
             &self.components,
             eval_state,
@@ -289,10 +296,10 @@ impl Heuristic for SaturatedCostPartitioningHeuristic {
             &mut self.numeric_values,
             &mut self.abstract_state_ids,
         )?;
-        Ok(compute_max_h(
+        Ok(Estimate::new(compute_max_h(
             &self.cost_partitionings,
             &self.abstract_state_ids,
-        ))
+        )))
     }
 
     fn name(&self) -> &str {
@@ -305,6 +312,7 @@ mod tests;
 
 /// `scp(sources, ...)`: saturated cost partitioning over the abstractions of
 /// the sources.
+#[derive(Debug)]
 pub struct ScpFeature;
 impl HeuristicFeature for ScpFeature {
     const NAME: &'static str = "scp";
@@ -314,19 +322,19 @@ impl HeuristicFeature for ScpFeature {
     }
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
         config.validate()?;
-        config.options.validate().map_err(Into::into)
+        config.options.validate()
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         let deadline = config.deadline()?;
         let purpose = if config.options.partitioning.uses_regions() {
             AbstractionPurpose::RegionalCostPartitioning
         } else {
             AbstractionPurpose::LabelCostPartitioning
         };
-        let components = build_components(context.task, &config.sources, purpose, deadline)?;
+        let components = build_components(&context.task, &config.sources, purpose, deadline)?;
         remaining_construction_time(deadline)?;
         let heuristic = SaturatedCostPartitioningHeuristic::new(
             Some(context.name.clone()),
@@ -335,7 +343,7 @@ impl HeuristicFeature for ScpFeature {
             context.task.clone(),
             deadline,
         )
-        .map_err(|error| format!("failed to construct `{}`: {error}", context.name))?;
+        .map_err(|error| error.context(format!("failed to construct `{}`", context.name)))?;
         Ok(Box::new(heuristic))
     }
 }

@@ -14,7 +14,7 @@ use super::*;
 /// never loses them, so `FALSE` and `UNKNOWN` are unreachable once the axiom
 /// has fired.
 ///
-/// `AssignmentAxiom::get_affected_var_id` lives in the *numeric* index
+/// `AssignmentAxiom::affected_var_id` lives in the *numeric* index
 /// namespace and must never reach the propositional bucket; conflating the two
 /// namespaces silently dropped legitimate propositional facts in earlier
 /// versions.
@@ -30,14 +30,12 @@ pub(super) struct FactUniverse {
 }
 
 impl FactUniverse {
-    pub(super) fn build(task: &Task) -> Result<Self, String> {
+    pub(super) fn build(task: &Task) -> Self {
         let mut fact_id_offsets = Vec::with_capacity(task.variables().len());
         let mut flat_len = 0usize;
         for variable in task.variables() {
             fact_id_offsets.push(flat_len);
-            flat_len = flat_len
-                .checked_add(variable.domain_size())
-                .ok_or_else(|| "FF fact table size overflow".to_string())?;
+            flat_len += variable.domain_size();
         }
         let mut fact_id_by_var_value = vec![None; flat_len];
         let mut var_value: Vec<(VariableIndex, ExplicitValueIndex)> = Vec::new();
@@ -61,41 +59,30 @@ impl FactUniverse {
         let comparison_axioms = task.comparison_axioms();
         let mut descs = Vec::with_capacity(comparison_axioms.len());
         for (axiom_idx, axiom) in comparison_axioms.iter().enumerate() {
-            let affected = axiom.get_affected_var_id();
-            let &offset = fact_id_offsets.get(affected.index()).ok_or_else(|| {
-                format!("comparison axiom {axiom_idx} affects out-of-range variable {affected}")
-            })?;
+            // `Task::new` checked that the head is a condition variable, whose
+            // domain it pinned to the comparison's two values.
+            let affected = axiom.affected_var_id();
             let true_value = ExplicitValueIndex::from_usize(ConditionValue::True.as_usize());
-            let domain_size = task.variables()[affected.index()].domain_size();
-            if true_value.index() >= domain_size {
-                return Err(format!(
-                    "comparison axiom {axiom_idx} affected variable has no TRUE value"
-                ));
-            }
-            let slot = fact_id_by_var_value
-                .get_mut(offset + true_value.index())
-                .ok_or_else(|| {
-                    format!("comparison axiom {axiom_idx} affected variable has no TRUE value")
-                })?;
             let fid = var_value.len();
-            *slot = Some(fid);
+            fact_id_by_var_value[fact_id_offsets[affected.index()] + true_value.index()] =
+                Some(fid);
             var_value.push((affected, true_value));
             to_axiom.push(Some(AxiomIndex::from_usize(axiom_idx)));
             descs.push(ComparisonAxiomDesc {
                 true_fact: fid,
-                left_var: axiom.get_left_var_id(),
-                right_var: axiom.get_right_var_id(),
-                op: axiom.get_operator().clone(),
+                left_var: axiom.left_var_id(),
+                right_var: axiom.right_var_id(),
+                op: axiom.operator().clone(),
             });
         }
 
-        Ok(Self {
+        Self {
             fact_id_by_var_value,
             fact_id_offsets,
             var_value,
             to_axiom,
             comparison_axioms: descs,
-        })
+        }
     }
 
     pub(super) fn len(&self) -> usize {
@@ -187,19 +174,11 @@ impl RelaxedOperators {
 /// Initial value of every `Constant` numeric variable, `None` for the rest.
 ///
 /// Captured at construction so effect directions can be classified statically.
-pub(super) fn constant_numeric_values(task: &Task) -> Result<Vec<Option<NumericValue>>, String> {
-    let initial_numeric = task.initial_numeric_values();
+pub(super) fn constant_numeric_values(task: &Task) -> Vec<Option<NumericValue>> {
     task.numeric_variables()
         .iter()
-        .enumerate()
-        .map(|(idx, var)| match var.numeric_type() {
-            NumericType::Constant => initial_numeric
-                .get(idx)
-                .copied()
-                .map(Some)
-                .ok_or_else(|| format!("constant numeric variable {idx} missing initial value")),
-            _ => Ok(None),
-        })
+        .zip(task.initial_numeric_values())
+        .map(|(var, &value)| (var.numeric_type() == NumericType::Constant).then_some(value))
         .collect()
 }
 
@@ -263,7 +242,7 @@ pub(super) fn add_task_operator(
     task: &Task,
     op_idx: usize,
     op: &Operator,
-) -> Result<(), String> {
+) -> Result<(), HeuristicBuildError> {
     let mut parent_preconds: Vec<FactId> = Vec::new();
     let mut parent_state_deps: Vec<StateDependentPrecond> = Vec::new();
     universe.split_conditions(
@@ -291,13 +270,13 @@ pub(super) fn add_task_operator(
             continue;
         }
         let desc = assignment_effect_desc(assign, constant_value).ok_or_else(|| {
-            format!(
+            HeuristicBuildError::Unsupported(format!(
                 "operator {op_idx} (`{}`) uses unsupported {:?} assignment effect; \
                  the monotonic relaxation can't soundly bound it. Pick a different \
                  heuristic for tasks that need multiplicative numerics.",
                 op.name(),
                 assign.operation()
-            )
+            ))
         })?;
         parent_numeric.push(desc);
     }
@@ -345,11 +324,11 @@ pub(super) fn add_task_operator(
         let mut state_deps = parent_state_deps.clone();
         universe.split_conditions(assign.conditions(), &mut preconditions, &mut state_deps);
         let desc = assignment_effect_desc(assign, constant_value).ok_or_else(|| {
-            format!(
+            HeuristicBuildError::Unsupported(format!(
                 "operator {op_idx} (`{}`) uses unsupported {:?} conditional assignment effect.",
                 op.name(),
                 assign.operation()
-            )
+            ))
         })?;
         ops.push(RelaxedOperator {
             task_idx: None,
@@ -378,7 +357,7 @@ pub(super) fn add_propositional_axiom_operator(
     universe: &FactUniverse,
     axiom_idx: usize,
     axiom: &PropositionalAxiom,
-) -> Result<(), String> {
+) -> Result<(), HeuristicBuildError> {
     // An out-of-universe effect means the axiom drives a value of a
     // numeric-axiom variable, which the relaxation cannot represent.
     let effect_fid = universe
@@ -387,13 +366,13 @@ pub(super) fn add_propositional_axiom_operator(
             axiom.effect_value().index(),
         ))
         .ok_or_else(|| {
-            format!(
+            HeuristicBuildError::Unsupported(format!(
                 "propositional axiom {axiom_idx} effect on \
                  variable {} value {} is unrepresentable in the FF \
                  fact universe (likely a numeric-axiom-driven variable)",
                 axiom.var_id(),
                 axiom.effect_value()
-            )
+            ))
         })?;
 
     let mut preconditions: Vec<FactId> = Vec::new();
@@ -431,7 +410,7 @@ pub(super) fn collect_relaxed_operators(
     task: &Task,
     universe: &FactUniverse,
     constant_value: &[Option<NumericValue>],
-) -> Result<RelaxedOperators, String> {
+) -> Result<RelaxedOperators, HeuristicBuildError> {
     let mut ops = RelaxedOperators::default();
     for (op_idx, op) in task.operators().iter().enumerate() {
         add_task_operator(&mut ops, universe, constant_value, task, op_idx, op)?;
@@ -456,48 +435,15 @@ pub(super) fn collect_relaxed_operators(
 pub(super) fn index_comparison_axioms_by_numeric_var(
     comparison_axioms: &[ComparisonAxiomDesc],
     num_numeric: usize,
-) -> Result<Vec<Vec<AxiomIdx>>, String> {
+) -> Vec<Vec<AxiomIdx>> {
     let mut by_var: Vec<Vec<AxiomIdx>> = vec![Vec::new(); num_numeric];
     for (idx, ax) in comparison_axioms.iter().enumerate() {
-        if ax.left_var.index() >= num_numeric || ax.right_var.index() >= num_numeric {
-            return Err(format!(
-                "comparison axiom {idx} references out-of-range numeric variable \
-                 (left={}, right={}, num_numeric={num_numeric})",
-                ax.left_var, ax.right_var
-            ));
-        }
         by_var[ax.left_var.index()].push(AxiomIndex::from_usize(idx));
         if ax.right_var != ax.left_var {
             by_var[ax.right_var.index()].push(AxiomIndex::from_usize(idx));
         }
     }
-    Ok(by_var)
-}
-
-/// Assignment axioms in topological (SAS axiom-layer) order, each describing a
-/// derived numeric variable as `affected := left ∘ right`.
-pub(super) fn collect_assignment_axioms(
-    task: &Task,
-    num_numeric: usize,
-) -> Result<Vec<AssignmentAxiom>, String> {
-    task.assignment_axioms()
-        .iter()
-        .enumerate()
-        .map(|(axiom_idx, axiom)| {
-            let affected = axiom.get_affected_var_id();
-            if affected.index() >= num_numeric
-                || axiom
-                    .expression
-                    .dependencies()
-                    .any(|var| var.index() >= num_numeric)
-            {
-                return Err(format!(
-                    "assignment axiom {axiom_idx} references an out-of-range numeric variable"
-                ));
-            }
-            Ok(axiom.clone())
-        })
-        .collect()
+    by_var
 }
 
 /// For each numeric variable, the comparison axioms it reaches *through* one
@@ -549,8 +495,7 @@ pub(super) fn build_achiever_index(
     axioms_touching_var: &[Vec<AxiomIdx>],
     axioms_via_derived: &[Vec<AxiomIdx>],
     num_facts: usize,
-    num_numeric: usize,
-) -> Result<Vec<Vec<OpId>>, String> {
+) -> Vec<Vec<OpId>> {
     let mut achievers: Vec<Vec<OpId>> = vec![Vec::new(); num_facts];
     for (op_id, effs) in operators.effects.iter().enumerate() {
         for &fid in effs {
@@ -566,12 +511,6 @@ pub(super) fn build_achiever_index(
 
     for (op_id, numeric_effs) in operators.numeric_effects.iter().enumerate() {
         for eff in numeric_effs {
-            if eff.affected_var.index() >= num_numeric {
-                return Err(format!(
-                    "operator {op_id} effect on out-of-range numeric variable {}",
-                    eff.affected_var
-                ));
-            }
             for &axiom_idx in &axioms_touching_var[eff.affected_var.index()] {
                 let axiom = &comparison_axioms[axiom_idx.index()];
                 if axiom_needs_direction(eff.affected_var, eff.direction, axiom) {
@@ -586,24 +525,24 @@ pub(super) fn build_achiever_index(
             }
         }
     }
-    Ok(achievers)
+    achievers
 }
 
 pub(super) fn collect_goal_facts(
     task: &Task,
     universe: &FactUniverse,
-) -> Result<Vec<FactId>, String> {
+) -> Result<Vec<FactId>, HeuristicBuildError> {
     task.goals()
         .iter()
         .map(|goal| {
             universe.fact_id(goal).ok_or_else(|| {
-                format!(
+                HeuristicBuildError::Unsupported(format!(
                     "goal fact {goal:?} maps to no FactId — variable {} value {} not \
                      in the FF fact universe (numeric-axiom non-TRUE goals are not \
                      representable under the delete relaxation)",
                     goal.var(),
                     goal.value()
-                )
+                ))
             })
         })
         .collect()

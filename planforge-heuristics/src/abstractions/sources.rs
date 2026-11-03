@@ -1,12 +1,14 @@
-//! The abstraction sources a heuristic is built from -- single abstractions,
-//! collections and pattern databases -- and their construction under a shared
-//! time budget.
+//! The abstraction sources a heuristic is built from, and their construction.
+//!
+//! A source is a single abstraction, a collection or pattern databases; the
+//! sources of one heuristic are built under a shared time budget.
 
 use planforge_sas::numeric_task::Task;
 use std::time::{Duration, Instant};
 
+use planforge_search::config::EmptyConfig;
 use planforge_search::config::{ApplyOptions, ConfigError, TimeLimit};
-use planforge_search::heuristic_factory::{EmptyConfig, HeuristicBuildError, TaskRequirements};
+use planforge_search::heuristic_features::{HeuristicBuildError, TaskRequirements};
 use planforge_search::resource_limits::{Deadline, min_time_limit};
 use planforge_search::task_transformations::TransformationFeature;
 
@@ -91,16 +93,12 @@ impl AbstractionSource {
                 Icaps26CartesianGenerator::new(config.clone()).map(|_| ())
             }
             Self::Pdb(config) => match &config.patterns {
-                PdbPatternsConfig::Systematic(patterns) => {
-                    patterns.validate().map_err(anyhow::Error::msg)
-                }
-                PdbPatternsConfig::HillClimbing(patterns) => {
-                    patterns.validate().map_err(anyhow::Error::msg)
-                }
+                PdbPatternsConfig::Systematic(patterns) => patterns.validate(),
+                PdbPatternsConfig::HillClimbing(patterns) => patterns.validate(),
                 PdbPatternsConfig::Greedy(_) => Ok(()),
             },
         };
-        result.map_err(|error| ConfigError::from(error.to_string()).at(self.name()))
+        result.map_err(|error| error.at(self.name()))
     }
 
     /// Every abstraction needs a goal it can express; pattern databases and
@@ -180,16 +178,17 @@ impl AbstractionSource {
                 config.retain_transition_system = purpose.needs_transition_system();
                 config.max_time = min_time_limit(config.max_time, remaining);
                 let abstraction = Icaps26CartesianGenerator::new(config)
+                    .map_err(HeuristicBuildError::from)
                     .and_then(|generator| generator.generate(task))
                     .map_err(|error| {
-                        format!("failed to build ICAPS 2026 Cartesian source: {error:#}")
+                        error.context("failed to build ICAPS 2026 Cartesian source")
                     })?;
                 Ok(vec![AbstractionComponent::from(abstraction)])
             }
             Self::Pdb(config) => {
                 let pdbs = config
                     .build(task, purpose.needs_transition_system(), remaining)
-                    .map_err(|error| format!("failed to build numeric PDB source: {error}"))?;
+                    .map_err(|error| error.context("failed to build numeric PDB source"))?;
                 Ok(pdbs.into_iter().map(AbstractionComponent::from).collect())
             }
         }
@@ -227,7 +226,7 @@ impl PdbSourceConfig {
         task: &Task,
         retain_transitions: bool,
         remaining: Option<Duration>,
-    ) -> Result<Vec<PatternDatabase>, String> {
+    ) -> Result<Vec<PatternDatabase>, HeuristicBuildError> {
         let heuristics = PdbHeuristicConfig {
             exploration_heuristic: self.exploration_heuristic,
             frontier_heuristic: self.frontier_heuristic,
@@ -301,14 +300,14 @@ impl<O: ApplyOptions> CombinationConfig<O> {
     pub(crate) fn deadline(&self) -> Result<Deadline, HeuristicBuildError> {
         let limit = self.construction_max_time.duration()?;
         if limit == Some(Duration::ZERO) {
-            return Err(format!(
+            return Err(ConfigError::from(format!(
                 "construction_max_time must be at least one nanosecond, got {}",
                 self.construction_max_time.seconds()
-            )
+            ))
             .into());
         }
         Deadline::after(Instant::now(), limit)
-            .map_err(|error| format!("invalid construction_max_time: {error}").into())
+            .map_err(|error| ConfigError::from(format!("construction_max_time: {error}")).into())
     }
 }
 
@@ -328,11 +327,10 @@ pub(crate) fn build_components(
         let remaining = remaining_construction_time(deadline)?;
         let built = source.build_validated(task, purpose, remaining)?;
         if built.is_empty() {
-            return Err(format!(
+            return Err(HeuristicBuildError::Failure(format!(
                 "abstraction source `{}` produced no components",
                 source.name()
-            )
-            .into());
+            )));
         }
         components.extend(built);
     }
@@ -340,11 +338,7 @@ pub(crate) fn build_components(
         .iter()
         .map(AbstractionComponent::num_states)
         .collect::<Vec<_>>();
-    let total_states = states.iter().try_fold(0usize, |total, states| {
-        total.checked_add(*states).ok_or_else(|| {
-            "abstraction collection state count exceeds addressable memory".to_string()
-        })
-    })?;
+    let total_states: usize = states.iter().sum();
     let abstract_operators: usize = components
         .iter()
         .filter_map(AbstractionComponent::cegar)
@@ -378,9 +372,7 @@ where
     info!("Building {} source...", G::KIND);
     let abstraction = G::new(config)
         .and_then(|generator| generator.generate(task))
-        .map_err(|error| {
-            HeuristicBuildError::from_source(error, format!("failed to build {}", G::KIND))
-        })?;
+        .map_err(|error| error.context(format!("failed to build {}", G::KIND)))?;
     Ok(vec![abstraction.into()])
 }
 
@@ -396,19 +388,12 @@ where
 {
     config.member.cegar_mut().keep_transitions = purpose.needs_transition_system();
     if let Some(remaining) = remaining {
-        config
-            .cap_construction_time(remaining)
-            .map_err(|error| format!("invalid construction time: {error}"))?;
+        config.cap_construction_time(remaining)?;
     }
     info!("Building {} collection source...", G::KIND);
     let abstractions = CollectionGenerator::<G>::new(config)
         .and_then(|generator| generator.generate(task))
-        .map_err(|error| {
-            HeuristicBuildError::from_source(
-                error,
-                format!("failed to build {} collection", G::KIND),
-            )
-        })?;
+        .map_err(|error| error.context(format!("failed to build {} collection", G::KIND)))?;
     Ok(abstractions.into_iter().map(Into::into).collect())
 }
 #[cfg(test)]
@@ -418,7 +403,9 @@ pub(crate) fn remaining_construction_time(
     deadline: Deadline,
 ) -> Result<Option<Duration>, HeuristicBuildError> {
     match deadline.remaining() {
-        Some(remaining) if remaining.is_zero() => Err(HeuristicBuildError::ConstructionTimeout),
+        Some(remaining) if remaining.is_zero() => Err(HeuristicBuildError::Timeout(
+            "shared abstraction construction deadline exceeded".to_string(),
+        )),
         remaining => Ok(remaining),
     }
 }

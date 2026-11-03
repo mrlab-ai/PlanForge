@@ -1,3 +1,5 @@
+//! PDDL types, typed objects and the type hierarchy.
+
 use std::fmt;
 
 /// Represents a PDDL type with a name and optional base type.

@@ -1,3 +1,6 @@
+//! Goal-cover orders: orders that put the abstractions of each goal first, for
+//! collections of goal-focused abstractions.
+
 use std::collections::{HashMap, HashSet};
 
 use super::ScpBuilder;

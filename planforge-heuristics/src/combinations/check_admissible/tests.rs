@@ -55,7 +55,7 @@ struct ConstantHeuristic {
 }
 
 impl ConstantHeuristic {
-    fn boxed(value: f64, name: &str) -> Box<dyn Heuristic + 'static> {
+    fn boxed(value: f64, name: &str) -> Box<dyn Heuristic> {
         Box::new(Self {
             value,
             name: name.to_string(),
@@ -64,12 +64,15 @@ impl ConstantHeuristic {
 }
 
 impl Heuristic for ConstantHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        Ok(if eval_state.is_goal() {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
+        Ok(Estimate::new(if eval_state.is_goal() {
             0.0
         } else {
             self.value
-        })
+        }))
     }
 
     fn name(&self) -> &str {
@@ -79,15 +82,13 @@ impl Heuristic for ConstantHeuristic {
 
 fn evaluate_initial_state(
     task: Arc<Task>,
-    inner: Box<dyn Heuristic + 'static>,
+    inner: Box<dyn Heuristic>,
 ) -> Result<f64, EvaluationError> {
-    let mut heuristic = CheckAdmissibleHeuristic::new(inner, task.clone())
-        .expect("the chain task has finite non-negative costs");
+    let mut heuristic = CheckAdmissibleHeuristic::new(inner, task.clone());
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial_state = registry.get_initial_state();
-    let mut eval_state = EvaluationState::new(&initial_state, &task, &registry);
-    eval_state.set_is_goal(false);
-    heuristic.evaluate(&eval_state)
+    let initial_state = registry.register_initial_state();
+    let eval_state = EvaluationState::new(&initial_state, &task, &registry);
+    heuristic.evaluate(&eval_state).map(Estimate::value)
 }
 
 #[test]
@@ -95,7 +96,11 @@ fn rejects_an_inadmissible_heuristic() {
     let error = evaluate_initial_state(chain_task(), ConstantHeuristic::boxed(1000.0, "huge"))
         .expect_err("h = 1000 must be rejected against a true goal distance of 2");
 
-    let EvaluationError::ComputationFailed(message) = error;
+    assert!(
+        matches!(error, EvaluationError::Inadmissible { .. }),
+        "{error}"
+    );
+    let message = error.to_string();
     assert!(message.contains("huge"), "{message}");
     assert!(message.contains("inadmissible"), "{message}");
     assert!(message.contains("1000"), "{message}");
@@ -124,7 +129,7 @@ fn rejects_a_heuristic_that_invents_a_dead_end() {
         ConstantHeuristic::boxed(f64::INFINITY, "fake_dead_end"),
     )
     .expect_err("a solvable state must not be reported as a dead end");
-    assert!(matches!(error, EvaluationError::ComputationFailed(_)));
+    assert!(matches!(error, EvaluationError::Inadmissible { .. }));
 }
 
 #[test]
@@ -142,8 +147,7 @@ fn checks_a_blind_heuristic() {
 #[test]
 fn wrapper_name_differs_from_the_wrapped_name() {
     let heuristic =
-        CheckAdmissibleHeuristic::new(ConstantHeuristic::boxed(1.0, "inner"), chain_task())
-            .expect("the chain task has finite non-negative costs");
+        CheckAdmissibleHeuristic::new(ConstantHeuristic::boxed(1.0, "inner"), chain_task());
     assert_eq!(heuristic.name(), "check_admissible_inner");
 }
 
@@ -155,24 +159,24 @@ fn goal_distance_is_computed_per_state() {
             &task,
         )),
         task.clone(),
-    )
-    .expect("the chain task has finite non-negative costs");
+    );
     let mut registry = StateRegistry::for_task(task.clone());
-    let initial_state = registry.get_initial_state();
+    let initial_state = registry.register_initial_state();
     let successor = registry
-        .get_successor_state(&initial_state, &task.operators()[0])
-        .expect("`step_0_1` is applicable in the initial state");
+        .successor(&initial_state, &task.operators()[0])
+        .expect("`step_0_1` is applicable in the initial state")
+        .0;
 
     let oracle = &mut heuristic.oracle;
     assert_eq!(
         oracle
-            .goal_distance(registry.view(&initial_state), initial_state.get_id())
+            .goal_distance(registry.view(&initial_state), initial_state.id())
             .expect("the goal is reachable from the initial state"),
         2.0
     );
     assert_eq!(
         oracle
-            .goal_distance(registry.view(&successor), successor.get_id())
+            .goal_distance(registry.view(&successor), successor.id())
             .expect("the goal is reachable after one step"),
         1.0
     );
@@ -183,8 +187,8 @@ fn the_wrapped_heuristic_is_one_positional_heuristic() {
     let spec =
         planforge_search::config::parse_call("check_admissible([domain_collection()])").unwrap();
     let error = super::single_wrapped_heuristic_spec("check_admissible", &spec.args).unwrap_err();
-    assert_eq!(error, "expected heuristic, got a list");
+    assert_eq!(error.to_string(), "expected heuristic, got a list");
     let spec = planforge_search::config::parse_call("check_admissible(h=blind())").unwrap();
     let error = super::single_wrapped_heuristic_spec("check_admissible", &spec.args).unwrap_err();
-    assert!(error.contains("positionally"), "{error}");
+    assert!(error.to_string().contains("positionally"), "{error}");
 }

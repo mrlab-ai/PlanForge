@@ -4,18 +4,16 @@
 mod tests;
 
 use crate::graph::{BackwardGraph, backward_goal_distances};
-use std::cell::Cell;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result as AnyResult, bail};
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, Task};
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::resource_limits::Deadline;
-use crate::successor_generator::{RegistryExpander, StandardGroundedTree};
+use crate::successor_generator::{StandardGroundedTree, StateExpander};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnumerationLimits {
@@ -59,7 +57,6 @@ pub enum StateSpaceEnumerationError {
         transitions: usize,
     },
     Enumeration(String),
-    GoalDistances(String),
 }
 
 impl fmt::Display for StateSpaceEnumerationError {
@@ -95,9 +92,6 @@ impl fmt::Display for StateSpaceEnumerationError {
             ),
             Self::Enumeration(message) => {
                 write!(formatter, "state-space enumeration failed: {message}")
-            }
-            Self::GoalDistances(message) => {
-                write!(formatter, "exact h* computation failed: {message}")
             }
         }
     }
@@ -229,12 +223,12 @@ pub fn enumerate_state_space(
         .map_err(|error| StateSpaceEnumerationError::InvalidLimit(format!("max_time: {error}")))?;
     check_time_limit(deadline, limits.max_time, 0, 0)?;
 
-    let mut expander = RegistryExpander::new(StandardGroundedTree::new(&task));
+    let mut expander = StateExpander::new(StandardGroundedTree::new(&task));
     let operators = task.operators();
     let num_propositional_variables = task.variables().len();
     let num_numeric_variables = task.numeric_variables().len();
     let mut registry = StateRegistry::for_task(task.clone());
-    let _initial = registry.get_initial_state();
+    let _initial = registry.register_initial_state();
     if registry.num_registered_states() > limits.max_states {
         return Err(StateSpaceEnumerationError::StateLimit {
             limit: limits.max_states,
@@ -320,10 +314,10 @@ pub fn enumerate_state_space(
                 ))
             })?);
             transition_operator_ids.push(operator_id);
-            transition_successor_ids.push(u32::try_from(successor.get_id()).map_err(|_| {
+            transition_successor_ids.push(u32::try_from(successor.id()).map_err(|_| {
                 StateSpaceEnumerationError::Enumeration(format!(
                     "successor state id {} exceeds u32::MAX",
-                    successor.get_id()
+                    successor.id()
                 ))
             })?);
             transition_costs.push(cost);
@@ -402,29 +396,16 @@ pub fn enumerate_state_space(
         transition_operator_ids: &transition_operator_ids,
         transition_costs: &transition_costs,
     };
-    let timed_out = Cell::new(false);
     let h_star = backward_goal_distances(
         &mut backward_graph,
         goal_state_ids.iter().map(|&state| (state, 0.0)),
-        || -> AnyResult<()> {
-            if deadline.passed() {
-                timed_out.set(true);
-                bail!("state-space enumeration time limit reached");
-            }
-            Ok(())
-        },
+        || deadline.ensure("state-space enumeration"),
         None,
     )
-    .map_err(|error| {
-        if timed_out.get() {
-            StateSpaceEnumerationError::TimeLimit {
-                limit: limits.max_time,
-                states: num_states,
-                transitions: transition_costs.len(),
-            }
-        } else {
-            StateSpaceEnumerationError::GoalDistances(error.to_string())
-        }
+    .map_err(|_| StateSpaceEnumerationError::TimeLimit {
+        limit: limits.max_time,
+        states: num_states,
+        transitions: transition_costs.len(),
     })?;
 
     Ok(OwnedStateSpace {

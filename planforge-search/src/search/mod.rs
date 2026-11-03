@@ -1,8 +1,10 @@
 //! State-space search for numeric planning.
 //!
-//! - [`SearchConfig::solve`] runs the search a [`SearchConfig`] describes.
-//! - `config`: the `--search` grammar and its registry,
-//!   [`SEARCH_ALGORITHMS`]; `algorithms`: the built-in algorithms.
+//! - [`ConfiguredSearch::solve`] runs the search a [`SearchConfig`] describes;
+//!   [`registry::Features::parse_search`](crate::registry::Features::parse_search)
+//!   parses one from a `--search` string.
+//! - `config`: the `--search` language and [`SearchFeature`];
+//!   `algorithms`: the built-in algorithms.
 //!
 //! A search algorithm is composed of two building blocks:
 //!
@@ -22,16 +24,19 @@ mod search_space;
 mod statistics;
 
 pub use algorithms::{AStarConfig, AStarFeature, GreedyBestFirstConfig, GreedyBestFirstFeature};
-pub use config::{
-    SEARCH_ALGORITHMS, SearchConfig, SearchEntry, SearchFeature, SearchLimits, entry,
-    parse_search_spec, search_algorithm_help,
-};
+pub use config::{ConfiguredSearch, SearchConfig, SearchEntry, SearchFeature, SearchLimits, entry};
 pub use progress::SearchProgress;
 pub use search_space::{Reached, SearchNode, SearchSpace, Successor};
 pub use statistics::{NodeCounters, SearchStatistics};
 
-use planforge_sas::numeric_task::Operator;
+use std::fmt;
 use std::time::Duration;
+
+use planforge_sas::numeric_task::Operator;
+use planforge_sas::utils::errors::StateInsertError;
+
+use crate::evaluation::EvaluationError;
+use crate::heuristic_features::HeuristicBuildError;
 
 /// A plan: the operators to apply in order.
 pub type Plan = Vec<Operator>;
@@ -50,6 +55,54 @@ pub enum SearchOutcome {
     Unsolvable,
     Timeout,
     OutOfMemory,
+}
+
+/// Why a search failed, as opposed to ending without a plan.
+#[derive(Debug)]
+pub enum SearchError {
+    /// A heuristic the search uses could not be built.
+    Build(HeuristicBuildError),
+    /// A heuristic failed to evaluate a state; `context` names the state.
+    Evaluation {
+        context: String,
+        source: EvaluationError,
+    },
+    /// The successors of a state could not be generated; `context` names the
+    /// state and operator.
+    Expansion {
+        context: String,
+        source: StateInsertError,
+    },
+    /// A failure particular to the search algorithm.
+    Failed(String),
+}
+
+impl fmt::Display for SearchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Build(error) => fmt::Display::fmt(error, f),
+            Self::Evaluation { context, source } => write!(f, "{context}: {source}"),
+            Self::Expansion { context, source } => write!(f, "{context}: {source}"),
+            Self::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for SearchError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Build(error) => Some(error),
+            Self::Evaluation { source, .. } => Some(source),
+            Self::Expansion { source, .. } => Some(source),
+            Self::Failed(_) => None,
+        }
+    }
+}
+
+impl From<HeuristicBuildError> for SearchError {
+    fn from(error: HeuristicBuildError) -> Self {
+        Self::Build(error)
+    }
 }
 
 /// A finished search: its outcome and what it counted on the way.

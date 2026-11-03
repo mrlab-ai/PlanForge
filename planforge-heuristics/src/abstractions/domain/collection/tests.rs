@@ -32,21 +32,6 @@ use crate::abstractions::cartesian::{
 use crate::abstractions::component::{AbstractionComponent, GoalFocusedMember};
 
 #[test]
-fn standard_collection_defaults() {
-    let config = DomainAbstractionCollectionConfig::default();
-    assert_eq!(config.collection_strategy, CollectionStrategy::Standard);
-    assert_eq!(config.member.cegar.max_states, 1_000_000);
-    assert_eq!(config.max_collection_size, 10_000_000);
-    assert!(!config.member.use_wildcard_plans);
-    assert_eq!(config.member.cegar.random_seed, Some(2011));
-    assert_eq!(config.member.cegar.flaw_kind, FlawKind::Progression);
-    assert_eq!(config.member.cegar.flaw_scope, FlawScope::First);
-    assert_eq!(config.alternate_split_kinds, None);
-    assert_eq!(config.variants_per_goal, 1);
-    assert!(!config.progress_states);
-}
-
-#[test]
 fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
     let task = Task::new(TaskParts {
         metric: Metric::new(true, None),

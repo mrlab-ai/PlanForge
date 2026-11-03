@@ -1,6 +1,8 @@
+//! The options of numeric potential heuristics and their feature.
+
 use planforge_search::config::{ConfigError, TimeLimit, option_enum};
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicFeature, TaskRequirements,
 };
 
@@ -163,18 +165,18 @@ impl Default for NumericPotentialConfig {
 }
 
 impl NumericPotentialConfig {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if self.num_samples == 0 {
-            return Err("numeric_potential num_samples must be at least 1".to_string());
+            return Err("numeric_potential num_samples must be at least 1".into());
         }
         if self.num_heuristics == 0 {
-            return Err("numeric_potential num_heuristics must be at least 1".to_string());
+            return Err("numeric_potential num_heuristics must be at least 1".into());
         }
         if self.num_goal_cost_partitions == 0
             || self.num_goal_conditioned_heuristics == 0
             || self.num_goal_conditioned_samples == 0
         {
-            return Err("numeric_potential portfolio counts must be at least 1".to_string());
+            return Err("numeric_potential portfolio counts must be at least 1".into());
         }
         for (name, value) in [
             (
@@ -195,12 +197,12 @@ impl NumericPotentialConfig {
             ("epsilon", self.epsilon),
         ] {
             if value.is_nan() || value < 0.0 {
-                return Err(format!("numeric_potential {name} must be non-negative"));
+                return Err(format!("numeric_potential {name} must be non-negative").into());
             }
         }
         if self.online_reoptimization_interval == 0 {
             return Err(
-                "numeric_potential online_reoptimization_interval must be at least 1".to_string(),
+                "numeric_potential online_reoptimization_interval must be at least 1".into(),
             );
         }
         Ok(())
@@ -208,11 +210,12 @@ impl NumericPotentialConfig {
 }
 
 /// `numeric_potential(...)`, registered in every build.
+#[derive(Debug)]
 pub struct NumericPotentialFeature;
 impl HeuristicFeature for NumericPotentialFeature {
     const NAME: &'static str = "numeric_potential";
     type Config = NumericPotentialConfig;
-    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+    fn preflight(_: &Self::Config) -> Result<(), HeuristicBuildError> {
         crate::requirements::require_cplex()
     }
     fn requirements(_: &Self::Config) -> TaskRequirements {
@@ -222,23 +225,23 @@ impl HeuristicFeature for NumericPotentialFeature {
         }
     }
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
-        config.validate().map_err(Into::into)
+        config.validate()
     }
     #[cfg(feature = "cplex")]
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         Ok(Box::new(super::NumericPotentialHeuristic::from_config(
             context.task.clone(),
             config.clone(),
         )?))
     }
     #[cfg(not(feature = "cplex"))]
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        _: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        _: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         unreachable!("the registry rejects a CPLEX heuristic in a build without CPLEX")
     }
 }

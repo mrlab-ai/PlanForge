@@ -3,17 +3,81 @@
 //! Everything else in this crate is an implementation detail of the pipeline
 //! these four functions run.
 
+use std::fmt;
+use std::path::PathBuf;
+
 use planforge_sas::numeric_task::Task;
 
-use crate::grounding::GroundingLimits;
+use crate::grounding::{GroundingLimitError, GroundingLimits};
 use crate::options::LayerStrategy;
+use crate::pddl_parser::lisp_parser::ParseError;
 use crate::sas_tasks::SASTask;
 use crate::{normalize, pddl_parser::PddlTask};
+
+/// Why a translation failed.
+#[derive(Debug)]
+pub enum TranslateError {
+    /// A PDDL file could not be read.
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    /// The PDDL input is malformed or uses what the translator does not
+    /// implement ([`ParseError::kind`] tells which).
+    Parse(ParseError),
+    /// Grounding exceeded a configured limit.
+    GroundingLimit(GroundingLimitError),
+    /// The grounded task could not be encoded as SAS+.
+    Encoding(String),
+    /// Writing the SAS+ output failed.
+    Write(std::io::Error),
+}
+
+impl fmt::Display for TranslateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { path, source } => write!(f, "could not read {}: {source}", path.display()),
+            Self::Parse(error) => fmt::Display::fmt(error, f),
+            Self::GroundingLimit(error) => fmt::Display::fmt(error, f),
+            Self::Encoding(message) => f.write_str(message),
+            Self::Write(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl std::error::Error for TranslateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Read { source, .. } | Self::Write(source) => Some(source),
+            Self::Parse(error) => Some(error),
+            Self::GroundingLimit(error) => Some(error),
+            Self::Encoding(_) => None,
+        }
+    }
+}
+
+impl From<ParseError> for TranslateError {
+    fn from(error: ParseError) -> Self {
+        Self::Parse(error)
+    }
+}
+
+impl From<GroundingLimitError> for TranslateError {
+    fn from(error: GroundingLimitError) -> Self {
+        Self::GroundingLimit(error)
+    }
+}
+
+impl From<std::io::Error> for TranslateError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Write(error)
+    }
+}
 
 /// Translate the (domain, problem) PDDL pair into the task the search reads.
 ///
 /// The default way in: no SAS+ text is produced, and nothing is parsed.
-pub fn translate_to_task(domain: &str, problem: &str) -> anyhow::Result<Task> {
+pub fn translate_to_task(domain: &str, problem: &str) -> Result<Task, TranslateError> {
     translate_to_task_with_limits(domain, problem, GroundingLimits::default())
 }
 
@@ -22,7 +86,7 @@ pub fn translate_to_task_with_limits(
     domain: &str,
     problem: &str,
     limits: GroundingLimits,
-) -> anyhow::Result<Task> {
+) -> Result<Task, TranslateError> {
     let sas_task = translate_to_sas_task(domain, problem, false, LayerStrategy::default(), limits)?;
     Ok(crate::preprocess::reordered_numeric_task(sas_task))
 }
@@ -38,7 +102,7 @@ pub fn translate_to_sas_to_path(
     problem: &str,
     output_path: &std::path::Path,
     layer_strategy: LayerStrategy,
-) -> anyhow::Result<()> {
+) -> Result<(), TranslateError> {
     translate_to_sas_to_path_with_limits(
         domain,
         problem,
@@ -58,7 +122,7 @@ pub fn translate_to_sas_to_path_with_limits(
     output_path: &std::path::Path,
     layer_strategy: LayerStrategy,
     limits: GroundingLimits,
-) -> anyhow::Result<()> {
+) -> Result<(), TranslateError> {
     write_sas_file(domain, problem, false, layer_strategy, output_path, limits)
 }
 
@@ -68,7 +132,7 @@ pub fn translate_to_sas_to_path_fast(
     domain: &str,
     problem: &str,
     output_path: &std::path::Path,
-) -> anyhow::Result<()> {
+) -> Result<(), TranslateError> {
     write_sas_file(
         domain,
         problem,
@@ -84,7 +148,7 @@ pub fn translate_to_sas_to_path_fast(
 /// The text format is how the task reaches *other* planners and the reader of a
 /// bug report; a search in this process gets its task from
 /// [`translate_to_task`] instead, which does not go through text at all.
-pub fn translate_to_sas_string(domain: &str, problem: &str) -> anyhow::Result<String> {
+pub fn translate_to_sas_string(domain: &str, problem: &str) -> Result<String, TranslateError> {
     let mut buf: Vec<u8> = Vec::new();
     translate_to_sas_writer(
         domain,
@@ -107,7 +171,7 @@ fn write_sas_file(
     layer_strategy: LayerStrategy,
     output_path: &std::path::Path,
     limits: GroundingLimits,
-) -> anyhow::Result<()> {
+) -> Result<(), TranslateError> {
     use std::io::Write;
 
     let sas_task = translate_to_sas_task(domain, problem, fast_groups, layer_strategy, limits)?;
@@ -126,7 +190,7 @@ fn translate_to_sas_writer<W: std::io::Write>(
     layer_strategy: LayerStrategy,
     limits: GroundingLimits,
     out: &mut W,
-) -> anyhow::Result<()> {
+) -> Result<(), TranslateError> {
     let sas_task = translate_to_sas_task(domain, problem, fast_groups, layer_strategy, limits)?;
     crate::preprocess::write_reordered_sas(sas_task, out)?;
     Ok(())
@@ -140,7 +204,7 @@ pub(crate) fn translate_to_sas_task(
     fast_groups: bool,
     layer_strategy: LayerStrategy,
     limits: GroundingLimits,
-) -> anyhow::Result<SASTask> {
+) -> Result<SASTask, TranslateError> {
     let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))?;
     let parsed_task = task.to_task()?;
 
@@ -154,5 +218,5 @@ pub(crate) fn translate_to_sas_task(
     // propositions and answers with a trivial task when that proves the task
     // impossible or trivially solvable, so nothing is left to simplify here.
     crate::translate::translate_grounded_task(&result, &task, fast_groups, layer_strategy)
-        .map_err(|err| anyhow::anyhow!(err))
+        .map_err(TranslateError::Encoding)
 }

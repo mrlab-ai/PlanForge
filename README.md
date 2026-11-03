@@ -47,8 +47,8 @@ Production-quality on the admissible search and heuristic paths (A\* with blind,
 
 Both take `open_list=...` (`tiebreaking()`: smallest key first, ties first in,
 first out; `preferred_first()`) and `successor_generator=...`
-(`standard_grounded_tree()`, the default). A binary that registers its own open lists,
-successor generators, search algorithms or heuristics names them the same way;
+(`standard_grounded_tree()`, the default). A binary that adds its own open lists,
+successor generators, search algorithms or heuristics to its features names them the same way;
 see [ARCHITECTURE.md](docs/ARCHITECTURE.md#extending-planforge).
 
 ## Building
@@ -176,7 +176,7 @@ Common options:
 - `--transform SPEC` — transform the task before the search, repeatable and
   applied in order: `restrict` converts an SNP task to its restricted
   representation (already restricted tasks are retained unchanged),
-  `icaps26_restrict` to the one `icaps26_cartesian` needs. A binary registers
+  `icaps26_restrict` to the one `icaps26_cartesian` needs. A binary adds
   further transformations like heuristics.
 - `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
   under a tight budget (`--lmcut-time`, `--lmcut-memory`), then
@@ -205,7 +205,7 @@ where each extension point lives. Workspace crates:
   abstractions (with cost partitioning), landmarks (numeric LM-cut),
   relaxation (FF), potentials and combinations. It depends on the core only.
   Adding a heuristic is a change to this crate alone: its own module, and one
-  entry in `heuristics()`, which `planforge` registers. `requirements` holds
+  entry in `features()`, which `planforge` parses its command line with. `requirements` holds
   what its heuristics need of the task and of the build (CPLEX).
 - `planforge-config-derive` — `#[derive(ApplyOptions)]`, which cannot be merged: a
   `proc-macro` crate is its own compilation unit. Fields marked

@@ -1,3 +1,6 @@
+//! The transitions and goal distances of a domain abstraction, found by
+//! regression through a match tree.
+
 use anyhow::Result;
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::numeric_task::Task;

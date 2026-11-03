@@ -1,3 +1,6 @@
+//! Splitting a state of the working abstraction: the two children and the
+//! transitions that replace those of the split state.
+
 use anyhow::Result;
 
 use super::semantics::{CartesianSemantics, SplitEnd};

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use planforge_translate::{
-    GroundingLimitError, GroundingLimitKind, GroundingLimits, LayerStrategy,
+    GroundingLimitKind, GroundingLimits, LayerStrategy, TranslateError,
     translate_to_sas_to_path_with_limits,
 };
 
@@ -32,9 +32,9 @@ fn atom_limit_is_typed_and_never_writes_a_partial_sas_task() {
     )
     .expect_err("the zero atom limit must stop grounding");
 
-    let limit = error
-        .downcast_ref::<GroundingLimitError>()
-        .expect("the anyhow error must preserve the typed grounding error");
+    let TranslateError::GroundingLimit(limit) = error else {
+        panic!("expected a grounding limit error, got {error:?}");
+    };
     assert_eq!(limit.kind, GroundingLimitKind::Atoms);
     assert_eq!(limit.value, 1);
     assert_eq!(limit.limit, 0);

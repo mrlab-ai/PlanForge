@@ -2,16 +2,20 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use ordered_float::OrderedFloat;
-use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
-use planforge_search::heuristic_factory::{
-    BuildContext, EmptyConfig, HeuristicBuildError, HeuristicFeature, entry,
+use planforge_search::config::EmptyConfig;
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState, Heuristic};
+use planforge_search::heuristic_features::{
+    BuildContext, HeuristicBuildError, HeuristicFeature, entry,
 };
 use planforge_search::search::best_first::{self, OpenEntry, OpenList, OpenListFeature};
 
 struct GoalCountHeuristic;
 
 impl Heuristic for GoalCountHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         let state = eval_state.state_registry().view(eval_state.state());
         let unsatisfied = eval_state
             .task()
@@ -19,7 +23,7 @@ impl Heuristic for GoalCountHeuristic {
             .iter()
             .filter(|goal| !goal.is_held(state))
             .count();
-        Ok(unsatisfied as f64)
+        Ok(Estimate::new(unsatisfied as f64))
     }
 
     fn name(&self) -> &str {
@@ -31,10 +35,10 @@ struct GoalCountFeature;
 impl HeuristicFeature for GoalCountFeature {
     const NAME: &'static str = "goalcount";
     type Config = EmptyConfig;
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        _: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        _: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         Ok(Box::new(GoalCountHeuristic))
     }
 }
@@ -103,9 +107,14 @@ impl OpenListFeature for FHeapFeature {
 }
 
 fn main() -> std::io::Result<()> {
-    planforge::run_with(planforge::Extensions {
-        heuristics: vec![entry::<GoalCountFeature>()],
-        open_lists: vec![best_first::entry::<FHeapFeature>()],
-        ..Default::default()
-    })
+    let mut features = planforge_heuristics::features();
+    features
+        .heuristics
+        .add(entry::<GoalCountFeature>())
+        .map_err(std::io::Error::other)?;
+    features
+        .open_lists
+        .add(best_first::entry::<FHeapFeature>())
+        .map_err(std::io::Error::other)?;
+    planforge::run_with(features)
 }

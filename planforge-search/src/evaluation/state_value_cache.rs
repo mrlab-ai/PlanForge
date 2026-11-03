@@ -1,6 +1,6 @@
 use planforge_sas::state_registry::StateID;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct StateValueCache {
     values: Vec<f64>,
 }

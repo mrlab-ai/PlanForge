@@ -1,4 +1,10 @@
+//! The CEGAR generator of Cartesian abstractions: refinement of a task's
+//! Cartesian abstraction from the trivial one until a limit or a concrete
+//! plan.
+
+use crate::abstractions::build_error;
 use planforge_sas::numeric_task::Task;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -22,6 +28,7 @@ use crate::abstractions::common::cegar::view::RefinementLimits;
 use crate::abstractions::common::coordinates::coordinate_value;
 use crate::abstractions::component::AbstractionKind;
 
+#[derive(Debug)]
 pub struct CartesianAbstractionGenerator {
     pub(super) config: CartesianAbstractionConfig,
 }
@@ -33,7 +40,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
 
     const KIND: AbstractionKind = AbstractionKind::Cartesian;
 
-    fn new(config: CartesianAbstractionConfig) -> Result<Self> {
+    fn new(config: CartesianAbstractionConfig) -> Result<Self, HeuristicBuildError> {
         config.cegar.validate()?;
         Ok(Self { config })
     }
@@ -43,6 +50,18 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
     }
 
     fn generate_from_root(
+        &self,
+        task: &Task,
+        refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
+    ) -> Result<CartesianAbstraction, HeuristicBuildError> {
+        self.refine(task, refinement_root, scope)
+            .map_err(build_error)
+    }
+}
+
+impl CartesianAbstractionGenerator {
+    fn refine(
         &self,
         task: &Task,
         refinement_root: Option<&ExplicitState>,

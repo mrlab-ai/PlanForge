@@ -19,7 +19,7 @@ use super::icaps26::Icaps26CartesianConfig;
 use super::sources::{AbstractionPurpose, AbstractionSource, PdbSourceConfig, build_components};
 use planforge_search::config::{ApplyOptions, ConfigError};
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{
+use planforge_search::heuristic_features::{
     BuildContext, HeuristicBuildError, HeuristicConfig, HeuristicFeature, TaskRequirements,
 };
 use planforge_search::resource_limits::Deadline;
@@ -92,6 +92,7 @@ pub(crate) fn abstraction_source(heuristic: &HeuristicConfig) -> Option<Abstract
 
 /// One abstraction as a heuristic: its goal distances, without the
 /// transition system a cost partitioning needs.
+#[derive(Debug)]
 pub struct SingleAbstractionFeature<G>(PhantomData<G>);
 
 impl<G> HeuristicFeature for SingleAbstractionFeature<G>
@@ -107,17 +108,15 @@ where
     fn validate(config: &Self::Config) -> Result<(), ConfigError> {
         config.source().validate()
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         let mut config = config.clone();
         config.cegar_mut().keep_transitions = false;
         let abstraction = G::new(config)
-            .and_then(|generator| generator.generate(context.task))
-            .map_err(|error| {
-                HeuristicBuildError::from_source(error, format!("failed to build {}", G::KIND))
-            })?;
+            .and_then(|generator| generator.generate(&context.task))
+            .map_err(|error| error.context(format!("failed to build {}", G::KIND)))?;
         Ok(Box::new(AbstractionHeuristic::new(
             &context.name,
             abstraction,
@@ -130,6 +129,7 @@ pub type CartesianFeature = SingleAbstractionFeature<CartesianAbstractionGenerat
 
 /// A collection or pattern-collection source as a heuristic: the maximum over
 /// its abstractions.
+#[derive(Debug)]
 pub struct SourceFeature<C>(PhantomData<C>);
 
 impl<C: SourceConfig> HeuristicFeature for SourceFeature<C> {
@@ -141,27 +141,28 @@ impl<C: SourceConfig> HeuristicFeature for SourceFeature<C> {
     fn validate(config: &C) -> Result<(), ConfigError> {
         config.source().validate()
     }
-    fn build<'a>(
+    fn build(
         config: &C,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-        max_over_sources(context.task, &[config.source()], &context.name)
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
+        max_over_sources(&context.task, &[config.source()], &context.name)
     }
 }
 
 /// The maximum over the abstractions of `sources`.
-pub(crate) fn max_over_sources<'task>(
-    task: &'task Task,
+pub(crate) fn max_over_sources(
+    task: &Task,
     sources: &[AbstractionSource],
     name: &str,
-) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
+) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
     let components = build_components(
         task,
         sources,
         AbstractionPurpose::Standalone,
         Deadline::NONE,
     )?;
-    let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
-        .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
-    Ok(Box::new(heuristic))
+    Ok(Box::new(MaxAbstractionHeuristic::new(
+        Some(name.to_string()),
+        components,
+    )))
 }

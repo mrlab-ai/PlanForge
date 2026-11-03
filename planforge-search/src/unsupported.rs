@@ -26,11 +26,6 @@ impl fmt::Display for UnsupportedTask {
 
 impl std::error::Error for UnsupportedTask {}
 
-/// Whether `error` or one of its causes is an [`UnsupportedTask`].
-pub fn is_unsupported_task(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| cause.is::<UnsupportedTask>())
-}
-
 /// `Err(UnsupportedTask)` with the formatted reason.
 #[macro_export]
 macro_rules! unsupported {
@@ -51,39 +46,22 @@ macro_rules! ensure_supported {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::{Context, Result};
+    use crate::heuristic_features::HeuristicBuildError;
+    use crate::task_transformations::TransformError;
 
-    use super::*;
-
-    fn check(supported: bool) -> Result<()> {
+    fn check(supported: bool) -> Result<(), TransformError> {
         crate::ensure_supported!(supported, "feature {} is missing", 7);
         Ok(())
     }
 
     #[test]
-    fn an_unsupported_task_is_recognized_through_its_context() {
+    fn an_unsupported_task_converts_into_each_error_that_has_the_kind() {
         assert!(check(true).is_ok());
-        let error = check(false).context("building source 0").unwrap_err();
+        let error = check(false).unwrap_err();
+        assert!(matches!(error, TransformError::Unsupported(_)));
+        assert_eq!(error.to_string(), "unsupported task: feature 7 is missing");
 
-        assert!(is_unsupported_task(&error));
-        assert_eq!(
-            format!("{error:#}"),
-            "building source 0: unsupported task: feature 7 is missing"
-        );
-        assert!(!is_unsupported_task(&anyhow::anyhow!("a bug")));
-    }
-
-    #[test]
-    fn the_heuristic_factory_reports_an_unsupported_task_as_such() {
-        use crate::heuristic_factory::HeuristicBuildError;
-        let unsupported =
-            HeuristicBuildError::from_source(check(false).unwrap_err(), "source 0".into());
-        let failure = HeuristicBuildError::from_source(anyhow::anyhow!("a bug"), "source 0".into());
-
-        assert_eq!(
-            unsupported.into_io_error().kind(),
-            std::io::ErrorKind::Unsupported
-        );
-        assert_eq!(failure.into_io_error().kind(), std::io::ErrorKind::Other);
+        let error = HeuristicBuildError::from(super::UnsupportedTask::new("no axioms"));
+        assert!(matches!(error, HeuristicBuildError::Unsupported(_)));
     }
 }

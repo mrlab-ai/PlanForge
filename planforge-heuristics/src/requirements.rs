@@ -1,9 +1,10 @@
-//! What the heuristics of this crate need of the task, as
-//! [`TaskCheck`]s, and of the build: an unrestricted CPLEX for the LP-based
-//! ones.
+//! What the heuristics of this crate need of the task and of the build.
+//!
+//! Needs of the task are [`TaskCheck`]s; the LP-based heuristics need an
+//! unrestricted CPLEX in the build.
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::heuristic_factory::{HeuristicBuildError, TaskCheck};
+use planforge_search::heuristic_features::{HeuristicBuildError, TaskCheck};
 use planforge_search::task_transformations::projection::validate_abstractable_goal;
 use planforge_search::task_transformations::restriction::validate_restricted_task;
 
@@ -12,31 +13,31 @@ use planforge_search::task_transformations::restriction::validate_restricted_tas
 /// not is a usage error, since the restriction would restrict it.
 pub const RESTRICTED: TaskCheck = TaskCheck {
     name: "restricted",
-    check: |task: &Task| validate_restricted_task(task).map_err(HeuristicBuildError::Failure),
+    check: |task: &Task| Ok(validate_restricted_task(task)?),
 };
 
 /// The goal is a conjunction of facts some operator can bring about, which
 /// an abstraction can express; a task whose goal is not is unsupported.
 pub const ABSTRACTABLE_GOAL: TaskCheck = TaskCheck {
     name: "abstractable_goal",
-    check: |task: &Task| validate_abstractable_goal(task).map_err(HeuristicBuildError::Unsupported),
+    check: |task: &Task| Ok(validate_abstractable_goal(task)?),
 };
 
 /// The preflight check of an LP-based heuristic: this build has an
 /// unrestricted CPLEX.
-pub fn require_cplex() -> std::io::Result<()> {
+pub fn require_cplex() -> Result<(), HeuristicBuildError> {
     #[cfg(feature = "cplex")]
     {
         planforge_cplex::assert_unrestricted_license().map_err(|error| {
-            std::io::Error::other(format!(
+            HeuristicBuildError::Failure(format!(
                 "an unrestricted CPLEX installation is required: {error}"
             ))
         })
     }
     #[cfg(not(feature = "cplex"))]
     {
-        Err(std::io::Error::other(
-            "the requested LP-backed heuristic requires unrestricted CPLEX, which is not compiled into this build; rebuild with `--features cplex` and set CPLEX_ROOT",
+        Err(HeuristicBuildError::Failure(
+            "the requested LP-backed heuristic requires unrestricted CPLEX, which is not compiled into this build; rebuild with `--features cplex` and set CPLEX_ROOT".to_string(),
         ))
     }
 }

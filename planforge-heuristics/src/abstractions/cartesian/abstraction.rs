@@ -1,4 +1,10 @@
+//! A built Cartesian abstraction: its refinement hierarchy, goal distances
+//! and, until discarded, its transitions, and how cost partitioning saturates
+//! it.
+
+use crate::abstractions::build_error;
 use planforge_sas::explicit_state::StateValues;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -17,6 +23,8 @@ use crate::abstractions::cost_partitioning::costs::{
     saturate_regions,
 };
 use planforge_search::resource_limits::Deadline;
+
+use crate::abstractions::common::DEADLINE_POLL_STRIDE;
 
 /// A Cartesian abstraction: the refinement hierarchy that maps concrete
 /// states to abstract ones, and, until discarded, its transitions.
@@ -95,33 +103,9 @@ impl CegarAbstraction for CartesianAbstraction {
         &mut self,
         regions: &RegionSemantics<'_>,
         deadline: Deadline,
-    ) -> Result<()> {
-        let transitions = self
-            .transitions
-            .as_mut()
-            .context("cannot build source sets after the transitions were discarded")?;
-        if transitions.source_sets.is_some() {
-            return Ok(());
-        }
-        let source_sets = transitions
-            .system
-            .transitions
-            .iter()
-            .map(|transition| {
-                if transition.transition_id.is_multiple_of(1024) {
-                    deadline.ensure(SOURCE_SETS)?;
-                }
-                regions
-                    .abstract_operator_source_sets(
-                        &transitions.regions[transition.source_state],
-                        &transition.concrete_op_ids,
-                        &transitions.regions[transition.target_state],
-                    )
-                    .with_context(|| format!("transition {}", transition.transition_id))
-            })
-            .collect::<Result<_>>()?;
-        transitions.source_sets = Some(source_sets);
-        Ok(())
+    ) -> Result<(), HeuristicBuildError> {
+        self.build_source_sets(regions, deadline)
+            .map_err(build_error)
     }
 
     fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
@@ -133,16 +117,24 @@ impl CegarAbstraction for CartesianAbstraction {
         operator_costs: &[f64],
         perimeter_state: Option<usize>,
         deadline: Deadline,
-    ) -> Result<(Vec<f64>, Vec<f64>)> {
-        saturate_labels(
-            &mut ExplicitSaturationGraph::new(&self.transitions()?.system),
-            operator_costs,
-            perimeter_state,
-            deadline,
-        )
+    ) -> Result<(Vec<f64>, Vec<f64>), HeuristicBuildError> {
+        self.label_saturation(operator_costs, perimeter_state, deadline)
+            .map_err(build_error)
     }
 
     fn saturate_regions(
+        &self,
+        remaining: &RemainingCosts,
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation), HeuristicBuildError> {
+        self.regional_saturation(remaining, perimeter_state, deadline)
+            .map_err(build_error)
+    }
+}
+
+impl CartesianAbstraction {
+    fn regional_saturation(
         &self,
         remaining: &RemainingCosts,
         perimeter_state: Option<usize>,
@@ -161,5 +153,55 @@ impl CegarAbstraction for CartesianAbstraction {
             perimeter_state,
             deadline,
         )
+    }
+
+    fn label_saturation(
+        &self,
+        operator_costs: &[f64],
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, Vec<f64>)> {
+        saturate_labels(
+            &mut ExplicitSaturationGraph::new(&self.transitions()?.system),
+            operator_costs,
+            perimeter_state,
+            deadline,
+        )
+    }
+
+    fn build_source_sets(
+        &mut self,
+        regions: &RegionSemantics<'_>,
+        deadline: Deadline,
+    ) -> Result<()> {
+        let transitions = self
+            .transitions
+            .as_mut()
+            .context("cannot build source sets after the transitions were discarded")?;
+        if transitions.source_sets.is_some() {
+            return Ok(());
+        }
+        let source_sets = transitions
+            .system
+            .transitions
+            .iter()
+            .map(|transition| {
+                if transition
+                    .transition_id
+                    .is_multiple_of(DEADLINE_POLL_STRIDE)
+                {
+                    deadline.ensure(SOURCE_SETS)?;
+                }
+                regions
+                    .abstract_operator_source_sets(
+                        &transitions.regions[transition.source_state],
+                        &transition.concrete_op_ids,
+                        &transitions.regions[transition.target_state],
+                    )
+                    .with_context(|| format!("transition {}", transition.transition_id))
+            })
+            .collect::<Result<_>>()?;
+        transitions.source_sets = Some(source_sets);
+        Ok(())
     }
 }

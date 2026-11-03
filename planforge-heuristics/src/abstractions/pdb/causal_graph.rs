@@ -1,8 +1,12 @@
+//! The causal graph of a restricted task, over which pattern generators choose
+//! variables.
+
 #[cfg(test)]
 mod tests;
 
 use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::collections::{BTreeMap, BTreeSet};
 
 use planforge_sas::numeric_task::{
@@ -39,14 +43,14 @@ pub struct CausalGraph {
 }
 
 impl CausalGraph {
-    pub fn new(task: &Task) -> Result<Self, String> {
+    pub fn new(task: &Task) -> Result<Self, HeuristicBuildError> {
         validate_restricted_task(task)?;
         let comparison_numeric_vars = task
             .comparison_axioms()
             .iter()
             .map(|axiom| {
                 let regular = |id: VariableIndex| task.numeric_type(id) == NumericType::Regular;
-                let (left, right) = (axiom.get_left_var_id(), axiom.get_right_var_id());
+                let (left, right) = (axiom.left_var_id(), axiom.right_var_id());
                 if regular(right) {
                     Some(right)
                 } else if regular(left) {

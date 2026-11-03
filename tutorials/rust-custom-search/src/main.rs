@@ -11,14 +11,14 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
 use planforge_sas::numeric_task::Task;
 use planforge_search::config::ApplyOptions;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{BuildContext, HeuristicConfig};
+use planforge_search::heuristic_features::{BuildContext, HeuristicConfig};
+use planforge_search::registry::Features;
 use planforge_search::search::{
-    Reached, SEARCH_ALGORITHMS, SearchFeature, SearchLimits, SearchOutcome, SearchProgress,
-    SearchResult, SearchSpace, entry, parse_search_spec,
+    Reached, SearchError, SearchFeature, SearchLimits, SearchOutcome, SearchProgress, SearchResult,
+    SearchSpace, entry,
 };
 use planforge_search::successor_generator::SuccessorGeneratorConfig;
 
@@ -45,33 +45,34 @@ impl SearchFeature for EnforcedHillClimbing {
         config: &EhcConfig,
         task: Arc<Task>,
         limits: SearchLimits,
-    ) -> std::io::Result<SearchResult> {
-        let heuristic = config
-            .heuristic
-            .build(&BuildContext::new(&task))
-            .map_err(|error| error.into_io_error())?;
+    ) -> Result<SearchResult, SearchError> {
+        let heuristic = config.heuristic.build(&BuildContext::new(task.clone()))?;
         let space = SearchSpace::new(task.clone(), config.successor_generator.build(&task));
         enforced_hill_climbing(space, heuristic, limits)
-            .map_err(|error| std::io::Error::other(format!("{error:#}")))
     }
 }
 
 fn enforced_hill_climbing(
     mut space: SearchSpace,
-    mut heuristic: Box<dyn Heuristic + '_>,
+    mut heuristic: Box<dyn Heuristic>,
     limits: SearchLimits,
-) -> Result<SearchResult> {
+) -> Result<SearchResult, SearchError> {
     let mut progress = SearchProgress::start(limits, heuristic.name());
     let mut successors = Vec::new();
     let mut queue = VecDeque::new();
 
     let initial = space.initial_state();
     assert_eq!(space.reach(&initial, None, 0.0), Reached::New);
-    let mut best_h = heuristic.evaluate(&space.evaluation_state(&initial))?;
+    let mut best_h = heuristic
+        .evaluate(&space.evaluation_state(&initial))
+        .map_err(|source| SearchError::Evaluation {
+            context: "initial state evaluation failed".to_string(),
+            source,
+        })?;
     progress.statistics.nodes.evaluated += 1;
     progress.statistics.evaluations += 1;
-    progress.report_initial_h(best_h);
-    if best_h == f64::INFINITY {
+    progress.report_initial_h(best_h.value());
+    if best_h.is_dead_end() {
         return Ok(progress.finish(SearchOutcome::Unsolvable, &space));
     }
     queue.push_back(initial);
@@ -81,9 +82,11 @@ fn enforced_hill_climbing(
             break outcome;
         }
         let Some(state) = queue.pop_front() else {
-            bail!("enforced hill-climbing found no state with an estimate below {best_h}");
+            return Err(SearchError::Failed(format!(
+                "enforced hill-climbing found no state with an estimate below {best_h}"
+            )));
         };
-        let state_id = state.get_id();
+        let state_id = state.id();
         if space.is_goal(state_id) {
             break space.solution(state_id);
         }
@@ -98,18 +101,23 @@ fn enforced_hill_climbing(
                 // Each state is evaluated, and expanded, at most once.
                 continue;
             }
-            let successor_id = successor.state.get_id();
+            let successor_id = successor.state.id();
             let is_goal = space.is_goal(successor_id);
-            let h = heuristic.evaluate(&space.evaluation_state(&successor.state))?;
+            let h = heuristic
+                .evaluate(&space.evaluation_state(&successor.state))
+                .map_err(|source| SearchError::Evaluation {
+                    context: format!("evaluating state {successor_id} failed"),
+                    source,
+                })?;
             progress.statistics.nodes.evaluated += 1;
             progress.statistics.evaluations += 1;
-            if h == f64::INFINITY {
+            if h.is_dead_end() {
                 space.mark_dead_end(successor_id);
                 progress.statistics.dead_ends += 1;
             } else if h < best_h || is_goal {
                 // A better state: the breadth-first search starts over from it.
                 best_h = h;
-                progress.report_best_h(h, g + successor.cost);
+                progress.report_best_h(h.value(), g + successor.cost);
                 queue.clear();
                 queue.push_back(successor.state.clone());
                 continue 'search;
@@ -121,13 +129,13 @@ fn enforced_hill_climbing(
     Ok(progress.finish(outcome, &space))
 }
 
-fn main() -> Result<()> {
-    // A binary registers its search algorithms once, before it parses a
-    // configuration; `planforge::run_with` does so for the real CLI.
-    SEARCH_ALGORITHMS
-        .register(vec![entry::<EnforcedHillClimbing>()])
-        .map_err(anyhow::Error::msg)?;
-    let search = parse_search_spec("ehc(blind())").map_err(anyhow::Error::msg)?;
+fn main() -> anyhow::Result<()> {
+    // The features the configuration names: the built-in ones and EHC.
+    let mut features = Features::builtin();
+    features
+        .search_algorithms
+        .add(entry::<EnforcedHillClimbing>())?;
+    let search = features.parse_search("ehc(blind())")?;
 
     let task: Arc<Task> = Arc::new(Task::from_file("tests/assets/numeric_sas/example5.sas"));
     let limits = SearchLimits {
@@ -136,7 +144,7 @@ fn main() -> Result<()> {
     };
     let result = search.solve(task, limits)?;
     let SearchOutcome::Solved { plan, cost } = &result.outcome else {
-        bail!("{search} found no plan: {:?}", result.outcome);
+        anyhow::bail!("{search} found no plan: {:?}", result.outcome);
     };
     println!(
         "{search} found a plan of {} steps and cost {cost} after {} expansions",

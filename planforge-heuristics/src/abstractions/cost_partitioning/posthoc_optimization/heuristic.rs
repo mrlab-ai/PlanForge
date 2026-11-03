@@ -31,6 +31,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::Task;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::collections::BTreeSet;
 
 use planforge_cplex::{
@@ -45,11 +46,12 @@ use tracing::info;
 
 use planforge_search::evaluation::Heuristic;
 use planforge_search::evaluation::state_value_cache::StateValueCache;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 
 use super::super::standalone_estimate;
 use crate::abstractions::component::AbstractionComponent;
 
+#[derive(Debug)]
 pub struct PostHocOptimizationHeuristic {
     name: String,
     components: Vec<AbstractionComponent>,
@@ -72,25 +74,28 @@ impl PostHocOptimizationHeuristic {
         name: Option<String>,
         task: &Task,
         components: Vec<AbstractionComponent>,
-    ) -> Result<Self, String> {
-        if components.is_empty() {
-            return Err(
-                "posthoc optimization heuristic requires at least one component".to_string(),
-            );
-        }
-        let relevant_operators = components
+    ) -> Result<Self, HeuristicBuildError> {
+        assert!(
+            !components.is_empty(),
+            "post-hoc optimization has at least one component"
+        );
+        let relevant_operators: Vec<_> = components
             .iter()
             .map(|component| component.relevant_operator_ids(task))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
 
         let original_costs: Vec<f64> = task.effective_operator_costs().to_vec();
 
         let constraints = build_constraints(&relevant_operators, &original_costs);
 
         assert_unrestricted_license().map_err(|error| {
-            format!("posthoc_optimization requires unrestricted CPLEX: {error}")
+            HeuristicBuildError::Failure(format!(
+                "posthoc_optimization requires unrestricted CPLEX: {error}"
+            ))
         })?;
-        let lp_model = build_lp_model(components.len(), &constraints)?;
+        let lp_model = build_lp_model(components.len(), &constraints).map_err(|error| {
+            HeuristicBuildError::Failure(format!("posthoc_optimization: {error}"))
+        })?;
 
         info!(
             "posthoc_optimization: abstractions={}, lp_constraints={} (CPLEX)",
@@ -179,7 +184,7 @@ impl PostHocOptimizationHeuristic {
             SolveStatus::Infeasible => {
                 unreachable!("posthoc_optimization: the dual LP is feasible at X = 0")
             }
-            other => Err(EvaluationError::ComputationFailed(format!(
+            other => Err(EvaluationError::Solver(format!(
                 "posthoc_optimization: CPLEX returned `{other:?}` for a well-formed LP \
                  (active={} abstractions, {} constraints); not falling back",
                 active.len(),
@@ -189,7 +194,10 @@ impl PostHocOptimizationHeuristic {
     }
 }
 
-fn build_lp_model(num_abstractions: usize, constraints: &[Vec<usize>]) -> Result<LpModel, String> {
+fn build_lp_model(
+    num_abstractions: usize,
+    constraints: &[Vec<usize>],
+) -> Result<LpModel, planforge_cplex::Error> {
     assert!(num_abstractions > 0, "a posthoc model has a column");
     let variables = vec![Variable::new(0.0, LpModel::infinity(), 0.0); num_abstractions];
     let constraints: Vec<LpConstraint> = constraints
@@ -205,27 +213,28 @@ fn build_lp_model(num_abstractions: usize, constraints: &[Vec<usize>]) -> Result
             )
         })
         .collect();
-    let mut model = LpModel::new("posthoc-optimization").map_err(|error| error.to_string())?;
-    model
-        .load(ObjectiveSense::Maximize, &variables, &constraints)
-        .map_err(|error| error.to_string())?;
+    let mut model = LpModel::new("posthoc-optimization")?;
+    model.load(ObjectiveSense::Maximize, &variables, &constraints)?;
     Ok(model)
 }
 
 fn lp_evaluation_error(error: planforge_cplex::Error) -> EvaluationError {
-    EvaluationError::ComputationFailed(format!("posthoc_optimization CPLEX failure: {error}"))
+    EvaluationError::Solver(format!("posthoc_optimization: {error}"))
 }
 
 impl Heuristic for PostHocOptimizationHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        let state_id = eval_state.state().get_id();
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
+        let state_id = eval_state.state().id();
         if let Some(value) = self.state_value_cache.get(state_id) {
-            return Ok(value);
+            return Ok(Estimate::new(value));
         }
 
         let value = self.evaluate_lp(eval_state)?;
         self.state_value_cache.insert(state_id, value);
-        Ok(value)
+        Ok(Estimate::new(value))
     }
 
     fn name(&self) -> &str {

@@ -1,3 +1,6 @@
+//! A PDDL task: the domain and problem together, and the tables grounding
+//! reads.
+
 use crate::pddl::f_expression::{FluentKind, TOTAL_COST};
 use std::collections::{HashMap, HashSet};
 
@@ -249,11 +252,9 @@ impl Task {
     ///
     /// Two places invent axioms: the global constraint, and the pass that
     /// replaces a universal condition by the negation of a new derived
-    /// predicate. Both used to spell the name themselves, and the global
-    /// constraint used `axioms.len()` as if that were a counter. It is not: with
-    /// one existing axiom the next index is 1, but so is `new-axiom@1` if the
-    /// other generator already took it, and in a task with no axioms both
-    /// generators produce `new-axiom@0`.
+    /// predicate. Both take their names from this one counter: the number of
+    /// axioms is not one, since another generator may have taken the next
+    /// index already.
     ///
     /// Colliding is not a cosmetic problem. Two axioms with one head are read as
     /// two ways of proving it, so a collision with the global constraint, whose
@@ -388,7 +389,9 @@ impl DerivedFunctionAdministrator {
                 .iter()
                 .map(|part| self.get_derived_function(part))
                 .collect(),
-            FunctionalExpression::PrimitiveNumericExpression(_) => unreachable!(),
+            FunctionalExpression::PrimitiveNumericExpression(_) => {
+                unreachable!("a primitive numeric expression is returned before it is derived")
+            }
         };
         if matches!(expression, FunctionalExpression::ArithmeticExpression(ae) if ae.op == "+" || ae.op == "*")
         {
@@ -407,7 +410,9 @@ impl DerivedFunctionAdministrator {
             FunctionalExpression::ArithmeticExpression(ae) => {
                 DerivedFunctionKey::Arithmetic(ae.op.clone(), subexpressions.clone())
             }
-            FunctionalExpression::PrimitiveNumericExpression(_) => unreachable!(),
+            FunctionalExpression::PrimitiveNumericExpression(_) => {
+                unreachable!("a primitive numeric expression is returned before it is derived")
+            }
         };
 
         if let Some(axiom) = self.derived_functions.get(&key) {
@@ -457,7 +462,9 @@ impl DerivedFunctionAdministrator {
                 }
                 (ae.op.clone(), rewritten_parts)
             }
-            FunctionalExpression::PrimitiveNumericExpression(_) => unreachable!(),
+            FunctionalExpression::PrimitiveNumericExpression(_) => {
+                unreachable!("a primitive numeric expression is returned before it is derived")
+            }
         };
 
         let parameters = self.get_default_variables(args.len());

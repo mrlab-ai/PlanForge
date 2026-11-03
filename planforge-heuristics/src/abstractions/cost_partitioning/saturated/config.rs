@@ -1,4 +1,7 @@
-use planforge_search::config::TimeLimit;
+//! The options of saturated cost partitioning: how orders are generated, which
+//! saturator, label or regional costs, and the time limits.
+
+use planforge_search::config::{ConfigError, TimeLimit};
 use std::time::Duration;
 
 use planforge_search::config::option_enum;
@@ -155,11 +158,11 @@ impl Default for ScpConfig {
 
 impl ScpConfig {
     /// Reject inconsistent settings. The heuristic always owns its task.
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         self.max_time.duration()?;
         self.table_construction_max_time.duration()?;
         self.initial_order_generation_max_time.duration()?;
-        let fail = |message: &str| Err(message.to_string());
+        let fail = |message: &str| Err(message.into());
         if self.order_generator == OrderGenerator::Diverse && !self.diversify {
             return fail("diverse SCP orders require diversify=true");
         }

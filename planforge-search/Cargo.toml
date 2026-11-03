@@ -16,7 +16,6 @@ planforge-config-derive = { path = "../planforge-config-derive", version = "0.1.
 libc = "0.2"
 tracing = "0.1"
 ordered-float = "5.1.0"
-anyhow = "1"
 serde_json = "1"
 itertools = "0.13"
 rand = { version = "0.8", features = ["small_rng"] }

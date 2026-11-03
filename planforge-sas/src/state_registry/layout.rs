@@ -10,6 +10,7 @@ use crate::utils::state_packer::StatePacker;
 
 /// What a registry fixes at construction: the packer, where each numeric
 /// variable lives, the metric, and the axioms closing a state.
+#[derive(Debug)]
 pub(super) struct StateLayout {
     /// Axiom evaluator for handling derived predicates and numeric axioms.
     pub(super) axiom_evaluator: Arc<AxiomEvaluator>,

@@ -1,8 +1,13 @@
+//! The landmarks of numeric LM-cut: the relaxed task, its propositions and
+//! operators, and the cuts that give the landmarks of a state.
+
+mod constant_assignments;
 mod cut;
 mod effects;
 mod exploration;
 mod propositions;
 mod relaxed_task;
+mod sose_effects;
 
 use super::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use super::numeric_bound::NumericBound;
@@ -11,7 +16,6 @@ use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
     ExplicitFact, ExplicitValueIndex, NumericValue, Operator, OperatorIndex, Task, VariableIndex,
-    ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
 
@@ -256,6 +260,7 @@ impl OperatorRuntime {
     }
 }
 
+#[derive(Debug)]
 pub struct LandmarkCutLandmarks {
     task: Arc<Task>,
     config: LmCutNumericConfig,
@@ -518,11 +523,7 @@ impl LandmarkCutLandmarks {
     }
 
     fn is_cut_marked(&self, operator_id: OperatorIndex) -> bool {
-        self.cut_marks
-            .get(operator_id.index())
-            .copied()
-            .unwrap_or(0)
-            == self.cut_mark_epoch
+        self.cut_marks[operator_id.index()] == self.cut_mark_epoch
     }
 
     fn mark_cut(&mut self, operator_id: OperatorIndex) {

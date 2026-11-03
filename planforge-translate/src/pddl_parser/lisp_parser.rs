@@ -184,9 +184,11 @@ impl fmt::Display for SExpr {
 }
 
 /// Reads a PDDL file and parses it into an S-expression.
-pub fn parse_nested_list(path: &Path) -> anyhow::Result<SExpr> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("could not read {}: {e}", path.display()))?;
+pub fn parse_nested_list(path: &Path) -> Result<SExpr, crate::TranslateError> {
+    let content = fs::read_to_string(path).map_err(|source| crate::TranslateError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(parse_nested_list_string(&content).map_err(|error| error.in_file(path))?)
 }
 

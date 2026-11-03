@@ -1,8 +1,8 @@
 //! Successor generation: a [`SuccessorGenerator`] lists the operators
 //! applicable in a state, and the [`StateRegistry`] applies them and
 //! registers the successors. Generators are features the configuration
-//! grammar names ([`SUCCESSOR_GENERATORS`]); the [`StandardGroundedTree`] is built in
-//! and the default.
+//! language names ([`Features::successor_generators`](crate::registry::Features));
+//! the [`StandardGroundedTree`] is built in and the default.
 //!
 //! A generator only reads the state, so it takes `&self` and writes into a
 //! buffer its caller owns:
@@ -58,7 +58,7 @@ mod standard_grounded_tree;
 
 pub use standard_grounded_tree::StandardGroundedTree;
 
-use std::fmt::{self, Debug};
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::{
@@ -68,10 +68,10 @@ use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegist
 use planforge_sas::utils::errors::StateInsertError;
 
 use crate::config::{
-    ApplyOptions, ConfigCall, ConfigError, ConfigValue, FromOptionValue, canonical_call, configure,
+    ApplyOptions, ConfigCall, ConfigError, ConfigValue, EmptyConfig, FromOptionValue,
+    canonical_call,
 };
-use crate::heuristic_factory::EmptyConfig;
-use crate::registry::{Entry, Registry, options_of};
+use crate::registry::{Configured, Entry, Features, Typed, options_of, parse_configured};
 
 /// Which operators are applicable in a state.
 pub trait SuccessorGenerator {
@@ -97,7 +97,7 @@ impl<G: SuccessorGenerator + ?Sized> SuccessorGenerator for Box<G> {
 
 /// Forward expansion of registered states: a successor generator and the
 /// scratch an expansion needs, reused from one expansion to the next.
-pub struct RegistryExpander<G: SuccessorGenerator> {
+pub struct StateExpander<G: SuccessorGenerator> {
     generator: G,
     propositional: Vec<ExplicitValueIndex>,
     applicable: Vec<OperatorIndex>,
@@ -106,7 +106,7 @@ pub struct RegistryExpander<G: SuccessorGenerator> {
     successor_cost: Vec<NumericValue>,
 }
 
-impl<G: SuccessorGenerator> RegistryExpander<G> {
+impl<G: SuccessorGenerator> StateExpander<G> {
     pub fn new(generator: G) -> Self {
         Self {
             generator,
@@ -193,62 +193,36 @@ pub trait SuccessorGeneratorFeature: 'static {
     fn build(config: &Self::Config, task: &Task) -> Box<dyn SuccessorGenerator>;
 }
 
-trait ErasedGeneratorConfig: Debug + Send + Sync {
-    fn call(&self) -> String;
+/// The interface of a configured successor generator, whatever its
+/// configuration type: what [`SuccessorGeneratorConfig`] dereferences to.
+pub trait ConfiguredSuccessorGenerator: Send + Sync {
     fn build(&self, task: &Task) -> Box<dyn SuccessorGenerator>;
 }
 
-struct Configured<F: SuccessorGeneratorFeature>(F::Config);
-
-impl<F: SuccessorGeneratorFeature> Debug for Configured<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple(F::NAME).field(&self.0).finish()
-    }
-}
-
-impl<F: SuccessorGeneratorFeature> ErasedGeneratorConfig for Configured<F> {
-    fn call(&self) -> String {
-        canonical_call(F::NAME, &self.0)
-    }
+impl<F: SuccessorGeneratorFeature> ConfiguredSuccessorGenerator for Typed<F, F::Config> {
     fn build(&self, task: &Task) -> Box<dyn SuccessorGenerator> {
-        F::build(&self.0, task)
+        F::build(&self.config, task)
     }
 }
 
 /// A configured successor generator; the standard grounded tree by default.
-#[derive(Debug, Clone)]
-pub struct SuccessorGeneratorConfig(Arc<dyn ErasedGeneratorConfig>);
-
-impl SuccessorGeneratorConfig {
-    pub fn build(&self, task: &Task) -> Box<dyn SuccessorGenerator> {
-        self.0.build(task)
-    }
-}
+/// It displays as its canonical call.
+pub type SuccessorGeneratorConfig = Configured<dyn ConfiguredSuccessorGenerator>;
 
 impl Default for SuccessorGeneratorConfig {
     fn default() -> Self {
-        Self(Arc::new(Configured::<StandardGroundedTreeFeature>(
-            EmptyConfig {},
-        )))
-    }
-}
-
-/// The canonical call, which parses back to an equal configuration.
-impl fmt::Display for SuccessorGeneratorConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0.call())
-    }
-}
-
-impl PartialEq for SuccessorGeneratorConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.call() == other.0.call()
+        Configured::new(
+            canonical_call(StandardGroundedTreeFeature::NAME, &EmptyConfig {}),
+            Arc::new(Typed::<StandardGroundedTreeFeature, _>::new(EmptyConfig {})),
+        )
     }
 }
 
 impl FromOptionValue for SuccessorGeneratorConfig {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
-        SUCCESSOR_GENERATORS.parse(&ConfigCall::from_value(value).map_err(ConfigError::from)?)
+    fn from_option_value(value: &ConfigValue, features: &Features) -> Result<Self, ConfigError> {
+        features
+            .successor_generators
+            .parse(&ConfigCall::from_value(value)?, features)
     }
 
     fn option_text(&self) -> String {
@@ -256,7 +230,7 @@ impl FromOptionValue for SuccessorGeneratorConfig {
     }
 }
 
-/// A registered successor generator.
+/// A successor generator's registry entry.
 pub type SuccessorGeneratorEntry = Entry<SuccessorGeneratorConfig>;
 
 pub const fn entry<F: SuccessorGeneratorFeature>() -> SuccessorGeneratorEntry {
@@ -265,9 +239,11 @@ pub const fn entry<F: SuccessorGeneratorFeature>() -> SuccessorGeneratorEntry {
 
 fn parse_feature<F: SuccessorGeneratorFeature>(
     spec: &ConfigCall,
+    features: &Features,
 ) -> Result<SuccessorGeneratorConfig, ConfigError> {
-    let config = configure(F::NAME, F::Config::default(), &spec.args)?;
-    Ok(SuccessorGeneratorConfig(Arc::new(Configured::<F>(config))))
+    parse_configured(F::NAME, spec, features, |typed: Typed<F, F::Config>| {
+        Arc::new(typed) as Arc<dyn ConfiguredSuccessorGenerator>
+    })
 }
 
 /// `standard_grounded_tree()`: the [`StandardGroundedTree`].
@@ -280,10 +256,3 @@ impl SuccessorGeneratorFeature for StandardGroundedTreeFeature {
         Box::new(StandardGroundedTree::new(task))
     }
 }
-
-/// Every successor generator the `successor_generator` option of a search
-/// names: the standard grounded tree is built in, a binary registers others.
-pub static SUCCESSOR_GENERATORS: Registry<SuccessorGeneratorConfig> = Registry::new(
-    "successor generator",
-    &[entry::<StandardGroundedTreeFeature>()],
-);

@@ -10,7 +10,8 @@
 //!
 //! Emits `impl ApplyOptions for X` where `X` is a struct with named fields.
 //! Each non-`#[option(skip)]` field becomes a match arm in the generated
-//! `apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String>`.
+//! `apply_options(&mut self, args: &[ConfigArg], _features: &Features)`,
+//! which parses each value with the features nested configurations name.
 //!
 //! Field attributes:
 //! - `#[option(positional)]` — accepts the field in positional order.
@@ -135,7 +136,7 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
         arms.push(quote! {
             #key_lit => {
                 self.#field_ident =
-                    ::planforge_search::config::FromOptionValue::from_option_value(value)?;
+                    ::planforge_search::config::FromOptionValue::from_option_value(value, _features)?;
                 Ok(())
             }
         });
@@ -151,6 +152,7 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                 ::planforge_search::config::ApplyOptions::apply_options(
                     &mut self.#field,
                     std::slice::from_ref(&arg),
+                    _features,
                 )
             }
         }
@@ -170,12 +172,12 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
         .collect();
 
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
-
     Ok(quote! {
         impl #impl_generics ::planforge_search::config::ApplyOptions for #ty #type_generics #where_clause {
             fn apply_options(
                 &mut self,
                 args: &[::planforge_search::config::ConfigArg],
+                _features: &::planforge_search::registry::Features,
             ) -> ::std::result::Result<(), ::planforge_search::config::ConfigError> {
                 const ORDER: &[&str] = &[ #(#order_lits),* ];
                 ::planforge_search::config::for_each_option(args, ORDER, |key, value| {
@@ -330,7 +332,7 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                     )
                 });
                 quote! { Ok(Self::#ident(::planforge_search::config::configure(
-                    name, <#config as ::std::default::Default>::default(), args,
+                    name, <#config as ::std::default::Default>::default(), args, _features,
                 )?)) }
             }
             Fields::Unit => {
@@ -352,7 +354,10 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
         impl #impl_generics ::planforge_search::config::FromOptionValue for #ty #type_generics #where_clause {
-            fn from_option_value(value: &::planforge_search::config::ConfigValue) -> Result<Self, ::planforge_search::config::ConfigError> {
+            fn from_option_value(
+                value: &::planforge_search::config::ConfigValue,
+                _features: &::planforge_search::registry::Features,
+            ) -> Result<Self, ::planforge_search::config::ConfigError> {
                 let (name, args) = match value {
                     ::planforge_search::config::ConfigValue::Call(call) => (call.name(), call.args()),
                     ::planforge_search::config::ConfigValue::Atom(atom) => return Err(format!("expected {}, got `{atom}`", stringify!(#ty)).into()),

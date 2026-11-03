@@ -6,7 +6,7 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{Context, Result, anyhow, ensure};
+use super::TransformError;
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitVariable, Metric, NumericType, NumericValue,
@@ -15,68 +15,48 @@ use planforge_sas::numeric_task::{
 };
 use tracing::info;
 
-pub fn validate_restricted_task(task: &Task) -> std::result::Result<(), String> {
+type Result<T> = std::result::Result<T, TransformError>;
+
+/// Whether `task` is restricted; the first reason it is not. `Task::new`
+/// checked that every variable id the task names exists.
+pub fn validate_restricted_task(task: &Task) -> Result<()> {
+    let not_restricted = |reason: String| {
+        Err(TransformError::Failed(format!(
+            "task is not restricted: {reason}; use `--transform restrict` or provide an already restricted task"
+        )))
+    };
     if let Some(variable) = task.metric().var_id()
         && task.numeric_type(variable) == NumericType::Derived
     {
-        return Err(format!(
+        return Err(TransformError::Failed(format!(
             "task is not restricted: metric variable {variable} is derived"
-        ));
+        )));
     }
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
         for (side, numeric_var_id) in [
-            ("left", comparison_axiom.get_left_var_id()),
-            ("right", comparison_axiom.get_right_var_id()),
+            ("left", comparison_axiom.left_var_id()),
+            ("right", comparison_axiom.right_var_id()),
         ] {
-            let numeric_var = task.numeric_variables().get(numeric_var_id.index()).ok_or_else(|| {
-                format!(
-                    "comparison axiom {comparison_axiom_id} has invalid {side} numeric variable {numeric_var_id}"
-                )
-            })?;
-            if numeric_var.numeric_type() == NumericType::Derived {
-                return Err(format!(
-                    "task is not restricted: comparison axiom {comparison_axiom_id} has derived {side} operand {numeric_var_id}; use `--transform restrict` or provide an already restricted task"
+            if task.numeric_type(numeric_var_id) == NumericType::Derived {
+                return not_restricted(format!(
+                    "comparison axiom {comparison_axiom_id} has derived {side} operand {numeric_var_id}"
                 ));
             }
         }
     }
     for (operator_id, operator) in task.operators().iter().enumerate() {
         for (effect_id, effect) in operator.assignment_effects().iter().enumerate() {
-            let affected = task
-                .numeric_variables()
-                .get(effect.affected_var_id().index())
-                .ok_or_else(|| {
-                    format!(
-                        "operator {operator_id} ({}) numeric effect {effect_id} has invalid target {}",
-                        operator.name(),
-                        effect.affected_var_id()
-                    )
-                })?;
-            if !matches!(
-                affected.numeric_type(),
-                NumericType::Regular | NumericType::Cost
-            ) {
-                return Err(format!(
-                    "task is not restricted: operator {operator_id} ({}) numeric effect {effect_id} targets unsupported variable {} ({:?}); use `--transform restrict` or provide an already restricted task",
+            let affected = task.numeric_type(effect.affected_var_id());
+            if !matches!(affected, NumericType::Regular | NumericType::Cost) {
+                return not_restricted(format!(
+                    "operator {operator_id} ({}) numeric effect {effect_id} targets unsupported variable {} ({affected:?})",
                     operator.name(),
                     effect.affected_var_id(),
-                    affected.numeric_type()
                 ));
             }
-
-            let source = task
-                .numeric_variables()
-                .get(effect.var_id().index())
-                .ok_or_else(|| {
-                    format!(
-                        "operator {operator_id} ({}) numeric effect {effect_id} has invalid source {}",
-                        operator.name(),
-                        effect.var_id()
-                    )
-                })?;
-            if source.numeric_type() == NumericType::Derived {
-                return Err(format!(
-                    "task is not restricted: operator {operator_id} ({}) numeric effect {effect_id} reads derived variable {}; use `--transform restrict` or provide an already restricted task",
+            if task.numeric_type(effect.var_id()) == NumericType::Derived {
+                return not_restricted(format!(
+                    "operator {operator_id} ({}) numeric effect {effect_id} reads derived variable {}",
                     operator.name(),
                     effect.var_id()
                 ));
@@ -130,21 +110,21 @@ impl AffineExpression {
             .collect()
     }
 
-    fn evaluate(&self, numeric_values: &[NumericValue]) -> Result<NumericValue> {
-        ensure!(
+    fn evaluate(&self, numeric_values: &[NumericValue]) -> NumericValue {
+        assert!(
             numeric_values.len() >= self.coefficients.len(),
             "numeric state too short for transformed task projection: {} < {}",
             numeric_values.len(),
             self.coefficients.len()
         );
-        Ok(NumericValue::affine(
+        NumericValue::affine(
             self.coefficients
                 .iter()
                 .zip(numeric_values)
                 .filter(|(coefficient, _)| **coefficient != ZERO_VALUE)
                 .map(|(coefficient, value)| (coefficient.value(), *value)),
             self.constant.value(),
-        ))
+        )
     }
 
     fn apply_effects(
@@ -181,7 +161,7 @@ pub struct RestrictFeature;
 
 impl super::TransformationFeature for RestrictFeature {
     const NAME: &'static str = "restrict";
-    type Config = crate::heuristic_factory::EmptyConfig;
+    type Config = crate::config::EmptyConfig;
 
     fn apply(_: &Self::Config, task: Task) -> Result<Task> {
         Ok(build_restricted_task(&task)?.unwrap_or(task))
@@ -211,8 +191,8 @@ pub fn build_restricted_task(task: &Task) -> Result<Option<Task>> {
     let mut root_exprs = BTreeMap::new();
     for comparison_axiom in task.comparison_axioms() {
         let operands = [
-            comparison_axiom.get_left_var_id(),
-            comparison_axiom.get_right_var_id(),
+            comparison_axiom.left_var_id(),
+            comparison_axiom.right_var_id(),
         ];
         let is_derived = |var_id: VariableIndex| task.numeric_type(var_id) == NumericType::Derived;
         for var_id in operands {
@@ -290,7 +270,7 @@ fn build_task(
             (original_name.to_string(), task.numeric_type(original_id))
         };
         numeric_variables.push(NumericVariable::new(name, numeric_type, None));
-        numeric_initial.push(expr.evaluate(initial_numeric)?);
+        numeric_initial.push(expr.evaluate(initial_numeric));
         transformed_to_expr.push(expr);
     }
 
@@ -321,10 +301,10 @@ fn build_task(
         .iter()
         .map(|comparison| {
             ComparisonAxiom::new(
-                comparison.get_affected_var_id(),
-                transformed(comparison.get_left_var_id()),
-                transformed(comparison.get_right_var_id()),
-                comparison.get_operator().clone(),
+                comparison.affected_var_id(),
+                transformed(comparison.left_var_id()),
+                transformed(comparison.right_var_id()),
+                comparison.operator().clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -350,10 +330,10 @@ fn build_task(
         assignment_axioms: Vec::<AssignmentAxiom>::new(),
         global_constraint: None,
     });
-    validate_restricted_task(&transformed_task)
-        .map_err(|reason| anyhow::anyhow!("restricted task construction failed: {reason}"))?;
-
-    ensure_operator_costs_unchanged(task, &transformed_task)?;
+    if let Err(reason) = validate_restricted_task(&transformed_task) {
+        panic!("the restricted task is not restricted: {reason}");
+    }
+    assert_operator_costs_unchanged(task, &transformed_task);
 
     Ok(Some(transformed_task))
 }
@@ -373,20 +353,25 @@ fn derived_metric_expression(
         return Ok(None);
     }
     affine_expression(task, metric_var_id)
-        .with_context(|| format!("metric variable {metric_var_id} is not affine"))
+        .map_err(|error| {
+            TransformError::Failed(format!(
+                "metric variable {metric_var_id} is not affine: {error}"
+            ))
+        })
         .map(Some)
 }
 
-fn ensure_operator_costs_unchanged(source_task: &Task, transformed_task: &Task) -> Result<()> {
-    ensure!(
-        source_task.operators().len() == transformed_task.operators().len(),
+fn assert_operator_costs_unchanged(source_task: &Task, transformed_task: &Task) {
+    assert_eq!(
+        source_task.operators().len(),
+        transformed_task.operators().len(),
         "restricted task changed the operator count"
     );
     for (operator_id, source) in source_task.operators().iter().enumerate() {
         let operator_index = OperatorIndex::from_usize(operator_id);
         let source_cost = source_task.operator_cost(operator_index);
         let transformed_cost = transformed_task.operator_cost(operator_index);
-        ensure!(
+        assert!(
             (source_cost - transformed_cost).abs()
                 <= planforge_sas::utils::float_tolerance::AGREEMENT_EPSILON
                     * source_cost.abs().max(transformed_cost.abs()).max(1.0),
@@ -394,7 +379,6 @@ fn ensure_operator_costs_unchanged(source_task: &Task, transformed_task: &Task) 
             source.name()
         );
     }
-    Ok(())
 }
 
 fn renumber_propositional_axiom_layers(
@@ -407,7 +391,7 @@ fn renumber_propositional_axiom_layers(
 
     let comparison_vars = comparison_axioms
         .iter()
-        .map(|axiom| axiom.get_affected_var_id())
+        .map(|axiom| axiom.affected_var_id())
         .collect::<BTreeSet<_>>();
     let remaining_layers = task
         .variables()
@@ -710,7 +694,7 @@ impl ConstantPool {
 fn affine_expression(task: &Task, variable: VariableIndex) -> Result<AffineExpression> {
     let expression = task
         .linearize_numeric_var(variable)
-        .map_err(|error| anyhow!("{error}"))?;
+        .map_err(|error| TransformError::Failed(error.to_string()))?;
     Ok(AffineExpression {
         coefficients: expression
             .coefficients

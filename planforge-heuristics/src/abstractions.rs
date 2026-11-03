@@ -17,3 +17,42 @@ pub mod features;
 pub mod icaps26;
 pub mod pdb;
 pub mod sources;
+
+use planforge_search::heuristic_features::HeuristicBuildError;
+use planforge_search::resource_limits::DeadlineExceeded;
+use planforge_search::task_transformations::TransformError;
+use planforge_search::unsupported::UnsupportedTask;
+
+/// The error the abstraction machinery's internal `anyhow` chain `error`
+/// ends a task transformation in: unsupported when a cause in the chain
+/// says so, a failure otherwise. The message is the whole chain.
+pub(crate) fn transform_error(error: anyhow::Error) -> TransformError {
+    if error.chain().any(|cause| cause.is::<UnsupportedTask>()) {
+        TransformError::Unsupported(format!("{error:#}"))
+    } else {
+        TransformError::Failed(format!("{error:#}"))
+    }
+}
+
+/// The error the abstraction machinery's internal `anyhow` chain `error`
+/// ends a construction in: unsupported or timed out when a cause in the
+/// chain says so, a failure otherwise. The message is the whole chain.
+pub(crate) fn build_error(error: anyhow::Error) -> HeuristicBuildError {
+    let message = format!("{error:#}");
+    for cause in error.chain() {
+        if cause.is::<UnsupportedTask>()
+            || matches!(
+                cause.downcast_ref(),
+                Some(HeuristicBuildError::Unsupported(_))
+            )
+        {
+            return HeuristicBuildError::Unsupported(message);
+        }
+        if cause.is::<DeadlineExceeded>()
+            || matches!(cause.downcast_ref(), Some(HeuristicBuildError::Timeout(_)))
+        {
+            return HeuristicBuildError::Timeout(message);
+        }
+    }
+    HeuristicBuildError::Failure(message)
+}

@@ -2,11 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use planforge_sas::numeric_task::Task;
-use planforge_search::config::parse_call;
+use planforge_search::config::EmptyConfig;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::heuristic_factory::{
-    BuildContext, EmptyConfig, HEURISTICS, HeuristicBuildError, HeuristicConfig, HeuristicFeature,
-    entry,
+use planforge_search::heuristic_features::{
+    BuildContext, HeuristicBuildError, HeuristicFeature, entry,
 };
 
 static BUILD_CALLED: AtomicBool = AtomicBool::new(false);
@@ -15,13 +14,13 @@ struct ExternalTest;
 impl HeuristicFeature for ExternalTest {
     const NAME: &'static str = "external_test";
     type Config = EmptyConfig;
-    fn build<'a>(
+    fn build(
         _: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         BUILD_CALLED.store(true, Ordering::SeqCst);
         Ok(Box::new(
-            planforge_search::evaluation::BlindHeuristic::for_task(context.task),
+            planforge_search::evaluation::BlindHeuristic::for_task(&context.task),
         ))
     }
 }
@@ -29,26 +28,33 @@ struct ExternalCplexTest;
 impl HeuristicFeature for ExternalCplexTest {
     const NAME: &'static str = "external_cplex_test";
     type Config = EmptyConfig;
-    fn preflight(_: &Self::Config) -> std::io::Result<()> {
+    fn preflight(_: &Self::Config) -> Result<(), HeuristicBuildError> {
         planforge_heuristics::requirements::require_cplex()
     }
-    fn build<'a>(
+    fn build(
         config: &Self::Config,
-        context: &BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        context: &BuildContext,
+    ) -> Result<Box<dyn Heuristic>, HeuristicBuildError> {
         ExternalTest::build(config, context)
     }
 }
 
 #[test]
-fn external_heuristic_is_visible_to_every_registry_path() {
-    let mut heuristics = planforge_heuristics::heuristics();
-    heuristics.extend([entry::<ExternalTest>(), entry::<ExternalCplexTest>()]);
-    HEURISTICS.register(heuristics).unwrap();
+fn an_added_heuristic_nests_in_the_crates_heuristics() {
+    let mut features = planforge_heuristics::features();
+    features
+        .heuristics
+        .extend([entry::<ExternalTest>(), entry::<ExternalCplexTest>()])
+        .unwrap();
 
-    assert!(HEURISTICS.names().any(|name| name == "external_test"));
+    assert!(
+        features
+            .heuristics
+            .names()
+            .any(|name| name == "external_test")
+    );
 
-    let config = |text: &str| HeuristicConfig::from_spec(&parse_call(text).unwrap());
+    let config = |text: &str| features.parse_heuristic(text);
     config("check_admissible(external_test())").unwrap();
 
     let external = config("external_test()").unwrap();
@@ -65,14 +71,11 @@ fn external_heuristic_is_visible_to_every_registry_path() {
         env!("CARGO_MANIFEST_DIR"),
         "/../tests/assets/numeric_sas/example2.sas"
     )));
-    let heuristic = external.build(&BuildContext::new(&task)).unwrap();
+    let heuristic = external.build(&BuildContext::new(task.clone())).unwrap();
     assert_eq!(heuristic.name(), "blind_heuristic");
     assert!(BUILD_CALLED.load(Ordering::SeqCst));
 
     let error = config("unknown()").unwrap_err().to_string();
     assert!(error.contains("blind"), "got `{error}`");
     assert!(error.contains("external_test"), "got `{error}`");
-
-    let error = HEURISTICS.register(Vec::new()).unwrap_err();
-    assert!(error.contains("already been registered"), "got `{error}`");
 }

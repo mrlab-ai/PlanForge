@@ -442,7 +442,7 @@ fn strongly_connected_components(
     }
 
     Scc::new(unweighted_graph)
-        .get_result()
+        .components()
         .into_iter()
         .map(|component| {
             component
@@ -459,6 +459,12 @@ fn strongly_connected_components(
         .collect()
 }
 
+/// What an edge into a goal variable weighs on top of its dependencies, more
+/// than all dependencies of a task together: it moves goal variables to the
+/// end of their component. `max_dag` removes it again when it relaxes an
+/// edge.
+pub(super) const GOAL_EDGE_SURCHARGE: u64 = 100_000;
+
 /// Orders the components, and the variables inside a component whose
 /// dependencies are cyclic by the cheapest set of dependencies to violate.
 /// Goal variables are pushed to the end of their component by pricing the
@@ -468,8 +474,6 @@ fn topological_pseudo_sort(
     weighted_graph: &WeightedGraph,
     sccs: &Partition,
 ) -> Vec<EitherVar> {
-    const GOAL_EDGE_SURCHARGE: u64 = 100_000;
-
     let mut is_goal_var = vec![false; task.vars.len()];
     for &(var, _) in &task.sas.goal.pairs {
         is_goal_var[var] = true;

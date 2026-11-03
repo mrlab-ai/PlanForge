@@ -59,6 +59,7 @@
 use planforge_sas::axioms::{AssignmentAxiom, NumericExpression};
 use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::VariableKind;
+use planforge_search::heuristic_features::HeuristicBuildError;
 use std::collections::{HashSet, VecDeque};
 
 use planforge_sas::axioms::{CalOperator, ComparisonOperator, PropositionalAxiom};
@@ -70,7 +71,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::interval::Interval;
 use planforge_search::evaluation::Heuristic;
-use planforge_search::evaluation::{EvaluationError, EvaluationState};
+use planforge_search::evaluation::{Estimate, EvaluationError, EvaluationState};
 
 mod graph;
 mod numeric;
@@ -83,7 +84,7 @@ type NumVarId = VariableIndex;
 type AxiomIdx = AxiomIndex;
 
 /// Per-state RPG buffers reused from one evaluation to the next.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct ScratchBuffers {
     fact_first_layer: Vec<i32>,
     op_remaining_preconditions: Vec<i32>,
@@ -165,6 +166,7 @@ impl ScratchBuffers {
 /// time and disable the operator outright if any fails to hold.
 type StateDependentPrecond = (usize, usize);
 
+#[derive(Debug)]
 pub struct FfHeuristic {
     /// For each (real or synthetic) operator in `op_preconditions`, the
     /// index into `task.operators()` if it's a real operator (used for
@@ -221,15 +223,15 @@ impl FfHeuristic {
     /// Compile the task into the relaxed planning graph this heuristic
     /// evaluates: a fact universe, the operators over it, and the achiever and
     /// consumer indices the BFS and relaxed-plan extraction walk.
-    pub fn new(task: &Task) -> Result<Self, String> {
-        let universe = FactUniverse::build(task)?;
+    pub fn new(task: &Task) -> Result<Self, HeuristicBuildError> {
+        let universe = FactUniverse::build(task);
         let num_facts = universe.len();
         let num_numeric = task.numeric_variables().len();
 
         let axioms_touching_var =
-            index_comparison_axioms_by_numeric_var(&universe.comparison_axioms, num_numeric)?;
-        let assignment_axioms = collect_assignment_axioms(task, num_numeric)?;
-        let constant_value = constant_numeric_values(task)?;
+            index_comparison_axioms_by_numeric_var(&universe.comparison_axioms, num_numeric);
+        let assignment_axioms = task.assignment_axioms().to_vec();
+        let constant_value = constant_numeric_values(task);
 
         let operators = collect_relaxed_operators(task, &universe, &constant_value)?;
         let num_ops = operators.len();
@@ -245,8 +247,7 @@ impl FfHeuristic {
             &axioms_touching_var,
             &axioms_via_derived,
             num_facts,
-            num_numeric,
-        )?;
+        );
         let goal_facts = collect_goal_facts(task, &universe)?;
         let consumers = build_consumer_index(&operators, num_facts);
 
@@ -789,9 +790,9 @@ impl FfHeuristic {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
         helpful: Option<&mut Vec<OperatorIndex>>,
-    ) -> Result<f64, EvaluationError> {
+    ) -> Result<Estimate, EvaluationError> {
         if eval_state.is_goal() {
-            return Ok(0.0);
+            return Ok(Estimate::new(0.0));
         }
         let mut scratch = std::mem::take(&mut self.scratch);
         scratch.reset();
@@ -799,9 +800,11 @@ impl FfHeuristic {
         let cost = match goal_layer {
             Err(error) => Err(error),
             // The delete relaxation reaches no goal: a dead end.
-            Ok(i32::MAX) => Ok(f64::INFINITY),
-            Ok(0) => Ok(0.0),
-            Ok(_) => Ok(self.extract_relaxed_plan(&mut scratch, helpful)),
+            Ok(i32::MAX) => Ok(Estimate::DEAD_END),
+            Ok(0) => Ok(Estimate::new(0.0)),
+            Ok(_) => Ok(Estimate::new(
+                self.extract_relaxed_plan(&mut scratch, helpful),
+            )),
         };
         self.scratch = scratch;
         cost
@@ -809,7 +812,10 @@ impl FfHeuristic {
 }
 
 impl Heuristic for FfHeuristic {
-    fn evaluate(&mut self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<Estimate, EvaluationError> {
         self.relaxed_plan_cost(eval_state, None)
     }
 
@@ -817,7 +823,7 @@ impl Heuristic for FfHeuristic {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
         preferred: &mut Vec<OperatorIndex>,
-    ) -> Result<f64, EvaluationError> {
+    ) -> Result<Estimate, EvaluationError> {
         self.relaxed_plan_cost(eval_state, Some(preferred))
     }
 
@@ -827,17 +833,17 @@ impl Heuristic for FfHeuristic {
 }
 
 /// Registry feature for FF.
+#[derive(Debug)]
 pub struct FfFeature;
-impl planforge_search::heuristic_factory::HeuristicFeature for FfFeature {
+impl planforge_search::heuristic_features::HeuristicFeature for FfFeature {
     const NAME: &'static str = "ff";
-    type Config = planforge_search::heuristic_factory::EmptyConfig;
-    fn build<'a>(
+    type Config = planforge_search::config::EmptyConfig;
+    fn build(
         _: &Self::Config,
-        context: &planforge_search::heuristic_factory::BuildContext<'a>,
-    ) -> Result<Box<dyn Heuristic + 'a>, planforge_search::heuristic_factory::HeuristicBuildError>
-    {
-        let heuristic = FfHeuristic::new(context.task)
-            .map_err(|error| format!("failed to construct ff heuristic: {error}"))?;
+        context: &planforge_search::heuristic_features::BuildContext,
+    ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_features::HeuristicBuildError> {
+        let heuristic = FfHeuristic::new(&context.task)
+            .map_err(|error| error.context("failed to construct ff heuristic"))?;
         Ok(Box::new(heuristic))
     }
 }

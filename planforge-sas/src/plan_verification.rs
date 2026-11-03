@@ -19,7 +19,7 @@
 mod tests;
 
 use crate::numeric_task::Task;
-use crate::numeric_task::{ExplicitFact, NumericValue, Operator};
+use crate::numeric_task::{ExplicitFact, Operator};
 use crate::state_registry::{ConcreteState, StateRegistry};
 use crate::utils::errors::StateInsertError;
 
@@ -112,13 +112,11 @@ pub fn replay_plan(
     global_constraint: Option<&ExplicitFact>,
     operators: &[&Operator],
 ) -> Result<Replay, StateInsertError> {
-    let initial = registry.get_initial_state();
+    let initial = registry.register_initial_state();
     let mut states = vec![initial];
     let mut cost = 0.0;
 
     // Scratch buffers reused across the whole replay.
-    let mut numeric_values: Vec<NumericValue> = Vec::new();
-    let mut cost_values: Vec<NumericValue> = Vec::new();
 
     for step in 0..=operators.len() {
         let current = &states[step];
@@ -164,12 +162,7 @@ pub fn replay_plan(
             });
         }
 
-        let (successor, op_cost) = registry.get_successor_state_with_buffers_and_cost(
-            current,
-            operator,
-            &mut numeric_values,
-            &mut cost_values,
-        )?;
+        let (successor, op_cost) = registry.successor(current, operator)?;
         cost += op_cost;
         states.push(successor);
     }

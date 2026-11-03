@@ -1,3 +1,6 @@
+//! An abstraction as a component of a collection or cost partitioning: a CEGAR
+//! abstraction or a pattern database, with its kind and goal.
+
 use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::Task;
 use std::collections::BTreeSet;
@@ -48,6 +51,7 @@ pub struct GoalFocusedMember {
 }
 
 /// An abstraction that collection heuristics combine.
+#[derive(Debug)]
 pub enum AbstractionComponent {
     Cegar {
         abstraction: Box<dyn CegarAbstraction>,
@@ -127,19 +131,20 @@ impl AbstractionComponent {
         }
     }
 
-    pub fn relevant_operator_ids(&self, task: &Task) -> Result<BTreeSet<OperatorIndex>, String> {
-        let ids: Vec<OperatorIndex> = match self {
-            Self::Cegar { abstraction, .. } => abstraction.relevant_operator_ids().to_vec(),
-            Self::PatternDatabase(pdb) => pdb.relevant_operator_ids().to_vec(),
+    /// The operators of `task`, the task the component abstracts, that
+    /// change its abstract state.
+    pub(crate) fn relevant_operator_ids(&self, task: &Task) -> BTreeSet<OperatorIndex> {
+        let ids = match self {
+            Self::Cegar { abstraction, .. } => abstraction.relevant_operator_ids(),
+            Self::PatternDatabase(pdb) => pdb.relevant_operator_ids(),
         };
         let operator_count = task.operators().len();
-        if let Some(operator_id) = ids.iter().copied().find(|id| id.index() >= operator_count) {
-            return Err(format!(
-                "{} references operator {operator_id}, but task has {operator_count} operators",
-                self.kind()
-            ));
-        }
-        Ok(ids.into_iter().collect())
+        assert!(
+            ids.iter().all(|id| id.index() < operator_count),
+            "a {} abstracts a task with more than the {operator_count} operators of this one",
+            self.kind()
+        );
+        ids.iter().copied().collect()
     }
 
     /// `Some` exactly for members of a goal-focused collection.

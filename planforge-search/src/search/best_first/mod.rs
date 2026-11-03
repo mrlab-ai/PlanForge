@@ -11,15 +11,15 @@ mod ordering;
 mod preferred_operators;
 
 pub use open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpenList};
+pub(crate) use open_list_config::builtin_entries;
 pub use open_list_config::{
-    OPEN_LISTS, OpenListConfig, OpenListEntry, OpenListFeature, RegisteredOpenList, entry,
+    ConfiguredOpenList, OpenListConfig, OpenListEntry, OpenListFeature, RegisteredOpenList, entry,
 };
 pub use ordering::{AStar, Greedy, NodeOrdering};
 
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{OperatorIndex, Task};
 use planforge_sas::state_registry::{ConcreteState, StateID};
 use planforge_sas::utils::float_tolerance;
@@ -27,20 +27,20 @@ use planforge_sas::utils::float_tolerance;
 use self::preferred_operators::PreferredOperators;
 use super::progress::SearchProgress;
 use super::search_space::{Reached, SearchSpace, Successor};
-use super::{SearchLimits, SearchOutcome, SearchResult};
-use crate::evaluation::Heuristic;
-use crate::evaluation::minimum_action_cost;
+use super::{SearchError, SearchLimits, SearchOutcome, SearchResult};
+use crate::evaluation::min_operator_cost;
+use crate::evaluation::{Estimate, EvaluationError, Heuristic};
 use crate::successor_generator::SuccessorGeneratorConfig;
 
-pub type AStarSearch<'a> = BestFirstSearch<'a, AStar, TieBreakingOpenList<AStar>>;
-pub type GreedyBestFirstSearch<'a> = BestFirstSearch<'a, Greedy, PreferredFirstOpenList<Greedy>>;
+pub type AStarSearch = BestFirstSearch<AStar, TieBreakingOpenList<AStar>>;
+pub type GreedyBestFirstSearch = BestFirstSearch<Greedy, PreferredFirstOpenList<Greedy>>;
 
 /// What a best-first search runs and within which limits.
-pub struct SearchParams<'a> {
-    pub heuristic: Box<dyn Heuristic + 'a>,
+pub struct SearchParams {
+    pub heuristic: Box<dyn Heuristic>,
     /// A second heuristic, evaluated when a node is first popped; the node is
     /// then requeued under the larger of both estimates.
-    pub lazy: Option<Box<dyn Heuristic + 'a>>,
+    pub lazy: Option<Box<dyn Heuristic>>,
     /// Multi-path dependence: re-evaluate a popped node whose estimate
     /// predates the heuristic's current revision.
     pub mpd: bool,
@@ -48,9 +48,9 @@ pub struct SearchParams<'a> {
     pub limits: SearchLimits,
 }
 
-impl<'a> SearchParams<'a> {
+impl SearchParams {
     /// `heuristic` alone, without limits.
-    pub fn new(heuristic: Box<dyn Heuristic + 'a>) -> Self {
+    pub fn new(heuristic: Box<dyn Heuristic>) -> Self {
         Self {
             heuristic,
             lazy: None,
@@ -63,14 +63,14 @@ impl<'a> SearchParams<'a> {
 
 /// Best-first search, expanding open nodes in the order `Q` queues them,
 /// which the built-in open lists take from the ordering `O`.
-pub struct BestFirstSearch<'a, O: NodeOrdering, Q: OpenList> {
+pub struct BestFirstSearch<O: NodeOrdering, Q: OpenList> {
     space: SearchSpace,
     progress: SearchProgress,
-    heuristic: Box<dyn Heuristic + 'a>,
-    lazy: Option<Box<dyn Heuristic + 'a>>,
+    heuristic: Box<dyn Heuristic>,
+    lazy: Option<Box<dyn Heuristic>>,
     /// The cheapest operator cost, a lower bound on the estimate of every
     /// non-goal state.
-    min_action_cost: f64,
+    min_operator_cost: f64,
     /// The latest evaluation of each state; tracked only with `mpd`.
     evaluation_records: Option<Vec<Option<EvaluationRecord>>>,
     preferred: PreferredOperators,
@@ -114,16 +114,16 @@ enum Popped {
     Exhausted,
 }
 
-impl<'a, O: NodeOrdering, Q: OpenList + Default> BestFirstSearch<'a, O, Q> {
+impl<O: NodeOrdering, Q: OpenList + Default> BestFirstSearch<O, Q> {
     /// A search of `task` with an empty `Q`; its clock starts here.
-    pub fn new(task: Arc<Task>, params: SearchParams<'a>) -> Self {
+    pub fn new(task: Arc<Task>, params: SearchParams) -> Self {
         Self::with_open_list(task, params, Q::default())
     }
 }
 
-impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
+impl<O: NodeOrdering, Q: OpenList> BestFirstSearch<O, Q> {
     /// A search of `task` with the empty `open_list`; its clock starts here.
-    pub fn with_open_list(task: Arc<Task>, params: SearchParams<'a>, open_list: Q) -> Self {
+    pub fn with_open_list(task: Arc<Task>, params: SearchParams, open_list: Q) -> Self {
         assert!(
             open_list.is_empty(),
             "a search starts with an empty open list"
@@ -137,7 +137,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         } = params;
         let space = SearchSpace::new(task.clone(), successor_generator.build(&task));
         Self {
-            min_action_cost: minimum_action_cost(space.task().effective_operator_costs()),
+            min_operator_cost: min_operator_cost(space.task().effective_operator_costs()),
             space,
             progress: SearchProgress::start(limits, heuristic.name()),
             heuristic,
@@ -155,7 +155,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
 
     /// Search until a goal is expanded, the open list runs empty or a limit
     /// is reached.
-    pub fn run(mut self) -> Result<SearchResult> {
+    pub fn run(mut self) -> Result<SearchResult, SearchError> {
         self.initialize()?;
         loop {
             if let Some(outcome) = self.step()? {
@@ -164,13 +164,13 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         }
     }
 
-    fn initialize(&mut self) -> Result<()> {
+    fn initialize(&mut self) -> Result<(), SearchError> {
         let state = self.space.initial_state();
-        let state_id = state.get_id();
+        let state_id = state.id();
         assert_eq!(self.space.reach(&state, None, 0.0), Reached::New);
-        let evaluation = self
-            .evaluate(&state)
-            .context("initial state evaluation failed")?;
+        let evaluation = in_context(self.evaluate(&state), || {
+            "initial state evaluation failed".to_string()
+        })?;
         self.progress.statistics.nodes.evaluated += 1;
         self.progress.report_initial_h(evaluation.h);
         if evaluation.is_dead_end() {
@@ -191,7 +191,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
     }
 
     /// Expand at most one node; the outcome once the search ends.
-    fn step(&mut self) -> Result<Option<SearchOutcome>> {
+    fn step(&mut self) -> Result<Option<SearchOutcome>, SearchError> {
         if let Some(outcome) = self.progress.limit_reached() {
             return Ok(Some(outcome));
         }
@@ -200,7 +200,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
             Popped::Skipped => return Ok(None),
             Popped::Exhausted => return Ok(Some(SearchOutcome::Unsolvable)),
         };
-        let state_id = state.get_id();
+        let state_id = state.id();
         self.space.close(state_id);
         self.progress.statistics.nodes.expanded += 1;
         if self.space.is_goal(state_id) {
@@ -222,7 +222,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
     /// heuristic's revision is re-evaluated and requeued if its estimate grew.
     /// With a lazy heuristic, the first pop of an entry evaluates it and
     /// requeues it; the second pop expands it.
-    fn pop(&mut self) -> Result<Popped> {
+    fn pop(&mut self) -> Result<Popped, SearchError> {
         // Stale entries -- their state was closed or reached more cheaply
         // since -- are dropped here, so the caller's limit check runs once
         // per pop that does work rather than once per entry.
@@ -246,7 +246,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
             if self.heuristic.reevaluate_on_every_pop()
                 || previous.revision < self.heuristic.revision()
             {
-                let evaluation = self.evaluate(&state).with_context(|| {
+                let evaluation = in_context(self.evaluate(&state), || {
                     format!("pop-time heuristic re-evaluation failed for state {state_id}")
                 })?;
                 assert!(
@@ -269,13 +269,10 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
             && !entry.is_lazy_evaluated()
         {
             let is_goal = self.space.is_goal(state_id);
-            let h = lazy
-                .evaluate(&self.space.evaluation_state(&state))
-                .map_err(anyhow::Error::from)
-                .and_then(|h| bounded_estimate(lazy, h, state_id, is_goal, self.min_action_cost))
-                .with_context(|| {
-                    format!("slow heuristic evaluation failed for state {state_id}")
-                })?;
+            let estimate = in_context(lazy.evaluate(&self.space.evaluation_state(&state)), || {
+                format!("slow heuristic evaluation failed for state {state_id}")
+            })?;
+            let h = bounded_estimate(estimate, is_goal, self.min_operator_cost);
             self.progress.statistics.evaluations += 1;
             if h == f64::INFINITY {
                 return Ok(self.prune(state_id));
@@ -301,8 +298,8 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
     /// generated twice in one expansion is evaluated and queued twice if the
     /// second path is cheaper, and dropped otherwise: the same as processing
     /// each successor completely before generating the next.
-    fn expand(&mut self, state: &ConcreteState) -> Result<()> {
-        let parent = state.get_id();
+    fn expand(&mut self, state: &ConcreteState) -> Result<(), SearchError> {
+        let parent = state.id();
         let parent_g = self.space.g(parent);
         let preferred = self.preferred.take(parent);
         let mut successors = std::mem::take(&mut self.successors);
@@ -321,7 +318,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
 
         evaluations.clear();
         for successor in &successors {
-            let evaluation = self.evaluate(&successor.state).with_context(|| {
+            let evaluation = in_context(self.evaluate(&successor.state), || {
                 format!(
                     "evaluating the successor of state {parent} under operator {} failed",
                     successor.operator
@@ -331,7 +328,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
         }
 
         for (successor, evaluation) in successors.iter().zip(&evaluations) {
-            let state_id = successor.state.get_id();
+            let state_id = successor.state.id();
             let g = parent_g + successor.cost;
             if evaluation.is_dead_end() {
                 // A state reached twice is counted once.
@@ -358,31 +355,30 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
     /// Evaluate `state` with the primary heuristic, storing its preferred
     /// operators when the open list uses them.
     #[inline]
-    fn evaluate(&mut self, state: &ConcreteState) -> Result<Evaluation> {
+    fn evaluate(&mut self, state: &ConcreteState) -> Result<Evaluation, EvaluationError> {
         let eval_state = self.space.evaluation_state(state);
-        let h = if self.open_list.uses_preferred_operators() {
+        let estimate = if self.open_list.uses_preferred_operators() {
             self.preferred_scratch.clear();
-            let h = self
+            let estimate = self
                 .heuristic
                 .evaluate_with_preferred(&eval_state, &mut self.preferred_scratch)?;
-            self.preferred
-                .store(state.get_id(), &self.preferred_scratch);
-            h
+            self.preferred.store(state.id(), &self.preferred_scratch);
+            estimate
         } else {
             self.heuristic.evaluate(&eval_state)?
         };
-        self.record_evaluation(state, h)
+        Ok(self.record_evaluation(state, estimate))
     }
 
-    /// The evaluation of `state` that the primary heuristic estimated as `h`:
-    /// checked and bounded by [`bounded_estimate`], counted, and recorded
+    /// The evaluation of `state` that the primary heuristic estimated as
+    /// `estimate`: bounded by [`bounded_estimate`], counted, and recorded
     /// when `mpd` tracks it. A batched evaluation would hand each estimate of
     /// a batch to it.
     #[inline]
-    fn record_evaluation(&mut self, state: &ConcreteState, h: f64) -> Result<Evaluation> {
-        let state_id = state.get_id();
+    fn record_evaluation(&mut self, state: &ConcreteState, estimate: Estimate) -> Evaluation {
+        let state_id = state.id();
         let is_goal = self.space.is_goal(state_id);
-        let h = bounded_estimate(&*self.heuristic, h, state_id, is_goal, self.min_action_cost)?;
+        let h = bounded_estimate(estimate, is_goal, self.min_operator_cost);
         let evaluation = Evaluation {
             h,
             revision: self.heuristic.revision(),
@@ -397,7 +393,7 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
                 h,
             });
         }
-        Ok(evaluation)
+        evaluation
     }
 
     /// Queues `entry` again with the estimate `h`.
@@ -427,23 +423,25 @@ impl<'a, O: NodeOrdering, Q: OpenList> BestFirstSearch<'a, O, Q> {
     }
 }
 
-/// `h`, the estimate of `heuristic` for the state `state_id`, checked and,
-/// for a non-goal state, raised to the cheapest operator cost: every plan
-/// from a non-goal state applies an operator, so the maximum with that bound
-/// stays admissible and consistent, and lifts a heuristic that is 0 on
-/// non-goal states, as an abstraction is on the states of an abstract goal.
+/// The value of `estimate`, infinite for a dead end and, for a non-goal
+/// state, raised to the cheapest operator cost: every plan from a non-goal
+/// state applies an operator, so the maximum with that bound stays
+/// admissible and consistent, and lifts a heuristic that is 0 on non-goal
+/// states, as an abstraction is on the states of an abstract goal.
 #[inline]
-fn bounded_estimate(
-    heuristic: &dyn Heuristic,
-    h: f64,
-    state_id: StateID,
-    is_goal: bool,
-    min_action_cost: f64,
-) -> Result<f64> {
-    ensure!(
-        !h.is_nan(),
-        "heuristic {} estimated NaN for state {state_id}",
-        heuristic.name()
-    );
-    Ok(if is_goal { h } else { h.max(min_action_cost) })
+fn bounded_estimate(estimate: Estimate, is_goal: bool, min_operator_cost: f64) -> f64 {
+    let h = estimate.value();
+    if is_goal { h } else { h.max(min_operator_cost) }
+}
+
+/// `result`, its error a [`SearchError::Evaluation`] in the context
+/// `context` names.
+fn in_context<T>(
+    result: Result<T, EvaluationError>,
+    context: impl FnOnce() -> String,
+) -> Result<T, SearchError> {
+    result.map_err(|source| SearchError::Evaluation {
+        context: context(),
+        source,
+    })
 }
