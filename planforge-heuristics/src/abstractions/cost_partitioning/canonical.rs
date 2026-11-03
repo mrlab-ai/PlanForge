@@ -44,25 +44,21 @@ impl CanonicalAbstractionHeuristic {
     /// `components`, which it reads only the goal distances and relevant
     /// operators of: components built for standalone use keep no
     /// transition data.
-    pub fn new(
-        name: Option<String>,
-        task: &Task,
-        components: Vec<AbstractionComponent>,
-    ) -> Result<Self, HeuristicBuildError> {
-        if components.is_empty() {
-            return Err("canonical abstraction heuristic requires at least one component".into());
-        }
+    ///
+    /// # Panics
+    ///
+    /// If `components` is empty.
+    pub fn new(name: Option<String>, task: &Task, components: Vec<AbstractionComponent>) -> Self {
+        assert!(
+            !components.is_empty(),
+            "a canonical heuristic has at least one component"
+        );
         let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
             .iter()
             .map(|component| component.relevant_operator_ids(task))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
         let subsets = compute_max_additive_subsets_from_relevant_operators(&relevant_operator_ids);
-        Ok(Self::from_validated_parts(
-            name,
-            components,
-            subsets,
-            &relevant_operator_ids,
-        ))
+        Self::from_validated_parts(name, components, subsets, &relevant_operator_ids)
     }
 
     fn from_validated_parts(
@@ -198,10 +194,7 @@ impl HeuristicFeature for CanonicalFeature {
         )?;
         remaining_construction_time(deadline)?;
         let heuristic =
-            CanonicalAbstractionHeuristic::new(Some(context.name.clone()), task, components)
-                .map_err(|error| {
-                    error.context(format!("failed to construct `{}`", context.name))
-                })?;
+            CanonicalAbstractionHeuristic::new(Some(context.name.clone()), task, components);
         remaining_construction_time(deadline)?;
         Ok(Box::new(heuristic))
     }

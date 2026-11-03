@@ -126,12 +126,9 @@ pub fn run_with(features: Features) -> std::io::Result<()> {
     let cli = PlannersCli::from_arg_matches(&command.clone().get_matches())
         .unwrap_or_else(|error| error.exit());
     let configuration = RunConfiguration::parse(&cli, &features).unwrap_or_else(|message| {
-        clap::Error::raw(
-            clap::error::ErrorKind::ValueValidation,
-            format!("{message}\n"),
-        )
-        .format(&mut command)
-        .exit()
+        clap::Error::raw(clap::error::ErrorKind::ValueValidation, message)
+            .format(&mut command)
+            .exit()
     });
     init_logger(
         cli.log_level

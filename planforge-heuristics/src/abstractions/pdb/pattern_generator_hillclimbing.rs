@@ -142,7 +142,7 @@ pub fn generate_hill_climbing_pdbs(
         Instant::now(),
         min_time_limit(config.max_time.duration()?, remaining),
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| ConfigError::from(format!("max_time: {error}")))?;
     climbing.climb(&mut collection, deadline)?;
     Ok(collection.pdbs)
 }
@@ -186,7 +186,7 @@ impl<'task> HillClimbing<'task> {
         registry
             .view(&initial)
             .fill_explicit(&mut initial_state)
-            .map_err(|error| format!("failed to evaluate the initial state: {error:?}"))?;
+            .expect("`Task::new` closed the initial state under the axioms");
         Ok(Self {
             task,
             config,
@@ -201,7 +201,8 @@ impl<'task> HillClimbing<'task> {
 
     fn build(&self, pattern: &Pattern) -> Result<PatternDatabase, HeuristicBuildError> {
         let projected_task = ProjectedTask::new(self.task, pattern).map_err(|error| {
-            format!("failed to project the task to pattern {pattern:?}: {error}")
+            HeuristicBuildError::from(error)
+                .context(format!("failed to project the task to pattern {pattern:?}"))
         })?;
         PatternDatabase::build(projected_task, self.pdb_config)
     }
@@ -326,18 +327,16 @@ impl<'task> HillClimbing<'task> {
         let mut values = ExplicitState::default();
         let mut samples = Vec::with_capacity(self.config.num_samples);
         while samples.len() < self.config.num_samples {
-            let walk_end = sampler
-                .sample(initial_h, &mut self.rng, deadline, |registry, state| {
+            let walk_end =
+                sampler.sample(initial_h, &mut self.rng, deadline, |registry, state| {
                     fill_values(registry, state, &mut values)?;
                     Ok(collection.is_dead_end(&values))
-                })
-                .map_err(|error| error.to_string())?;
+                })?;
             let Some(walk_end) = walk_end else {
                 return Ok(None);
             };
             let mut sample = ExplicitState::default();
-            fill_values(sampler.registry(), &walk_end, &mut sample)
-                .map_err(|error| error.to_string())?;
+            fill_values(sampler.registry(), &walk_end, &mut sample)?;
             samples.push(sample);
         }
         Ok(Some(samples))
@@ -553,7 +552,5 @@ fn fill_values(
     state: &ConcreteState,
     values: &mut ExplicitState,
 ) -> Result<(), EvaluationError> {
-    registry.view(state).fill_explicit(values).map_err(|error| {
-        EvaluationError::ComputationFailed(format!("failed to evaluate a sampled state: {error:?}"))
-    })
+    Ok(registry.view(state).fill_explicit(values)?)
 }

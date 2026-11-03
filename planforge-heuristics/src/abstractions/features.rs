@@ -161,7 +161,8 @@ pub(crate) fn max_over_sources(
         AbstractionPurpose::Standalone,
         Deadline::NONE,
     )?;
-    let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
-        .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
-    Ok(Box::new(heuristic))
+    Ok(Box::new(MaxAbstractionHeuristic::new(
+        Some(name.to_string()),
+        components,
+    )))
 }

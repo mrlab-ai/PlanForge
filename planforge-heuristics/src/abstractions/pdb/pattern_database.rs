@@ -604,7 +604,7 @@ fn explore(
     max_new_states: usize,
     heuristic: PdbInternalHeuristic,
     inner: &mut InnerHeuristics,
-) -> Result<Exploration, String> {
+) -> Result<Exploration, HeuristicBuildError> {
     let mut expander = StateExpander::new(StandardGroundedTree::new(task));
     let operators = task.operators();
     let initial_state = registry.register_initial_state();
@@ -639,11 +639,11 @@ fn explore(
         }
         let mut expansion = expander
             .expand(registry, &state)
-            .map_err(|error| error.message)?;
+            .map_err(|error| HeuristicBuildError::Failure(error.message))?;
         for &operator_id in expansion.applicable_operators() {
             let (successor, _) = expansion
                 .successor(registry, &operators[operator_id.index()])
-                .map_err(|error| error.message)?;
+                .map_err(|error| HeuristicBuildError::Failure(error.message))?;
             let successor_id = successor.id();
             if successor_id == state_id {
                 continue;

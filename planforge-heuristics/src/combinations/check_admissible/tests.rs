@@ -84,8 +84,7 @@ fn evaluate_initial_state(
     task: Arc<Task>,
     inner: Box<dyn Heuristic>,
 ) -> Result<f64, EvaluationError> {
-    let mut heuristic = CheckAdmissibleHeuristic::new(inner, task.clone())
-        .expect("the chain task has finite non-negative costs");
+    let mut heuristic = CheckAdmissibleHeuristic::new(inner, task.clone());
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.register_initial_state();
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
@@ -148,8 +147,7 @@ fn checks_a_blind_heuristic() {
 #[test]
 fn wrapper_name_differs_from_the_wrapped_name() {
     let heuristic =
-        CheckAdmissibleHeuristic::new(ConstantHeuristic::boxed(1.0, "inner"), chain_task())
-            .expect("the chain task has finite non-negative costs");
+        CheckAdmissibleHeuristic::new(ConstantHeuristic::boxed(1.0, "inner"), chain_task());
     assert_eq!(heuristic.name(), "check_admissible_inner");
 }
 
@@ -161,8 +159,7 @@ fn goal_distance_is_computed_per_state() {
             &task,
         )),
         task.clone(),
-    )
-    .expect("the chain task has finite non-negative costs");
+    );
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.register_initial_state();
     let successor = registry

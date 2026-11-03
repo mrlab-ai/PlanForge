@@ -84,6 +84,12 @@ impl NumericPotentialHeuristic {
         config: NumericPotentialConfig,
     ) -> Result<Self, HeuristicBuildError> {
         config.validate()?;
+        Self::build(task_ref, config).map_err(HeuristicBuildError::Failure)
+    }
+
+    /// [`Self::from_config`] for a validated `config`; the LP machinery
+    /// reports its failures as messages.
+    fn build(task_ref: Arc<Task>, config: NumericPotentialConfig) -> Result<Self, String> {
         let task = &*task_ref;
         let mut optimizer = NumericPotentialOptimizer::new(task, &config)?;
         let potential_task = optimizer.task().clone();

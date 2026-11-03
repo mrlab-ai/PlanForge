@@ -13,7 +13,6 @@
 #[cfg(test)]
 mod tests;
 
-use planforge_search::heuristic_features::HeuristicBuildError;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
@@ -56,15 +55,14 @@ impl std::fmt::Debug for CheckAdmissibleHeuristic {
 
 impl CheckAdmissibleHeuristic {
     /// Wrap `inner`, verifying it against the goal distances of `task`.
-    pub fn new(inner: Box<dyn Heuristic>, task: Arc<Task>) -> Result<Self, HeuristicBuildError> {
-        let oracle = GoalDistanceOracle::new(task)?;
-        Ok(Self {
+    pub fn new(inner: Box<dyn Heuristic>, task: Arc<Task>) -> Self {
+        Self {
             // Keep the wrapper distinct from the heuristic it checks in diagnostics.
             name: format!("check_admissible_{}", inner.name()),
             inner,
-            oracle,
+            oracle: GoalDistanceOracle::new(task),
             goal_distances: HashMap::new(),
-        })
+        }
     }
 
     /// True goal distance of the state under evaluation, memoized per state.
@@ -79,8 +77,7 @@ impl CheckAdmissibleHeuristic {
 
         let distance = self
             .oracle
-            .goal_distance(eval_state.state_registry().view(state), state.id())
-            .map_err(EvaluationError::ComputationFailed)?;
+            .goal_distance(eval_state.state_registry().view(state), state.id())?;
         self.goal_distances.insert(state.id(), distance);
         Ok(distance)
     }
@@ -158,7 +155,7 @@ struct GoalDistanceOracle {
 }
 
 impl GoalDistanceOracle {
-    fn new(task: Arc<Task>) -> Result<Self, String> {
+    fn new(task: Arc<Task>) -> Self {
         let mut registry = StateRegistry::for_task(task.clone());
         // Creating the initial state is what fixes the registry's numeric
         // layout (constant values and packed slots); `copy_state_in` needs it.
@@ -166,13 +163,13 @@ impl GoalDistanceOracle {
         let operator_costs = task.effective_operator_costs().to_vec();
         let min_operator_cost = min_operator_cost(&operator_costs);
         let expander = StateExpander::new(StandardGroundedTree::new(&task));
-        Ok(Self {
+        Self {
             task,
             registry,
             expander,
             operator_costs,
             min_operator_cost,
-        })
+        }
     }
 
     /// Cost of a cheapest plan from `state`, or `f64::INFINITY` when no goal is
@@ -181,7 +178,7 @@ impl GoalDistanceOracle {
         &mut self,
         state: planforge_sas::state_registry::ConcreteStateView<'_>,
         state_id: usize,
-    ) -> Result<f64, String> {
+    ) -> Result<f64, EvaluationError> {
         let start = self.copy_state_in(state, state_id)?;
         self.blind_a_star(start)
     }
@@ -193,7 +190,7 @@ impl GoalDistanceOracle {
         &mut self,
         state: planforge_sas::state_registry::ConcreteStateView<'_>,
         state_id: usize,
-    ) -> Result<ConcreteState, String> {
+    ) -> Result<ConcreteState, EvaluationError> {
         let mut propositional = Vec::new();
         state.fill_propositional(&mut propositional);
         let propositional_values: Vec<u64> = propositional
@@ -201,25 +198,20 @@ impl GoalDistanceOracle {
             .map(|value| value.index() as u64)
             .collect();
         let mut numeric_values = Vec::new();
-        state.fill_numeric(&mut numeric_values).map_err(|error| {
-            format!(
-                "could not read the numeric values of state {}: {error:?}",
-                state_id
-            )
-        })?;
+        state.fill_numeric(&mut numeric_values)?;
         self.registry
             .register_state(propositional_values, numeric_values)
             .map_err(|error| {
-                format!(
-                    "could not copy state {} into the admissibility oracle: {}",
-                    state_id, error.message
-                )
+                EvaluationError::ComputationFailed(format!(
+                    "could not copy state {state_id} into the admissibility oracle: {}",
+                    error.message
+                ))
             })
     }
 
     /// A* with the blind estimate, i.e. Dijkstra with a goal test. Runs to
     /// completion; the caller is responsible for the overall time budget.
-    fn blind_a_star(&mut self, start: ConcreteState) -> Result<f64, String> {
+    fn blind_a_star(&mut self, start: ConcreteState) -> Result<f64, EvaluationError> {
         let Self {
             task,
             registry,
@@ -237,40 +229,38 @@ impl GoalDistanceOracle {
         let mut best_g: HashMap<StateID, f64> = HashMap::new();
         let mut open: BinaryHeap<OpenEntry> = BinaryHeap::new();
         best_g.insert(start.id(), 0.0);
-        open.push(open_entry(*min_operator_cost, 0.0, start.id())?);
+        open.push(open_entry(*min_operator_cost, 0.0, start.id()));
 
         while let Some((Reverse(_f_value), Reverse(g_value), state_id)) = open.pop() {
             let g_value = g_value.into_inner();
-            let best = *best_g.get(&state_id).ok_or_else(|| {
-                format!("the admissibility oracle queued state {state_id} without a g-value")
-            })?;
+            let best = best_g[&state_id];
             if g_value > best + G_IMPROVEMENT_TOLERANCE {
                 // A cheaper path was found after this entry was queued.
                 continue;
             }
 
-            let state = registry.lookup_state(state_id).map_err(|error| {
-                format!("the admissibility oracle lost state {state_id}: {error:?}")
-            })?;
+            let state = registry
+                .lookup_state(state_id)
+                .expect("the oracle queues only states it registered");
             if is_goal(registry, &state) {
                 return Ok(g_value);
             }
 
             let mut expansion = expander.expand(registry, &state).map_err(|error| {
-                format!(
+                EvaluationError::ComputationFailed(format!(
                     "the admissibility oracle could not expand state {state_id}: {}",
                     error.message
-                )
+                ))
             })?;
             for &applicable_id in expansion.applicable_operators() {
                 let operator_id = applicable_id.index();
                 let operator = &task.operators()[operator_id];
                 let (successor, _) = expansion.successor(registry, operator).map_err(|error| {
-                    format!(
+                    EvaluationError::ComputationFailed(format!(
                         "the admissibility oracle could not apply `{}`: {}",
                         operator.name(),
                         error.message
-                    )
+                    ))
                 })?;
                 let successor_g = g_value + operator_costs[operator_id];
                 let successor_id = successor.id();
@@ -291,7 +281,7 @@ impl GoalDistanceOracle {
                     successor_g + estimate,
                     successor_g,
                     successor_id,
-                )?);
+                ));
             }
         }
 
@@ -303,14 +293,11 @@ impl GoalDistanceOracle {
 /// smallest `g`.
 type OpenEntry = (Reverse<NotNan<f64>>, Reverse<NotNan<f64>>, StateID);
 
-fn open_entry(f_value: f64, g_value: f64, state_id: StateID) -> Result<OpenEntry, String> {
-    let f_value = NotNan::new(f_value).map_err(|_| {
-        format!("the admissibility oracle computed a NaN f-value for state {state_id}")
-    })?;
-    let g_value = NotNan::new(g_value).map_err(|_| {
-        format!("the admissibility oracle computed a NaN g-value for state {state_id}")
-    })?;
-    Ok((Reverse(f_value), Reverse(g_value), state_id))
+/// Operator costs are finite and non-negative, so f and g are never NaN.
+fn open_entry(f_value: f64, g_value: f64, state_id: StateID) -> OpenEntry {
+    let f_value = NotNan::new(f_value).expect("f-values are sums of operator costs");
+    let g_value = NotNan::new(g_value).expect("g-values are sums of operator costs");
+    (Reverse(f_value), Reverse(g_value), state_id)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -356,7 +343,7 @@ impl planforge_search::heuristic_features::HeuristicFeature for CheckAdmissibleF
         Ok(Box::new(CheckAdmissibleHeuristic::new(
             inner,
             context.task.clone(),
-        )?))
+        )))
     }
 }
 

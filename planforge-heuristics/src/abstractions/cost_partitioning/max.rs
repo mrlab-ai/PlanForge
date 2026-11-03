@@ -25,18 +25,20 @@ pub struct MaxAbstractionHeuristic {
 impl MaxAbstractionHeuristic {
     /// The maximum over `components`, which it reads only the goal distances
     /// of: components built for standalone use keep no transition data.
-    pub fn new(
-        name: Option<String>,
-        components: Vec<AbstractionComponent>,
-    ) -> Result<Self, HeuristicBuildError> {
-        if components.is_empty() {
-            return Err("max abstraction heuristic requires at least one component".into());
-        }
-        Ok(Self {
+    ///
+    /// # Panics
+    ///
+    /// If `components` is empty.
+    pub fn new(name: Option<String>, components: Vec<AbstractionComponent>) -> Self {
+        assert!(
+            !components.is_empty(),
+            "a maximum over abstractions has at least one component"
+        );
+        Self {
             name: name.unwrap_or_else(|| "max_abstractions".to_string()),
             components,
             numeric_values: Vec::new(),
-        })
+        }
     }
 }
 

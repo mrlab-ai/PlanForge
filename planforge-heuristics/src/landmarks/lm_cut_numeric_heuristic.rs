@@ -102,7 +102,7 @@ impl LandmarkCutNumericHeuristic {
         task: Arc<Task>,
         config: LmCutNumericConfig,
     ) -> Result<Self, HeuristicBuildError> {
-        config.validate().map_err(|error| error.to_string())?;
+        config.validate()?;
         Ok(Self {
             name: "lmcutnumeric".to_string(),
             landmark_generator: LandmarkCutLandmarks::new(task.clone(), config),
@@ -171,7 +171,7 @@ impl planforge_search::heuristic_features::HeuristicFeature for LmCutNumericFeat
         context: &planforge_search::heuristic_features::BuildContext,
     ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_features::HeuristicBuildError> {
         let heuristic = LandmarkCutNumericHeuristic::from_config(context.task.clone(), *config)
-            .map_err(|error| format!("failed to build lmcutnumeric heuristic: {error}"))?;
+            .map_err(|error| error.context("failed to build lmcutnumeric heuristic"))?;
         Ok(Box::new(heuristic))
     }
 }

@@ -181,14 +181,14 @@ impl AbstractionSource {
                     .map_err(HeuristicBuildError::from)
                     .and_then(|generator| generator.generate(task))
                     .map_err(|error| {
-                        format!("failed to build ICAPS 2026 Cartesian source: {error}")
+                        error.context("failed to build ICAPS 2026 Cartesian source")
                     })?;
                 Ok(vec![AbstractionComponent::from(abstraction)])
             }
             Self::Pdb(config) => {
                 let pdbs = config
                     .build(task, purpose.needs_transition_system(), remaining)
-                    .map_err(|error| format!("failed to build numeric PDB source: {error}"))?;
+                    .map_err(|error| error.context("failed to build numeric PDB source"))?;
                 Ok(pdbs.into_iter().map(AbstractionComponent::from).collect())
             }
         }
@@ -300,14 +300,14 @@ impl<O: ApplyOptions> CombinationConfig<O> {
     pub(crate) fn deadline(&self) -> Result<Deadline, HeuristicBuildError> {
         let limit = self.construction_max_time.duration()?;
         if limit == Some(Duration::ZERO) {
-            return Err(format!(
+            return Err(ConfigError::from(format!(
                 "construction_max_time must be at least one nanosecond, got {}",
                 self.construction_max_time.seconds()
-            )
+            ))
             .into());
         }
         Deadline::after(Instant::now(), limit)
-            .map_err(|error| format!("invalid construction_max_time: {error}").into())
+            .map_err(|error| ConfigError::from(format!("construction_max_time: {error}")).into())
     }
 }
 
@@ -327,11 +327,10 @@ pub(crate) fn build_components(
         let remaining = remaining_construction_time(deadline)?;
         let built = source.build_validated(task, purpose, remaining)?;
         if built.is_empty() {
-            return Err(format!(
+            return Err(HeuristicBuildError::Failure(format!(
                 "abstraction source `{}` produced no components",
                 source.name()
-            )
-            .into());
+            )));
         }
         components.extend(built);
     }
@@ -339,11 +338,7 @@ pub(crate) fn build_components(
         .iter()
         .map(AbstractionComponent::num_states)
         .collect::<Vec<_>>();
-    let total_states = states.iter().try_fold(0usize, |total, states| {
-        total.checked_add(*states).ok_or_else(|| {
-            "abstraction collection state count exceeds addressable memory".to_string()
-        })
-    })?;
+    let total_states: usize = states.iter().sum();
     let abstract_operators: usize = components
         .iter()
         .filter_map(AbstractionComponent::cegar)
@@ -393,9 +388,7 @@ where
 {
     config.member.cegar_mut().keep_transitions = purpose.needs_transition_system();
     if let Some(remaining) = remaining {
-        config
-            .cap_construction_time(remaining)
-            .map_err(|error| format!("invalid construction time: {error}"))?;
+        config.cap_construction_time(remaining)?;
     }
     info!("Building {} collection source...", G::KIND);
     let abstractions = CollectionGenerator::<G>::new(config)

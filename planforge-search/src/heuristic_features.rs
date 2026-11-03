@@ -247,18 +247,6 @@ impl HeuristicBuildError {
     }
 }
 
-impl From<String> for HeuristicBuildError {
-    fn from(message: String) -> Self {
-        Self::Failure(message)
-    }
-}
-
-impl From<&str> for HeuristicBuildError {
-    fn from(message: &str) -> Self {
-        Self::Failure(message.to_string())
-    }
-}
-
 impl From<ConfigError> for HeuristicBuildError {
     fn from(error: ConfigError) -> Self {
         Self::Config(error)

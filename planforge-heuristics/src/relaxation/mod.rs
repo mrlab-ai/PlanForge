@@ -224,14 +224,14 @@ impl FfHeuristic {
     /// evaluates: a fact universe, the operators over it, and the achiever and
     /// consumer indices the BFS and relaxed-plan extraction walk.
     pub fn new(task: &Task) -> Result<Self, HeuristicBuildError> {
-        let universe = FactUniverse::build(task)?;
+        let universe = FactUniverse::build(task);
         let num_facts = universe.len();
         let num_numeric = task.numeric_variables().len();
 
         let axioms_touching_var =
-            index_comparison_axioms_by_numeric_var(&universe.comparison_axioms, num_numeric)?;
-        let assignment_axioms = collect_assignment_axioms(task, num_numeric)?;
-        let constant_value = constant_numeric_values(task)?;
+            index_comparison_axioms_by_numeric_var(&universe.comparison_axioms, num_numeric);
+        let assignment_axioms = task.assignment_axioms().to_vec();
+        let constant_value = constant_numeric_values(task);
 
         let operators = collect_relaxed_operators(task, &universe, &constant_value)?;
         let num_ops = operators.len();
@@ -247,8 +247,7 @@ impl FfHeuristic {
             &axioms_touching_var,
             &axioms_via_derived,
             num_facts,
-            num_numeric,
-        )?;
+        );
         let goal_facts = collect_goal_facts(task, &universe)?;
         let consumers = build_consumer_index(&operators, num_facts);
 
@@ -844,7 +843,7 @@ impl planforge_search::heuristic_features::HeuristicFeature for FfFeature {
         context: &planforge_search::heuristic_features::BuildContext,
     ) -> Result<Box<dyn Heuristic>, planforge_search::heuristic_features::HeuristicBuildError> {
         let heuristic = FfHeuristic::new(&context.task)
-            .map_err(|error| format!("failed to construct ff heuristic: {error}"))?;
+            .map_err(|error| error.context("failed to construct ff heuristic"))?;
         Ok(Box::new(heuristic))
     }
 }

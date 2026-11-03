@@ -75,22 +75,27 @@ impl PostHocOptimizationHeuristic {
         task: &Task,
         components: Vec<AbstractionComponent>,
     ) -> Result<Self, HeuristicBuildError> {
-        if components.is_empty() {
-            return Err("posthoc optimization heuristic requires at least one component".into());
-        }
-        let relevant_operators = components
+        assert!(
+            !components.is_empty(),
+            "post-hoc optimization has at least one component"
+        );
+        let relevant_operators: Vec<_> = components
             .iter()
             .map(|component| component.relevant_operator_ids(task))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
 
         let original_costs: Vec<f64> = task.effective_operator_costs().to_vec();
 
         let constraints = build_constraints(&relevant_operators, &original_costs);
 
         assert_unrestricted_license().map_err(|error| {
-            format!("posthoc_optimization requires unrestricted CPLEX: {error}")
+            HeuristicBuildError::Failure(format!(
+                "posthoc_optimization requires unrestricted CPLEX: {error}"
+            ))
         })?;
-        let lp_model = build_lp_model(components.len(), &constraints)?;
+        let lp_model = build_lp_model(components.len(), &constraints).map_err(|error| {
+            HeuristicBuildError::Failure(format!("posthoc_optimization: {error}"))
+        })?;
 
         info!(
             "posthoc_optimization: abstractions={}, lp_constraints={} (CPLEX)",
@@ -189,7 +194,10 @@ impl PostHocOptimizationHeuristic {
     }
 }
 
-fn build_lp_model(num_abstractions: usize, constraints: &[Vec<usize>]) -> Result<LpModel, String> {
+fn build_lp_model(
+    num_abstractions: usize,
+    constraints: &[Vec<usize>],
+) -> Result<LpModel, planforge_cplex::Error> {
     assert!(num_abstractions > 0, "a posthoc model has a column");
     let variables = vec![Variable::new(0.0, LpModel::infinity(), 0.0); num_abstractions];
     let constraints: Vec<LpConstraint> = constraints
@@ -205,10 +213,8 @@ fn build_lp_model(num_abstractions: usize, constraints: &[Vec<usize>]) -> Result
             )
         })
         .collect();
-    let mut model = LpModel::new("posthoc-optimization").map_err(|error| error.to_string())?;
-    model
-        .load(ObjectiveSense::Maximize, &variables, &constraints)
-        .map_err(|error| error.to_string())?;
+    let mut model = LpModel::new("posthoc-optimization")?;
+    model.load(ObjectiveSense::Maximize, &variables, &constraints)?;
     Ok(model)
 }
 

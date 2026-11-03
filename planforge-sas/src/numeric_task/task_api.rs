@@ -598,6 +598,30 @@ impl TaskData {
         if let Some(global_constraint) = &self.global_constraint {
             self.assert_task_fact(global_constraint, "global constraint");
         }
+        for operator in &self.operators {
+            for fact in &operator.preconditions {
+                self.assert_task_fact(fact, "operator precondition");
+            }
+            for effect in &operator.effects {
+                for fact in &effect.conditions {
+                    self.assert_task_fact(fact, "operator effect condition");
+                }
+                for value in [Some(effect.value()), effect.precondition_value()]
+                    .into_iter()
+                    .flatten()
+                {
+                    let fact = ExplicitFact::propositional(effect.var_id().index(), value.index());
+                    self.assert_task_fact(&fact, "operator effect");
+                }
+            }
+            for effect in &operator.assignment_effects {
+                for fact in &effect.conditions {
+                    self.assert_task_fact(fact, "assignment effect condition");
+                }
+                assert_numeric_operand(effect.affected_var_id, "an assignment effect target");
+                assert_numeric_operand(effect.var_id, "an assignment effect operand");
+            }
+        }
 
         if !self.comparison_axioms.is_empty() {
             let last_arithmetic_layer = self

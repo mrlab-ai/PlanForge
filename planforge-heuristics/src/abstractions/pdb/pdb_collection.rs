@@ -21,8 +21,7 @@ pub fn build_pattern_databases(
     patterns
         .iter()
         .map(|pattern| {
-            let projected_task =
-                ProjectedTask::new(task, pattern).map_err(|err| err.to_string())?;
+            let projected_task = ProjectedTask::new(task, pattern)?;
             print_projection_summary(task, pattern, &projected_task);
             PatternDatabase::build(projected_task, config)
         })

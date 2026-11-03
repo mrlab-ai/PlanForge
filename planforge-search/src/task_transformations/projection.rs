@@ -138,6 +138,24 @@ impl fmt::Display for ProjectedTaskBuildError {
 
 impl std::error::Error for ProjectedTaskBuildError {}
 
+/// A pattern database cannot be built on a task the projection does not
+/// support; a pattern naming no variable of the task is a failure.
+impl From<ProjectedTaskBuildError> for crate::heuristic_features::HeuristicBuildError {
+    fn from(error: ProjectedTaskBuildError) -> Self {
+        match error {
+            ProjectedTaskBuildError::UnrestrictedTask { .. }
+            | ProjectedTaskBuildError::UnabstractableGoal { .. }
+            | ProjectedTaskBuildError::UnsupportedPatternNumericVarType { .. } => {
+                Self::Unsupported(error.to_string())
+            }
+            ProjectedTaskBuildError::InvalidRegularVarId { .. }
+            | ProjectedTaskBuildError::InvalidNumericVarId { .. } => {
+                Self::Failure(error.to_string())
+            }
+        }
+    }
+}
+
 /// The projection of a task onto a pattern: a task of its own over the
 /// pattern's variables, and the ids that lead back to the base task.
 ///

@@ -138,7 +138,7 @@ fn with_explicit_subsets(
     let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
         .iter()
         .map(|component| component.relevant_operator_ids(task))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
     validate_additive_subsets(
         components.len(),
         &max_additive_subsets,
@@ -261,11 +261,10 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
     let initial_state = registry.register_initial_state();
     let eval_state = EvaluationState::new(&initial_state, &task, &registry);
 
-    let mut max = MaxAbstractionHeuristic::new(None, mixed_components(&task)).unwrap();
+    let mut max = MaxAbstractionHeuristic::new(None, mixed_components(&task));
     assert_eq!(max.evaluate(&eval_state).unwrap().value(), 5.0);
 
-    let mut canonical =
-        CanonicalAbstractionHeuristic::new(None, &task, mixed_components(&task)).unwrap();
+    let mut canonical = CanonicalAbstractionHeuristic::new(None, &task, mixed_components(&task));
     assert!(
         canonical
             .max_additive_subsets
@@ -283,14 +282,13 @@ fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() 
     domain.core_mut().metadata.stop_reason = CegarStopReason::ConcretePlan;
     let component = AbstractionComponent::from(domain);
     assert!(component.proves_initial_state_optimal());
-    let max = MaxAbstractionHeuristic::new(None, vec![component]).unwrap();
+    let max = MaxAbstractionHeuristic::new(None, vec![component]);
     assert!(!max.proves_initial_state_optimal());
 
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
     domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
     domain.core_mut().metadata.stop_reason = CegarStopReason::ConcretePlan;
     let canonical =
-        CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)])
-            .unwrap();
+        CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)]);
     assert!(!canonical.proves_initial_state_optimal());
 }
