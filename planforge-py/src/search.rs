@@ -238,7 +238,10 @@ pub(crate) fn checked_duration(seconds: f64, name: &str) -> PyResult<Duration> {
 #[pyfunction]
 #[pyo3(signature = (*, domain=None, problem=None, sas=None, sas_text=None,
                     search=None, max_time=None, max_memory=None, transforms=Vec::new()))]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the keyword arguments of the Python function"
+)]
 pub(crate) fn solve(
     py: Python<'_>,
     domain: Option<PathBuf>,
