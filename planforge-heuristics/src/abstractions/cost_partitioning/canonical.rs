@@ -199,7 +199,9 @@ impl HeuristicFeature for CanonicalFeature {
         remaining_construction_time(deadline)?;
         let heuristic =
             CanonicalAbstractionHeuristic::new(Some(context.name.clone()), task, components)
-                .map_err(|error| format!("failed to construct `{}`: {error}", context.name))?;
+                .map_err(|error| {
+                    error.context(format!("failed to construct `{}`", context.name))
+                })?;
         remaining_construction_time(deadline)?;
         Ok(Box::new(heuristic))
     }

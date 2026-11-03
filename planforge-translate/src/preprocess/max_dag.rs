@@ -1,7 +1,7 @@
-//! An order of the nodes of a weighted directed graph that takes the node
-//! with the least remaining incoming weight first, breaking cycles at their
-//! lightest edges (Fast Downward's `max_dag`); it orders the SAS+ variables
-//! along the causal graph.
+//! Fast Downward's `max_dag`: the order of the SAS+ variables in a component.
+//!
+//! The node with the least remaining incoming weight comes first, which breaks
+//! the cycles of the weighted causal graph at their lightest edges.
 
 use std::collections::BTreeMap;
 

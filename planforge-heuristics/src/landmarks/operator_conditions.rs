@@ -1,5 +1,6 @@
-//! What numeric LM-cut knows about each pair of an operator and a numeric
-//! condition: the constant effect the operator has on the condition, and the
+//! The effects of each operator on each numeric condition, for numeric LM-cut.
+//!
+//! An entry is the constant effect the operator has on the condition, and the
 //! second-order simple effect (SOSE) it supports there.
 //!
 //! Most pairs carry nothing -- an operator changes few of the variables a

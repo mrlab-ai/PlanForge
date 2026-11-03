@@ -1,5 +1,6 @@
-//! The search for mutex invariants among the ground atoms (Helmert 2009), and
-//! the mutex groups they give the SAS+ encoding.
+//! The search for mutex invariants among the ground atoms (Helmert 2009).
+//!
+//! The invariants give the mutex groups of the SAS+ encoding.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;

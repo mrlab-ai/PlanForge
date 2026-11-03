@@ -1,5 +1,7 @@
-//! Saturated cost partitioning (Seipp and Helmert 2018) over a collection of
-//! abstractions, offline over orders chosen once or online per state.
+//! Saturated cost partitioning (Seipp and Helmert 2018) over abstractions.
+//!
+//! The cost partitionings follow orders chosen once (offline), or are
+//! computed for each evaluated state (online).
 
 use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::numeric_task::Task;
@@ -80,25 +82,23 @@ impl SaturatedCostPartitioningHeuristic {
         config: ScpConfig,
         task: Arc<Task>,
         construction_deadline: Deadline,
-    ) -> Result<Self, EvaluationError> {
+    ) -> Result<Self, HeuristicBuildError> {
         if components.is_empty() {
-            return Err(EvaluationError::ComputationFailed(
+            return Err(HeuristicBuildError::Failure(
                 "SCP requires at least one abstraction component".to_string(),
             ));
         }
-        config
-            .validate()
-            .map_err(|error| EvaluationError::ComputationFailed(error.to_string()))?;
+        config.validate()?;
         let mut components = components;
         if config.partitioning.uses_regions() {
             let regions = RegionSemantics::new(&task)
-                .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
+                .map_err(|error| HeuristicBuildError::Failure(format!("{error:#}")))?;
             for (component_id, component) in components.iter_mut().enumerate() {
                 match component {
                     AbstractionComponent::Cegar { abstraction, .. } => abstraction
                         .prepare_regional_saturation(&regions, Deadline::NONE)
                         .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
+                            HeuristicBuildError::Failure(format!(
                                 "failed to build the source sets of component {component_id}: {error:#}"
                             ))
                         })?,
@@ -117,7 +117,7 @@ impl SaturatedCostPartitioningHeuristic {
             let (distances, saturated) =
                 saturate_component_labels(component, &original_costs, None, Deadline::NONE)
                     .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
+                        HeuristicBuildError::Failure(format!(
                             "failed to saturate component {component_id} under the original costs: {error:#}"
                         ))
                     })?;
@@ -343,7 +343,7 @@ impl HeuristicFeature for ScpFeature {
             context.task.clone(),
             deadline,
         )
-        .map_err(|error| format!("failed to construct `{}`: {error}", context.name))?;
+        .map_err(|error| error.context(format!("failed to construct `{}`", context.name)))?;
         Ok(Box::new(heuristic))
     }
 }

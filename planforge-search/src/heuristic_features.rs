@@ -284,6 +284,14 @@ impl From<crate::task_transformations::TransformError> for HeuristicBuildError {
     }
 }
 
+/// A construction that evaluates states, as cost partitionings over sampled
+/// states do, fails as the evaluation did.
+impl From<crate::evaluation::EvaluationError> for HeuristicBuildError {
+    fn from(error: crate::evaluation::EvaluationError) -> Self {
+        Self::Failure(error.to_string())
+    }
+}
+
 impl From<crate::unsupported::UnsupportedTask> for HeuristicBuildError {
     fn from(error: crate::unsupported::UnsupportedTask) -> Self {
         Self::Unsupported(error.to_string())

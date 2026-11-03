@@ -1,5 +1,6 @@
-//! The linear program whose optima are admissible and consistent potential
-//! functions, and the objectives it is solved for.
+//! The linear program whose optima are admissible potential functions.
+//!
+//! Its optima are also consistent; it is solved for several objectives.
 
 use planforge_sas::numeric_task::Task;
 use std::collections::BTreeMap;

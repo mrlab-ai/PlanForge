@@ -1,5 +1,6 @@
-//! What Cartesian abstractions, domain abstractions and pattern databases
-//! share: the CEGAR loop and its flaws, the coordinates regression works
+//! What Cartesian abstractions, domain abstractions and pattern databases share.
+//!
+//! That is the CEGAR loop and its flaws, the coordinates regression works
 //! over, concrete states and Cartesian sets of them, explicit abstract
 //! transition systems with their goal distances, and the task views
 //! abstractions are built for.
