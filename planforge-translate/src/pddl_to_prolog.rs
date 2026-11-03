@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use tracing::info;
 
-use super::normalize;
+use super::exploration_rules;
 use super::pddl::conditions::*;
 use super::pddl::pddl_types::{TypeHierarchy, TypedObject, get_type_predicate_name};
 use super::pddl::tasks::Task;
@@ -205,7 +205,9 @@ fn translate_facts(task: &Task, program: &mut PrologProgram) {
         program.add_fact(fact);
     }
     for assign in &task.num_init {
-        let mut fact = vec![normalize::get_function_predicate(&assign.fluent.symbol)];
+        let mut fact = vec![exploration_rules::get_function_predicate(
+            &assign.fluent.symbol,
+        )];
         fact.extend(assign.fluent.args.clone());
         program.add_fact(fact);
     }
@@ -222,7 +224,7 @@ pub fn translate(task: &Task) -> PrologProgram {
     // Add init facts
     translate_facts(task, &mut program);
 
-    for rule in normalize::build_exploration_rules(task) {
+    for rule in exploration_rules::build_exploration_rules(task) {
         let conditions = rule
             .conditions
             .iter()
@@ -268,7 +270,7 @@ fn condition_to_atoms(cond: &Condition) -> Vec<Vec<String>> {
             .iter()
             .flat_map(crate::pddl::FunctionalExpression::primitive_numeric_expressions)
             .map(|pne| {
-                let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
+                let mut result = vec![exploration_rules::get_function_predicate(&pne.symbol)];
                 result.extend(pne.args);
                 result
             })
