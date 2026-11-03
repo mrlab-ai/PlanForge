@@ -22,6 +22,7 @@ mod api;
 mod axiom_rules;
 mod build_model;
 mod constraints;
+mod exploration_rules;
 mod fact_groups;
 mod greedy_join;
 mod grounding;
