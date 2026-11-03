@@ -27,6 +27,7 @@ use crate::successor_generator::SuccessorGeneratorConfig;
 use crate::task_transformations::TransformationConfig;
 
 /// Every feature the configuration language names, one registry per kind.
+#[derive(Debug)]
 pub struct Features {
     pub heuristics: Registry<HeuristicConfig>,
     pub search_algorithms: Registry<SearchConfig>,
@@ -315,7 +316,7 @@ impl<T: ?Sized> PartialEq for Configured<T> {
 
 /// The typed configuration `config` of the feature `F`, which implements its
 /// kind's interface.
-pub struct Typed<F, C> {
+pub(crate) struct Typed<F, C> {
     pub(crate) config: C,
     feature: PhantomData<fn() -> F>,
 }

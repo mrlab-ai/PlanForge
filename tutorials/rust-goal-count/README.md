@@ -8,33 +8,29 @@ The essential implementation is:
 
 ```rust
 impl Heuristic for GoalCountHeuristic {
-    fn compute_heuristic(
-        &self,
+    fn evaluate(
+        &mut self,
         eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let task = eval_state.task();
-        let registry = eval_state.state_registry();
-        let state = eval_state.state();
-        let mut unsatisfied = 0usize;
-        for goal_id in 0..task.get_num_goals() {
-            if !task
-                .get_goal_fact(goal_id)
-                .is_hold(registry.view(state))
-            {
-                unsatisfied += 1;
-            }
-        }
-        Ok(unsatisfied as f64)
+    ) -> Result<Estimate, EvaluationError> {
+        let state = eval_state.state_registry().view(eval_state.state());
+        let unsatisfied = eval_state
+            .task()
+            .goals()
+            .iter()
+            .filter(|goal| !goal.is_held(state))
+            .count();
+        Ok(Estimate::new(unsatisfied as f64))
     }
 
-    fn heuristic_name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &str {
+        "goal_count"
     }
 }
 ```
 
-`EvaluationState` guarantees that the task and decoding registry are present;
-there are no optional lookups. The executable evaluates the initial state and
+`EvaluationState` holds the task, the registry that decodes the state, and
+whether the state is a goal; `Estimate` is a non-negative cost or
+`Estimate::DEAD_END`. The executable evaluates the initial state and
 runs the regular generic A* driver on two committed SAS tasks.
 
 From the repository root:
