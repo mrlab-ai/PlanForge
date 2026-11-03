@@ -1,3 +1,6 @@
+//! The ranking of abstract states and the match tree that finds the abstract
+//! operators regressing from one.
+
 use planforge_sas::explicit_state::StateValues;
 use planforge_sas::numeric_task::Task;
 use std::sync::Arc;
@@ -17,6 +20,8 @@ use crate::abstractions::domain::comparison_inputs::fill_state_intervals;
 use crate::abstractions::domain::layout::StateLayout;
 use crate::abstractions::domain::partitions::partition_for_value;
 use planforge_search::resource_limits::Deadline;
+
+use crate::abstractions::common::DEADLINE_POLL_STRIDE;
 
 #[derive(Debug, Clone, Default)]
 struct MatchTreeNode {
@@ -319,7 +324,7 @@ impl DomainAbstractionFunction {
         let mut intervals = Vec::new();
         let mut goal_states = Vec::new();
         for state in 0..self.layout.num_states() {
-            if state.is_multiple_of(1024) {
+            if state.is_multiple_of(DEADLINE_POLL_STRIDE) {
                 deadline.ensure(DISTANCE_TABLE)?;
             }
             if self.is_goal_state(task, state, goals, &mut intervals)? {

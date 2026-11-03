@@ -92,6 +92,7 @@ pub(crate) fn abstraction_source(heuristic: &HeuristicConfig) -> Option<Abstract
 
 /// One abstraction as a heuristic: its goal distances, without the
 /// transition system a cost partitioning needs.
+#[derive(Debug)]
 pub struct SingleAbstractionFeature<G>(PhantomData<G>);
 
 impl<G> HeuristicFeature for SingleAbstractionFeature<G>
@@ -128,6 +129,7 @@ pub type CartesianFeature = SingleAbstractionFeature<CartesianAbstractionGenerat
 
 /// A collection or pattern-collection source as a heuristic: the maximum over
 /// its abstractions.
+#[derive(Debug)]
 pub struct SourceFeature<C>(PhantomData<C>);
 
 impl<C: SourceConfig> HeuristicFeature for SourceFeature<C> {

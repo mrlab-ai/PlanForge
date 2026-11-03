@@ -1,3 +1,6 @@
+//! The canonical heuristic: the maximum over the sums of the maximal sets of
+//! abstractions no two of which share a relevant operator.
+
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +27,7 @@ use planforge_sas::numeric_task::NumericValue;
 use super::standalone_estimate;
 use crate::abstractions::component::AbstractionComponent;
 
+#[derive(Debug)]
 pub struct CanonicalAbstractionHeuristic {
     name: String,
     components: Vec<AbstractionComponent>,
@@ -169,6 +173,7 @@ pub(crate) fn compute_max_additive_subsets_from_relevant_operators(
 
 /// `canonical(sources)`: the canonical heuristic over the abstractions of
 /// the sources.
+#[derive(Debug)]
 pub struct CanonicalFeature;
 impl HeuristicFeature for CanonicalFeature {
     const NAME: &'static str = "canonical";

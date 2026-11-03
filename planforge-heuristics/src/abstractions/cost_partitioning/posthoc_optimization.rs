@@ -17,6 +17,7 @@ use planforge_search::heuristic_features::{
 };
 
 /// `posthoc_optimization(sources)`.
+#[derive(Debug)]
 pub struct PostHocFeature;
 impl HeuristicFeature for PostHocFeature {
     const NAME: &'static str = "posthoc_optimization";

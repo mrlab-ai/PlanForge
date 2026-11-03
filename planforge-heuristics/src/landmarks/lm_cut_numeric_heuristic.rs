@@ -1,3 +1,6 @@
+//! Numeric LM-cut as a heuristic: its options, the heuristic over the
+//! landmarks of each evaluated state, and its feature.
+
 #[cfg(test)]
 mod tests;
 
@@ -69,6 +72,7 @@ impl fmt::Display for LmCutNumericConfig {
     }
 }
 
+#[derive(Debug)]
 pub struct LandmarkCutNumericHeuristic {
     name: String,
     task: Arc<Task>,
@@ -154,6 +158,7 @@ impl Heuristic for LandmarkCutNumericHeuristic {
 }
 
 /// Registry feature for numeric LM-cut.
+#[derive(Debug)]
 pub struct LmCutNumericFeature;
 impl planforge_search::heuristic_features::HeuristicFeature for LmCutNumericFeature {
     const NAME: &'static str = "lmcutnumeric";

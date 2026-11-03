@@ -1,3 +1,6 @@
+//! PDDL actions and their ground instances, the propositional actions the SAS+
+//! operators are built from.
+
 use std::collections::HashMap;
 
 use planforge_sas::numeric_task::{NumericValue, ZERO_VALUE};

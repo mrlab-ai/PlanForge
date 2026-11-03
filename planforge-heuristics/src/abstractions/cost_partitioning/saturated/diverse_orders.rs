@@ -1,3 +1,6 @@
+//! Diverse orders (Seipp 2017): orders kept only if they improve the estimate
+//! of some sampled state.
+
 use std::collections::{HashMap, HashSet};
 
 use tracing::info;

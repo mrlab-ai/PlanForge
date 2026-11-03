@@ -1,5 +1,7 @@
+//! Greedy splitting of a rule with many body atoms into a chain of binary
+//! joins, as Fast Downward's translator does before grounding.
+
 use super::pddl_to_prolog::{Rule, RuleType, get_variables};
-/// Greedy algorithm for splitting rules into binary joins.
 use std::collections::{HashMap, HashSet};
 
 struct OccurrencesTracker {

@@ -1,3 +1,6 @@
+//! Maximal cliques of a compatibility graph, which the canonical heuristic
+//! sums over.
+
 use std::collections::BTreeSet;
 
 pub(crate) fn maximal_cliques(

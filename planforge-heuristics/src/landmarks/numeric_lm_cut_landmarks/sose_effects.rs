@@ -122,13 +122,7 @@ impl LandmarkCutLandmarks {
                     let projected_coefficients = self
                         .regular_numeric_variable_ids
                         .iter()
-                        .map(|&numeric_var_id| {
-                            base_expression
-                                .coefficients
-                                .get(numeric_var_id.index())
-                                .copied()
-                                .unwrap_or(0.0)
-                        })
+                        .map(|&numeric_var_id| base_expression.coefficients[numeric_var_id.index()])
                         .collect::<Vec<_>>();
                     let mut has_bound = true;
                     let mut upper_bound = 0.0;

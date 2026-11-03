@@ -1,4 +1,7 @@
-/// Constraint system for invariant checking.
+//! The constraint system invariant checking solves: equalities and
+//! inequalities between the parameters of invariant parts and action
+//! arguments.
+
 use std::collections::HashMap;
 
 use super::tools;

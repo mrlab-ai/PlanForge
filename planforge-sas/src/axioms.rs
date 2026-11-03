@@ -287,6 +287,7 @@ struct LiteralRef {
     value: ExplicitValueIndex,
 }
 
+#[derive(Debug)]
 pub struct AxiomEvaluator {
     /// The arithmetic axioms, in dependency-layer order.
     assignment_axioms: Vec<AssignmentAxiom>,

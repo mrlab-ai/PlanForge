@@ -1,3 +1,6 @@
+//! Bounds on numeric variables from the task's operators, which tighten the
+//! conditions numeric LM-cut relaxes.
+
 use super::numeric_helper::NumericTaskHelper;
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::numeric_task::Task;
@@ -921,12 +924,7 @@ impl NumericBound {
     fn project_coefficients(&self, coefficients: &[f64]) -> Vec<f64> {
         self.numeric_variable_ids
             .iter()
-            .map(|&numeric_var_id| {
-                coefficients
-                    .get(numeric_var_id.index())
-                    .copied()
-                    .unwrap_or(0.0)
-            })
+            .map(|&numeric_var_id| coefficients[numeric_var_id.index()])
             .collect()
     }
 }

@@ -12,6 +12,16 @@ pub struct MaximumHeuristic {
     children: Vec<Box<dyn Heuristic>>,
 }
 
+impl std::fmt::Debug for MaximumHeuristic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let children: Vec<&str> = self.children.iter().map(|child| child.name()).collect();
+        f.debug_struct("MaximumHeuristic")
+            .field("name", &self.name)
+            .field("children", &children)
+            .finish()
+    }
+}
+
 impl MaximumHeuristic {
     pub fn new(name: String, children: Vec<Box<dyn Heuristic>>) -> Self {
         assert!(

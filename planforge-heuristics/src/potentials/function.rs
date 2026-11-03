@@ -1,3 +1,6 @@
+//! A numeric potential function: a weight per feature, whose weighted sum
+//! estimates the cost of a state.
+
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};
 use planforge_sas::state_registry::ConcreteStateView;
 

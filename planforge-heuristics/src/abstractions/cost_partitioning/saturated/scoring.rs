@@ -1,3 +1,6 @@
+//! Scores of abstractions for greedy orders: heuristic value per cost stolen
+//! from the other abstractions.
+
 use std::collections::BTreeMap;
 
 use planforge_sas::utils::float_tolerance;

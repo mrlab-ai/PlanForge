@@ -3,8 +3,7 @@
 //! [`translate_to_task`], [`translate_to_sas_to_path`],
 //! [`translate_to_sas_to_path_fast`] and [`translate_to_sas_string`] are the
 //! whole public surface. The pipeline stages behind them are private: they only
-//! ever ran in this order, and the one crate that used to reach past them was
-//! this crate's own CLI wrapper.
+//! run in this order.
 //!
 //! This is the first stage of PlanForge's PDDL translation → SAS+ task → search
 //! pipeline. The usual in-memory entry point returns the task consumed by

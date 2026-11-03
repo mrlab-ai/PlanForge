@@ -1,3 +1,6 @@
+//! Rays of the potential linear program: directions that prove a state a dead
+//! end when the program has no bounded optimum.
+
 use std::fs;
 use std::path::Path;
 
@@ -11,7 +14,17 @@ use super::optimizer::PotentialSystem;
 use super::{NumericPotentialFunction, NumericPotentialOptimizer, PotentialTask};
 
 const RATIONAL_SCALE: i64 = 1_000_000;
+/// The least slack below the primary optimum the secondary objective may give
+/// up, so that a zero `epsilon` still leaves the LP a strictly feasible bound.
+const MIN_PRESERVE_SLACK: f64 = 1e-8;
+/// How far, relative to its magnitude, a value may lie from its scaled
+/// integer for the integer to stand for it.
+const SCALED_INTEGER_TOLERANCE: f64 = 1e-10;
+/// How far a ray may violate a bound or constraint of the potential system
+/// and still be accepted as a solver's floating-point answer.
+const RAY_FEASIBILITY_TOLERANCE: f64 = 1e-7;
 
+#[derive(Debug)]
 pub(crate) struct Ray {
     function: NumericPotentialFunction,
     coefficients: Vec<f64>,
@@ -39,6 +52,7 @@ impl Ray {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct RayGenerator {
     system: PotentialSystem,
     model: Model,
@@ -101,7 +115,7 @@ impl RayGenerator {
         }
         if has_secondary {
             let preserve = Constraint::new(
-                primary - self.epsilon.max(1e-8),
+                primary - self.epsilon.max(MIN_PRESERVE_SLACK),
                 Model::infinity(),
                 objective
                     .iter()
@@ -367,7 +381,8 @@ fn scaled_integer(value: f64) -> Option<i64> {
         return None;
     }
     let recovered = scaled / RATIONAL_SCALE as f64;
-    ((recovered - value).abs() <= 1e-10 * value.abs().max(1.0)).then_some(scaled as i64)
+    ((recovered - value).abs() <= SCALED_INTEGER_TOLERANCE * value.abs().max(1.0))
+        .then_some(scaled as i64)
 }
 
 fn is_effectively_infinite(value: f64) -> bool {
@@ -375,7 +390,7 @@ fn is_effectively_infinite(value: f64) -> bool {
 }
 
 fn verify_numerically(system: &PotentialSystem, ray: &[f64]) -> bool {
-    let tolerance = 1e-7;
+    let tolerance = RAY_FEASIBILITY_TOLERANCE;
     for (value, variable) in ray.iter().zip(&system.variables) {
         if (!is_effectively_infinite(variable.lower) && *value < variable.lower - tolerance)
             || (!is_effectively_infinite(variable.upper) && *value > variable.upper + tolerance)

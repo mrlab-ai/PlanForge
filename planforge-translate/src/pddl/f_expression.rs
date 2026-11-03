@@ -1,5 +1,7 @@
+//! Numeric PDDL expressions: constants, fluents, arithmetic and the
+//! assignments of numeric effects.
+
 use planforge_sas::numeric_task::NumericValue;
-/// Functional expression hierarchy for numeric PDDL.
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};

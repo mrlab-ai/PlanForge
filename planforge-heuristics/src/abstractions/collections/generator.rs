@@ -54,6 +54,7 @@ pub trait AbstractionGenerator: Sized {
 
 /// Builds the collection [`CollectionConfig`] describes, with members from
 /// `G`.
+#[derive(Debug)]
 pub struct CollectionGenerator<G: AbstractionGenerator> {
     config: CollectionConfig<G::Config>,
 }

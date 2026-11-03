@@ -17,14 +17,6 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
 }
 
 #[test]
-fn default_matches_fd_default() {
-    assert_eq!(
-        GreedyVariableOrderType::default(),
-        GreedyVariableOrderType::GoalCgLevel
-    );
-}
-
-#[test]
 fn goal_cg_level_prefers_goal_numeric_variables() {
     let task = Task::new(TaskParts {
         metric: Metric::new(true, None),

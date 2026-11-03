@@ -84,7 +84,7 @@ type NumVarId = VariableIndex;
 type AxiomIdx = AxiomIndex;
 
 /// Per-state RPG buffers reused from one evaluation to the next.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct ScratchBuffers {
     fact_first_layer: Vec<i32>,
     op_remaining_preconditions: Vec<i32>,
@@ -166,6 +166,7 @@ impl ScratchBuffers {
 /// time and disable the operator outright if any fails to hold.
 type StateDependentPrecond = (usize, usize);
 
+#[derive(Debug)]
 pub struct FfHeuristic {
     /// For each (real or synthetic) operator in `op_preconditions`, the
     /// index into `task.operators()` if it's a real operator (used for
@@ -833,6 +834,7 @@ impl Heuristic for FfHeuristic {
 }
 
 /// Registry feature for FF.
+#[derive(Debug)]
 pub struct FfFeature;
 impl planforge_search::heuristic_features::HeuristicFeature for FfFeature {
     const NAME: &'static str = "ff";

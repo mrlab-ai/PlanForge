@@ -31,10 +31,7 @@ impl LandmarkCutLandmarks {
                     "LM-cut helper assignment target {local_var_id} is invalid for operator {original_operator_id}"
                 )
             })?;
-            let weight: f64 = coefficients
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let weight: f64 = coefficients[actual_var_id.index()];
             if weight.abs() < self.config.precision {
                 continue;
             }
@@ -63,10 +60,7 @@ impl LandmarkCutLandmarks {
                     "LM-cut helper conditional assignment target {local_var_id} is invalid for operator {original_operator_id}"
                 )
             })?;
-            let weight = coefficients
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let weight = coefficients[actual_var_id.index()];
             if weight.abs() < self.config.precision {
                 continue;
             }
@@ -91,10 +85,7 @@ impl LandmarkCutLandmarks {
                 self.regular_numeric_variable_ids.iter().enumerate()
             {
                 let local_var_id = VariableIndex::from_usize(local_var_id);
-                let weight = coefficients
-                    .get(actual_var_id.index())
-                    .copied()
-                    .unwrap_or(0.0);
+                let weight = coefficients[actual_var_id.index()];
                 if (weight >= self.config.precision
                     && self
                         .numeric_bound()
@@ -158,10 +149,7 @@ impl LandmarkCutLandmarks {
                     "LM-cut helper assignment target {local_var_id} is invalid for operator {original_operator_id}"
                 )
             })?;
-            let weight: f64 = coefficients
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let weight: f64 = coefficients[actual_var_id.index()];
             if weight.abs() < self.config.precision {
                 continue;
             }
@@ -181,10 +169,7 @@ impl LandmarkCutLandmarks {
             }
 
             let constant_target = helper_assign_list[local_var_id];
-            let state_value = numeric_values
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(ZERO_VALUE);
+            let state_value = numeric_values[actual_var_id.index()];
             if (weight >= self.config.precision && constant_target > state_value.value())
                 || (weight <= -self.config.precision && constant_target < state_value.value())
             {
@@ -199,10 +184,7 @@ impl LandmarkCutLandmarks {
                     "LM-cut helper conditional assignment target {local_var_id} is invalid for operator {original_operator_id}"
                 )
             })?;
-            let weight: f64 = coefficients
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(0.0);
+            let weight: f64 = coefficients[actual_var_id.index()];
             if weight.abs() < self.config.precision {
                 continue;
             }
@@ -221,10 +203,7 @@ impl LandmarkCutLandmarks {
             }
 
             let constant_target = conditional_assignment.assigned_value;
-            let state_value = numeric_values
-                .get(actual_var_id.index())
-                .copied()
-                .unwrap_or(ZERO_VALUE);
+            let state_value = numeric_values[actual_var_id.index()];
             if (weight >= self.config.precision && constant_target > state_value.value())
                 || (weight <= -self.config.precision && constant_target < state_value.value())
             {
@@ -237,10 +216,7 @@ impl LandmarkCutLandmarks {
                 self.regular_numeric_variable_ids.iter().enumerate()
             {
                 let local_var_id = VariableIndex::from_usize(local_var_id);
-                let weight = coefficients
-                    .get(actual_var_id.index())
-                    .copied()
-                    .unwrap_or(0.0);
+                let weight = coefficients[actual_var_id.index()];
                 if self.use_bounds
                     && ((weight >= self.config.precision
                         && self.numeric_bound().has_no_increasing_assignment_effect(
@@ -264,10 +240,7 @@ impl LandmarkCutLandmarks {
                     let mut contribution = (self
                         .numeric_bound()
                         .get_assignment_ub(original_operator_id, local_var_id)
-                        - numeric_values
-                            .get(actual_var_id.index())
-                            .map(NumericValue::value)
-                            .unwrap_or(0.0))
+                        - numeric_values[actual_var_id.index()].value())
                     .max(0.0);
                     if self
                         .numeric_bound()
@@ -287,10 +260,7 @@ impl LandmarkCutLandmarks {
                     let mut contribution = (self
                         .numeric_bound()
                         .get_assignment_lb(original_operator_id, local_var_id)
-                        - numeric_values
-                            .get(actual_var_id.index())
-                            .map(NumericValue::value)
-                            .unwrap_or(0.0))
+                        - numeric_values[actual_var_id.index()].value())
                     .min(0.0);
                     if self
                         .numeric_bound()

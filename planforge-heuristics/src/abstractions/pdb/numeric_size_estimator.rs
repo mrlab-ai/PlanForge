@@ -1,3 +1,6 @@
+//! Estimates of the number of states a projection to a pattern has, for
+//! numeric variables whose domain is not known in advance.
+
 #[cfg(test)]
 mod tests;
 
@@ -15,6 +18,7 @@ struct NumericCondition {
     constant: NumericValue,
 }
 
+#[derive(Debug)]
 pub struct NumericSizeEstimator {
     approximate_domain_sizes: Vec<usize>,
 }

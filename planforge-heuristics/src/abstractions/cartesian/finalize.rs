@@ -1,3 +1,6 @@
+//! The finished Cartesian abstraction: the working abstraction CEGAR refined,
+//! turned into the abstraction heuristics and cost partitionings read.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

@@ -1,4 +1,6 @@
-/// Full condition hierarchy for PDDL conditions.
+//! PDDL conditions: atoms, comparisons, conjunctions, disjunctions and
+//! quantifiers, with the rewrites normalization applies to them.
+
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
@@ -172,10 +174,8 @@ impl fmt::Display for NegatedAtom {
 /// and `>`.
 ///
 /// Whether the comparison is asserted or denied is the [`Condition`] variant
-/// holding it, and nothing else: the two used to be separate structs with the
-/// same three fields, of which the third was a `negated` flag that duplicated
-/// the variant and was never read. Negating a comparison is therefore moving the
-/// same payload to the other variant.
+/// holding it, and nothing else: negating a comparison moves the same payload
+/// to the other variant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Comparison {
     pub comparator: String,

@@ -1,3 +1,6 @@
+//! The abstraction function of a domain abstraction: the partition of each
+//! variable's domain that maps concrete states to abstract ones.
+
 #[cfg(test)]
 mod tests;
 

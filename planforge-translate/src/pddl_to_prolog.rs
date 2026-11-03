@@ -1,4 +1,6 @@
-/// Translates a PDDL task into a logic program for grounding.
+//! The logic program the grounding computes the reachable atoms with: one rule
+//! per action, axiom and numeric expression of the normalized task.
+
 use std::collections::HashSet;
 
 use tracing::info;

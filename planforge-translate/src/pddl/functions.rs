@@ -1,3 +1,5 @@
+//! PDDL numeric function declarations.
+
 use super::pddl_types::TypedObject;
 use std::fmt;
 

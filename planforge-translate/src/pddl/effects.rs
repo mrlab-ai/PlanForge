@@ -1,4 +1,6 @@
-/// Effect types for PDDL actions.
+//! PDDL effects: add, delete and numeric effects, with their quantifiers and
+//! conditions.
+
 use std::fmt;
 
 use super::conditions::{Condition, Conjunction};
@@ -205,7 +207,10 @@ impl EffectType {
                     }
                 }
                 if new_effects.len() == 1 {
-                    (new_effects.into_iter().next().unwrap(), cost_effect)
+                    (
+                        new_effects.pop().expect("there is exactly one effect"),
+                        cost_effect,
+                    )
                 } else {
                     (
                         EffectType::Conjunctive(ConjunctiveEffect::new(new_effects)),

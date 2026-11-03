@@ -14,13 +14,7 @@ impl NumericTaskHelper {
         self.numeric_variable_lower_bounds = self
             .numeric_variable_ids
             .iter()
-            .map(|&task_var_id| {
-                initial_numeric_values
-                    .get(task_var_id.index())
-                    .copied()
-                    .unwrap_or(ZERO_VALUE)
-                    .value()
-            })
+            .map(|&task_var_id| initial_numeric_values[task_var_id.index()].value())
             .collect();
         self.numeric_variable_upper_bounds = self.numeric_variable_lower_bounds.clone();
 

@@ -1,3 +1,5 @@
+//! The PDDL abstract syntax tree the parser builds and normalization rewrites.
+
 pub mod actions;
 pub mod axioms;
 pub mod conditions;

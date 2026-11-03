@@ -216,7 +216,7 @@ fn translate_task(
     //
     // Fast Downward answers the same way. On `citycar-opt14-adl/p2-2-2-1-2` its
     // translator reports 2 facts and 0 operators, having found the same goal out
-    // of reach; this used to panic on it instead.
+    // of reach.
     if let Some(unreachable) = task.goal_list.iter().find_map(|condition| match condition {
         Condition::Atom(atom) if !translation.dictionary.contains_key(atom) => Some(atom),
         _ => None,
@@ -249,14 +249,12 @@ fn translate_task(
     let gc_as_list = vec![task.global_constraint.clone()];
     let global_constraint_dict_list = translate_strips_conditions(translation, &gc_as_list);
 
-    if goal_dict_list.is_none() {
+    let Some(goal_dict_list) = goal_dict_list else {
         return Ok(trivial_task(
             false,
             "Goal violates a mutex or a comparison of constants",
         ));
-    }
-
-    let goal_dict_list = goal_dict_list.unwrap();
+    };
     // A goal literal names one value of one variable: a positive one its own
     // fact's value, a negative one the only other value of the binary variable
     // that `compute_groups` reserved for it.
@@ -270,9 +268,12 @@ fn translate_task(
 
     let sas_goal = SASGoal::new(goal_pairs);
 
-    assert!(
-        global_constraint_dict_list.is_some()
-            && global_constraint_dict_list.as_ref().unwrap().len() == 1
+    let global_constraint_dict_list =
+        global_constraint_dict_list.expect("the global constraint translates to SAS+ conditions");
+    assert_eq!(
+        global_constraint_dict_list.len(),
+        1,
+        "the global constraint is one conjunction"
     );
 
     // Numeric init values.
@@ -441,7 +442,7 @@ fn translate_task(
     // translated condition holds exactly one pair. Picking an arbitrary pair
     // out of a larger map would silently install a different constraint, and
     // an empty map has no pair to pick at all.
-    let global_constraint_facts = &global_constraint_dict_list.unwrap()[0];
+    let global_constraint_facts = &global_constraint_dict_list[0];
     assert_eq!(
         global_constraint_facts.len(),
         1,

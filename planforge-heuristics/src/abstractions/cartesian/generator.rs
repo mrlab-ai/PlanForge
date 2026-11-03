@@ -1,3 +1,7 @@
+//! The CEGAR generator of Cartesian abstractions: refinement of a task's
+//! Cartesian abstraction from the trivial one until a limit or a concrete
+//! plan.
+
 use crate::abstractions::build_error;
 use planforge_sas::numeric_task::Task;
 use planforge_search::heuristic_features::HeuristicBuildError;
@@ -24,6 +28,7 @@ use crate::abstractions::common::cegar::view::RefinementLimits;
 use crate::abstractions::common::coordinates::coordinate_value;
 use crate::abstractions::component::AbstractionKind;
 
+#[derive(Debug)]
 pub struct CartesianAbstractionGenerator {
     pub(super) config: CartesianAbstractionConfig,
 }

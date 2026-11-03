@@ -1,3 +1,6 @@
+//! Saturated cost partitioning (Seipp and Helmert 2018) over a collection of
+//! abstractions, offline over orders chosen once or online per state.
+
 use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::numeric_task::Task;
 use planforge_sas::state_registry::StateRegistry;
@@ -58,6 +61,7 @@ struct ScpBuilder {
 /// The maximum over saturated cost partitionings of abstraction heuristics
 /// (Seipp, Keller and Helmert 2020), built for the initial state at
 /// construction.
+#[derive(Debug)]
 pub struct SaturatedCostPartitioningHeuristic {
     name: String,
     components: Vec<AbstractionComponent>,
@@ -308,6 +312,7 @@ mod tests;
 
 /// `scp(sources, ...)`: saturated cost partitioning over the abstractions of
 /// the sources.
+#[derive(Debug)]
 pub struct ScpFeature;
 impl HeuristicFeature for ScpFeature {
     const NAME: &'static str = "scp";

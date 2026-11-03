@@ -1,3 +1,6 @@
+//! The Cartesian abstraction while CEGAR refines it: its states' regions and
+//! the transitions between them, with operator sets as bit sets.
+
 use rustc_hash::FxHashMap;
 
 use planforge_sas::numeric_task::OperatorIndex;

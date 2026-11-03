@@ -1,3 +1,5 @@
+//! Deadlines from the time limits of saturated cost partitioning.
+
 use std::time::{Duration, Instant};
 
 use planforge_search::evaluation::EvaluationError;

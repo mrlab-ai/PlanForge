@@ -1,3 +1,6 @@
+//! Small helpers of the translator: an insertion-ordered set, the order of
+//! quoted names, and Cartesian products.
+
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;

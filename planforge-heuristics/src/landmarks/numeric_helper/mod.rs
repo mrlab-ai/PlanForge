@@ -1,3 +1,6 @@
+//! The task as numeric LM-cut reads it: linear conditions, additive and
+//! conditional effects, and preconditions per operator.
+
 mod actions;
 mod bounds;
 mod conditions;
@@ -6,7 +9,7 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAx
 use planforge_sas::numeric_task::Task;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType,
-    NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    NumericValue, Operator, OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::linear_effects::{LinearExpression, LinearNumericEffect};
 use std::collections::{BTreeMap, BTreeSet};
@@ -423,10 +426,7 @@ impl NumericTaskHelper {
         &self,
         task_numeric_var_id: VariableIndex,
     ) -> Option<VariableIndex> {
-        self.numeric_variable_index_by_task_id
-            .get(task_numeric_var_id.index())
-            .copied()
-            .unwrap_or(None)
+        self.numeric_variable_index_by_task_id[task_numeric_var_id.index()]
     }
 
     pub(crate) fn get_proposition(
@@ -705,12 +705,7 @@ fn is_constant_assignment_like_effect(
     if !separate_constant_assignment {
         return false;
     }
-    if task
-        .numeric_variables()
-        .get(linear_effect.affected_var_id.index())
-        .map(|numeric_var| numeric_var.numeric_type() != NumericType::Regular)
-        .unwrap_or(true)
-    {
+    if task.numeric_type(linear_effect.affected_var_id) != NumericType::Regular {
         return false;
     }
     final_expression

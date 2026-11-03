@@ -1,3 +1,6 @@
+//! The states diverse orders are evaluated on, sampled by random walks from
+//! the initial state.
+
 use planforge_sas::numeric_task::NumericValue;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use tracing::info;

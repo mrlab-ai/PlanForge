@@ -1,3 +1,6 @@
+//! The causal graph of a restricted task, over which pattern generators choose
+//! variables.
+
 #[cfg(test)]
 mod tests;
 

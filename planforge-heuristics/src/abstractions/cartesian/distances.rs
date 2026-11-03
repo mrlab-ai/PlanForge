@@ -1,3 +1,6 @@
+//! Shortest paths in the working abstraction during refinement: the goal
+//! distances and the optimal abstract plan CEGAR checks for flaws.
+
 #[cfg(test)]
 mod tests;
 
@@ -243,7 +246,10 @@ pub(super) fn update_shortest_paths_after_split(
     for &state_id in &invalid_states {
         if shortest_paths.is_goal[state_id] {
             shortest_paths.distances[state_id] = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_id));
+            heap.push((
+                Reverse(NotNan::new(0.0).expect("zero is a number")),
+                state_id,
+            ));
         }
     }
 
@@ -262,7 +268,10 @@ pub(super) fn update_shortest_paths_after_split(
             if candidate + float_tolerance::SEARCH_EPSILON < shortest_paths.distances[source] {
                 shortest_paths.distances[source] = candidate;
                 shortest_paths.set_generating_transition(source, *transition);
-                heap.push((Reverse(NotNan::new(candidate).unwrap()), source));
+                heap.push((
+                    Reverse(NotNan::new(candidate).expect("goal distances are never NaN")),
+                    source,
+                ));
             }
         }
     }
@@ -285,7 +294,7 @@ pub(super) fn update_shortest_paths_after_split(
                 shortest_paths.distances[transition.source] = alternative;
                 shortest_paths.set_generating_transition(transition.source, *transition);
                 heap.push((
-                    Reverse(NotNan::new(alternative).unwrap()),
+                    Reverse(NotNan::new(alternative).expect("goal distances are never NaN")),
                     transition.source,
                 ));
             }

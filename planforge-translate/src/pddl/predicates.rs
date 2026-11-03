@@ -1,3 +1,5 @@
+//! PDDL predicate declarations.
+
 use super::pddl_types::TypedObject;
 use std::fmt;
 

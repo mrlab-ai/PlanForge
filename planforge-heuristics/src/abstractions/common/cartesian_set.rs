@@ -1,3 +1,6 @@
+//! Cartesian sets: one set of values per variable, the regions of Cartesian
+//! and domain abstractions, with their intersections and splits.
+
 use std::sync::Arc;
 
 use planforge_sas::{

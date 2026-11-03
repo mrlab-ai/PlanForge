@@ -13,18 +13,16 @@
 //! positive dependency, and its variables have to share a layer; a negative edge
 //! inside such a component means the axioms are not stratifiable at all.
 //!
-//! Every derived variable defaults to false, and every rule here *proves* one:
-//! the rules that refute a derived variable are no longer produced. They were
-//! never for the axiom evaluator, which refutes a variable by finding it
-//! unproven at the end of its layer; they were for the heuristics that read the
-//! axioms as relaxed operators, and those now derive them for themselves from
-//! the SAS task — see `planforge_sas::default_value_axioms`. That is issue454,
-//! and it buys three things: a task with axioms no longer pays for a negation
-//! that can blow up exponentially unless a heuristic asks for it, the negation
-//! is exact over SAS values rather than over PDDL literals, and every derived
-//! variable now appears in the heads with one polarity only, which is what makes
-//! [`verify_layering_condition`] able to insist that a negation-by-failure
-//! reading comes from a strictly lower layer.
+//! Every derived variable defaults to false, and every rule here *proves* one;
+//! no rule refutes a derived variable. The axiom evaluator refutes a variable
+//! by finding it unproven at the end of its layer, and the heuristics that read
+//! the axioms as relaxed operators derive the refuting rules they need from the
+//! SAS task -- see `planforge_sas::default_value_axioms`. So a task with axioms
+//! pays for a negation, which can blow up exponentially, only when a heuristic
+//! asks for it, the negation is exact over SAS values rather than over PDDL
+//! literals, and every derived variable appears in the heads with one polarity
+//! only, which is what lets [`verify_layering_condition`] insist that a
+//! negation-by-failure reading comes from a strictly lower layer.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -180,10 +178,8 @@ fn head_of(axiom: &PropositionalAxiom) -> Atom {
 /// The derived variables the rest of the task can observe, closed under the
 /// axiom bodies.
 ///
-/// Signs used to be tracked here, because they decided which variables needed
-/// negated axioms generating. Nothing in this module generates those any more, so
-/// what is left is the pruning question — may a variable be dropped from the
-/// dependency graph, and hence lose its axioms and its layer — and that is
+/// This answers the pruning question -- may a variable be dropped from the
+/// dependency graph, and hence lose its axioms and its layer -- and that is
 /// sign-free: a variable is kept when either of its literals is observed. Which
 /// is the same set the signed closure reached, since it followed every edge in
 /// both directions too and only differed in the sign it recorded.

@@ -1,3 +1,6 @@
+//! Numeric literals in numeric expression positions, where NaN is not a
+//! number.
+
 use super::{ParseError, ParseResult, SExpr, is_function_comparison};
 
 /// Validate only numeric expression positions: NaN remains a legal identifier

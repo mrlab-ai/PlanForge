@@ -45,6 +45,15 @@ pub struct CheckAdmissibleHeuristic {
     goal_distances: HashMap<StateID, f64>,
 }
 
+impl std::fmt::Debug for CheckAdmissibleHeuristic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckAdmissibleHeuristic")
+            .field("name", &self.name)
+            .field("inner", &self.inner.name())
+            .finish_non_exhaustive()
+    }
+}
+
 impl CheckAdmissibleHeuristic {
     /// Wrap `inner`, verifying it against the goal distances of `task`.
     pub fn new(inner: Box<dyn Heuristic>, task: Arc<Task>) -> Result<Self, HeuristicBuildError> {
@@ -329,6 +338,7 @@ impl planforge_search::config::ApplyOptions for CheckAdmissibleConfig {
         });
     }
 }
+#[derive(Debug)]
 pub struct CheckAdmissibleFeature;
 impl planforge_search::heuristic_features::HeuristicFeature for CheckAdmissibleFeature {
     const NAME: &'static str = "check_admissible";
