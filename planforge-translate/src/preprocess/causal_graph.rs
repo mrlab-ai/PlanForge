@@ -45,7 +45,10 @@ pub struct CausalGraph {
 }
 
 impl CausalGraph {
-    pub fn new(task: PreprocessedTask) -> Self {
+    /// The causal graph of `task`, with the variables the task cannot be
+    /// solved without marked necessary. With `keep_unimportant_variables`,
+    /// every propositional variable is necessary.
+    pub fn new(task: PreprocessedTask, keep_unimportant_variables: bool) -> Self {
         let sas = &task.sas;
         let mut weighted_graph: WeightedGraph = BTreeMap::new();
         for var in 0..task.vars.len() {
@@ -93,21 +96,37 @@ impl CausalGraph {
             numeric_order: Vec::new(),
         };
 
-        cg.place_necessary_variables();
+        cg.place_necessary_variables(keep_unimportant_variables);
 
         cg
     }
 
     /// Marks the variables the task cannot be solved without -- the ones a
     /// goal, the global constraint or the metric depends on, transitively --
-    /// and gives each of them its position in the reordered task.
-    fn place_necessary_variables(&mut self) {
+    /// and gives each of them its position in the reordered task. With
+    /// `keep_unimportant_variables`, every propositional variable and what it
+    /// depends on is necessary too.
+    fn place_necessary_variables(&mut self, keep_unimportant_variables: bool) {
         let PreprocessedTask {
             sas,
             metric,
             vars,
             numeric_vars,
         } = &mut self.task;
+
+        if keep_unimportant_variables {
+            for var in 0..vars.len() {
+                if !vars[var].is_necessary() {
+                    vars[var].mark_necessary();
+                    mark_predecessors_necessary(
+                        &self.predecessor_graph,
+                        EitherVar::ExplicitVariable(var),
+                        vars,
+                        numeric_vars,
+                    );
+                }
+            }
+        }
 
         for &(var, _) in &sas.goal.pairs {
             if !vars[var].is_necessary() {
