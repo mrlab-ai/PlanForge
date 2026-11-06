@@ -66,13 +66,16 @@ fn a_union_of_requirements_keeps_each_check_and_transformation_once() {
             name: "property",
             check: passes,
         }],
+        keep_unimportant_variables: false,
     };
     let other = TaskRequirements {
         transformations: vec!["second"],
         checks: Vec::new(),
+        keep_unimportant_variables: true,
     };
     let union = some.clone().union(some).union(other);
     assert_eq!(union.transformations, ["first", "second"]);
     assert_eq!(union.checks.len(), 1);
     assert!(union.requires("property") && !union.requires("other"));
+    assert!(union.keep_unimportant_variables);
 }

@@ -22,17 +22,21 @@ pub struct TaskCheck {
     pub check: fn(&Task) -> Result<(), HeuristicBuildError>,
 }
 
-/// What a heuristic needs of its task: the task transformations to apply
-/// first, by name, and the checks the transformed task must pass.
+/// What a heuristic or a search needs of its task: the task transformations
+/// to apply first, by name, the checks the transformed task must pass, and
+/// whether the translation must keep the variables the goal does not depend
+/// on (for consumers that observe whole states).
 #[derive(Debug, Clone, Default)]
 pub struct TaskRequirements {
     pub transformations: Vec<&'static str>,
     pub checks: Vec<TaskCheck>,
+    pub keep_unimportant_variables: bool,
 }
 
 impl TaskRequirements {
     /// What both `self` and `other` need.
     pub fn union(mut self, other: Self) -> Self {
+        self.keep_unimportant_variables |= other.keep_unimportant_variables;
         for transformation in other.transformations {
             if !self.transformations.contains(&transformation) {
                 self.transformations.push(transformation);

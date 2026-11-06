@@ -119,6 +119,7 @@ impl AbstractionSource {
         TaskRequirements {
             transformations,
             checks,
+            ..TaskRequirements::default()
         }
     }
 

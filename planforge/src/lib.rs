@@ -572,13 +572,13 @@ pub fn run_internal(
         let problem = &cli.inputs[1];
         // The default path: the translation hands over the task it built, with
         // no SAS+ text in between.
+        let options = planforge_translate::TranslateOptions {
+            limits: cli.grounding.limits(),
+            keep_unimportant_variables: search.requirements().keep_unimportant_variables,
+        };
         (
-            planforge_translate::translate_to_task_with_limits(
-                domain,
-                problem,
-                cli.grounding.limits(),
-            )
-            .map_err(translation_error)?,
+            planforge_translate::translate_to_task_with_options(domain, problem, &options)
+                .map_err(translation_error)?,
             format!("{domain} + {problem} (in-memory)"),
         )
     } else {

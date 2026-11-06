@@ -75,6 +75,13 @@ fn operator_names(keep_unimportant_variables: bool) -> Vec<String> {
         .map(|operator| operator.name().to_string())
         .collect();
     names.sort();
+    let files = task
+        .pddl_files()
+        .expect("a translated task records its files");
+    assert_eq!(
+        files.problem,
+        std::path::Path::new(&fixture.path("problem.pddl"))
+    );
     names
 }
 

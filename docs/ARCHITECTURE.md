@@ -149,6 +149,13 @@ command line with it.
 | a successor generator | `SuccessorGenerator` (which operators are applicable), and a `SuccessorGeneratorFeature` | `features.successor_generators.add(..)`; a search names it with `successor_generator=...` | the `successor_generator` module documentation, `successor_generator::StandardGroundedTree` |
 | a task transformation | a `TransformationFeature` | one entry in `planforge_heuristics::features()`, or `features.transformations.add(..)` | `task_transformations::restriction::RestrictFeature` |
 | what a heuristic needs | a `TaskCheck` (of the task) or `HeuristicFeature::preflight` (of the build) | returned from the heuristic's `HeuristicFeature` | `planforge_heuristics::requirements` |
+| what a search needs | `TaskRequirements` from `SearchFeature::requirements` (besides its heuristics') | the search's `SearchFeature` | `keep_unimportant_variables` for a search over whole states |
+
+A feature that also reads the lifted task, such as a learned policy over
+lifted state features, finds the PDDL files of a translated task in
+`Task::pddl_files` (none for a task read from a SAS file or derived from
+another) and asks for `TaskRequirements::keep_unimportant_variables` if it
+observes facts the goal does not depend on.
 
 A heuristic owns its state (`&mut self`) and everything it reads, such as a
 shared `Arc<Task>`, so it is `Send` and outlives the context that built it. It
