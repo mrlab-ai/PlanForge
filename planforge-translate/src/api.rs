@@ -112,7 +112,8 @@ pub struct TranslateOptions {
     pub keep_unimportant_variables: bool,
 }
 
-/// Translate a PDDL pair with explicit [`TranslateOptions`].
+/// Translate a PDDL pair with explicit [`TranslateOptions`]. The task
+/// records the files ([`Task::pddl_files`]).
 pub fn translate_to_task_with_options(
     domain: &str,
     problem: &str,
@@ -125,10 +126,14 @@ pub fn translate_to_task_with_options(
         LayerStrategy::default(),
         options.limits,
     )?;
-    Ok(crate::preprocess::reordered_numeric_task(
-        sas_task,
-        options.keep_unimportant_variables,
-    ))
+    let task =
+        crate::preprocess::reordered_numeric_task(sas_task, options.keep_unimportant_variables);
+    Ok(
+        task.with_pddl_files(planforge_sas::numeric_task::PddlFiles {
+            domain: domain.into(),
+            problem: problem.into(),
+        }),
+    )
 }
 
 /// Parse a PDDL pair into the lifted task, as the files state it: before

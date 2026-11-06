@@ -45,10 +45,26 @@ impl std::error::Error for TaskLoadError {
 ///
 /// A task is immutable once built. Everything but the goal sits behind one
 /// `Arc`, so cloning a task or giving it another goal copies no operator.
-#[derive(Debug, Clone, PartialEq)]
+/// Two tasks are equal if their content is, wherever they come from.
+#[derive(Debug, Clone)]
 pub struct Task {
     data: Arc<TaskData>,
     goals: Arc<[ExplicitFact]>,
+    /// The PDDL files the task is the translation of, if it is one.
+    pddl: Option<Arc<PddlFiles>>,
+}
+
+impl PartialEq for Task {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data && self.goals == other.goals
+    }
+}
+
+/// The domain and problem files of a PDDL task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PddlFiles {
+    pub domain: std::path::PathBuf,
+    pub problem: std::path::PathBuf,
 }
 
 /// Everything of a [`Task`] but its goal.
@@ -164,6 +180,7 @@ impl Task {
         let mut task = Task {
             data: Arc::new(data),
             goals: goals.into(),
+            pddl: None,
         };
         // The values a SAS file gives a derived variable are not its initial
         // values but its axiom *defaults*; the real ones follow from the
@@ -214,7 +231,22 @@ impl Task {
         Self {
             data: Arc::clone(&self.data),
             goals: goals.into(),
+            pddl: None,
         }
+    }
+
+    /// The PDDL files this task is the translation of: set by the
+    /// translator, for consumers that also read the lifted task. A task
+    /// derived from another, such as one with other goals or a
+    /// transformation's, has none.
+    pub fn pddl_files(&self) -> Option<&PddlFiles> {
+        self.pddl.as_deref()
+    }
+
+    /// This task as the translation of `files`.
+    pub fn with_pddl_files(mut self, files: PddlFiles) -> Self {
+        self.pddl = Some(Arc::new(files));
+        self
     }
 
     /// The task with `operator_costs` charged instead of the costs its metric

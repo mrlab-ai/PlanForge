@@ -30,6 +30,11 @@ pub trait SearchFeature: 'static {
     /// The heuristics the search evaluates; it inherits their task
     /// requirements and solver backends.
     fn heuristics(config: &Self::Config) -> Vec<&HeuristicConfig>;
+    /// What the search itself needs of the task, besides what its heuristics
+    /// need.
+    fn requirements(_: &Self::Config) -> TaskRequirements {
+        TaskRequirements::default()
+    }
     fn run(
         config: &Self::Config,
         task: Arc<Task>,
@@ -42,6 +47,8 @@ pub trait SearchFeature: 'static {
 pub trait ConfiguredSearch: Send + Sync {
     /// Every heuristic the search will build, in configuration order.
     fn heuristics(&self) -> Vec<&HeuristicConfig>;
+    /// What the search itself needs of the task.
+    fn own_requirements(&self) -> TaskRequirements;
     /// Searches `task` within `limits`.
     fn solve(&self, task: Arc<Task>, limits: SearchLimits) -> Result<SearchResult, SearchError>;
     fn config_any(&self) -> &dyn Any;
@@ -50,6 +57,9 @@ pub trait ConfiguredSearch: Send + Sync {
 impl<F: SearchFeature> ConfiguredSearch for Typed<F, F::Config> {
     fn heuristics(&self) -> Vec<&HeuristicConfig> {
         F::heuristics(&self.config)
+    }
+    fn own_requirements(&self) -> TaskRequirements {
+        F::requirements(&self.config)
     }
     fn solve(&self, task: Arc<Task>, limits: SearchLimits) -> Result<SearchResult, SearchError> {
         F::run(&self.config, task, limits)
@@ -64,11 +74,11 @@ impl<F: SearchFeature> ConfiguredSearch for Typed<F, F::Config> {
 pub type SearchConfig = Configured<dyn ConfiguredSearch>;
 
 impl SearchConfig {
-    /// What the search's heuristics need of the task.
+    /// What the search and its heuristics need of the task.
     pub fn requirements(&self) -> TaskRequirements {
         self.heuristics()
             .into_iter()
-            .fold(TaskRequirements::default(), |requirements, heuristic| {
+            .fold(self.own_requirements(), |requirements, heuristic| {
                 requirements.union(heuristic.requirements())
             })
     }
