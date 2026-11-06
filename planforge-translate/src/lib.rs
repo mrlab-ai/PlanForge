@@ -2,8 +2,10 @@
 //!
 //! [`translate_to_task`], [`translate_to_sas_to_path`],
 //! [`translate_to_sas_to_path_fast`] and [`translate_to_sas_string`] are the
-//! whole public surface. The pipeline stages behind them are private: they only
-//! run in this order.
+//! entry points of the translation. The pipeline stages behind them are
+//! private: they only run in this order. [`parse_pddl_task`] and
+//! [`parse_pddl_domain`] stop after parsing and return the lifted task
+//! ([`pddl`]).
 //!
 //! This is the first stage of PlanForge's PDDL translation → SAS+ task → search
 //! pipeline. The usual in-memory entry point returns the task consumed by
@@ -31,7 +33,7 @@ mod invariants;
 mod normalize;
 mod numeric_axiom_rules;
 mod options;
-mod pddl;
+pub mod pddl;
 mod pddl_parser;
 mod pddl_to_prolog;
 mod preprocess;
@@ -43,9 +45,9 @@ mod tools;
 mod translate;
 
 pub use api::{
-    TranslateError, translate_to_sas_string, translate_to_sas_to_path,
-    translate_to_sas_to_path_fast, translate_to_sas_to_path_with_limits, translate_to_task,
-    translate_to_task_with_limits,
+    TranslateError, TranslateOptions, parse_pddl_domain, parse_pddl_task, translate_to_sas_string,
+    translate_to_sas_to_path, translate_to_sas_to_path_fast, translate_to_sas_to_path_with_limits,
+    translate_to_task, translate_to_task_with_limits, translate_to_task_with_options,
 };
 pub use grounding::{
     DEFAULT_MAX_GROUND_ACTIONS, DEFAULT_MAX_GROUND_ATOMS, DEFAULT_MAX_GROUNDING_MEMORY,

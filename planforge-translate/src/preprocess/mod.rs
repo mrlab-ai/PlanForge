@@ -427,7 +427,7 @@ fn placed(level: i32, what: &str) -> usize {
 /// result as the SAS+ file another planner reads.
 pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) -> std::io::Result<()> {
     info!("Writing output...");
-    planforge_sas::sas_writer::write_sas(&sas_parts::build(&reorder(sas)), outfile)
+    planforge_sas::sas_writer::write_sas(&sas_parts::build(&reorder(sas, false)), outfile)
 }
 
 /// Orders and prunes the variables of `sas` by its causal graph, and builds the
@@ -440,17 +440,27 @@ pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) -> std::io::
 /// `tests/src/task_equivalence_tests` holds both paths to that. The file itself
 /// is for interoperating with other planners and for reading by hand, not for
 /// getting a task from one part of this process to another.
-pub fn reordered_numeric_task(sas: SASTask) -> planforge_sas::numeric_task::Task {
-    planforge_sas::numeric_task::Task::from_sas_parts(sas_parts::build(&reorder(sas)))
+///
+/// With `keep_unimportant_variables`, no propositional variable is pruned
+/// (see [`crate::TranslateOptions`]).
+pub fn reordered_numeric_task(
+    sas: SASTask,
+    keep_unimportant_variables: bool,
+) -> planforge_sas::numeric_task::Task {
+    planforge_sas::numeric_task::Task::from_sas_parts(sas_parts::build(&reorder(
+        sas,
+        keep_unimportant_variables,
+    )))
 }
 
-/// Orders and prunes the variables of `sas` by its causal graph.
-fn reorder(sas: SASTask) -> ReorderedTask {
+/// Orders the variables of `sas` by its causal graph and prunes the ones the
+/// task can be solved without, unless `keep_unimportant_variables`.
+fn reorder(sas: SASTask, keep_unimportant_variables: bool) -> ReorderedTask {
     let task = PreprocessedTask::new(sas);
     let metric_index_before = task.metric.index;
 
     info!("Building causal graph...");
-    let reordered = CausalGraph::new(task).finalize();
+    let reordered = CausalGraph::new(task, keep_unimportant_variables).finalize();
 
     debug!(
         "Metric index changed from {} to {}",

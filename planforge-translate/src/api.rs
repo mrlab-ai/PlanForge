@@ -1,7 +1,9 @@
 //! The crate's entry points: PDDL in, either a task or SAS+ text out.
 //!
 //! Everything else in this crate is an implementation detail of the pipeline
-//! these four functions run.
+//! these functions run, except the parsed PDDL task ([`crate::pddl`]), which
+//! [`parse_pddl_task`] and [`parse_pddl_domain`] return for consumers that
+//! work on the lifted task.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -87,8 +89,66 @@ pub fn translate_to_task_with_limits(
     problem: &str,
     limits: GroundingLimits,
 ) -> Result<Task, TranslateError> {
-    let sas_task = translate_to_sas_task(domain, problem, false, LayerStrategy::default(), limits)?;
-    Ok(crate::preprocess::reordered_numeric_task(sas_task))
+    translate_to_task_with_options(
+        domain,
+        problem,
+        &TranslateOptions {
+            limits,
+            ..TranslateOptions::default()
+        },
+    )
+}
+
+/// What a translation to a task may ground and which variables it keeps.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TranslateOptions {
+    pub limits: GroundingLimits,
+    /// Keep every propositional variable, and every operator that changes
+    /// one, instead of only those a goal, the global constraint or the metric
+    /// depends on (Fast Downward's `--keep-unimportant-variables`). For
+    /// consumers that observe whole states, such as learned policies over
+    /// lifted state features: pruning drops facts that still change along
+    /// reachable paths, and the operators that change them.
+    pub keep_unimportant_variables: bool,
+}
+
+/// Translate a PDDL pair with explicit [`TranslateOptions`].
+pub fn translate_to_task_with_options(
+    domain: &str,
+    problem: &str,
+    options: &TranslateOptions,
+) -> Result<Task, TranslateError> {
+    let sas_task = translate_to_sas_task(
+        domain,
+        problem,
+        false,
+        LayerStrategy::default(),
+        options.limits,
+    )?;
+    Ok(crate::preprocess::reordered_numeric_task(
+        sas_task,
+        options.keep_unimportant_variables,
+    ))
+}
+
+/// Parse a PDDL pair into the lifted task, as the files state it: before
+/// normalization and grounding.
+pub fn parse_pddl_task(
+    domain: &str,
+    problem: &str,
+) -> Result<crate::pddl::tasks::Task, TranslateError> {
+    let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))?;
+    Ok(task.to_task()?)
+}
+
+/// Parse a PDDL domain file on its own.
+pub fn parse_pddl_domain(
+    domain: &str,
+) -> Result<crate::pddl::tasks::DomainDefinition, TranslateError> {
+    let path = std::path::Path::new(domain);
+    let forms = crate::pddl_parser::lisp_parser::parse_nested_list(path)?;
+    Ok(crate::pddl_parser::parsing_functions::parse_domain(&forms)
+        .map_err(|error| error.in_file(path))?)
 }
 
 /// Translate the pair and write the SAS+ text to `output_path`.
